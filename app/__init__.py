@@ -1,0 +1,1 @@
+"""Hangy backend application package."""
