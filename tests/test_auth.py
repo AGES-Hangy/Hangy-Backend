@@ -111,3 +111,21 @@ def test_login_rejects_an_invalid_password(client: TestClient) -> None:
 
     assert response.status_code == 401
     assert response.headers["www-authenticate"] == "Bearer"
+
+
+def test_openapi_offers_oauth2_and_direct_bearer_authentication(
+    client: TestClient,
+) -> None:
+    schema = client.get("/openapi.json").json()
+    security_schemes = schema["components"]["securitySchemes"]
+
+    assert security_schemes["OAuth2Password"]["type"] == "oauth2"
+    assert security_schemes["BearerToken"] == {
+        "type": "http",
+        "description": "Paste an existing JWT access token.",
+        "scheme": "bearer",
+    }
+    assert schema["paths"]["/users/me"]["get"]["security"] == [
+        {"OAuth2Password": []},
+        {"BearerToken": []},
+    ]

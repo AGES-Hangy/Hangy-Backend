@@ -67,6 +67,10 @@ curl http://localhost:8000/users/me \
   -H "Authorization: Bearer SEU_ACCESS_TOKEN"
 ```
 
+No Swagger UI, o botão **Authorize** oferece duas opções: `OAuth2Password`
+recebe usuário e senha e chama `/login`; `BearerToken` permite colar diretamente
+um JWT existente. As duas opções enviam o mesmo header `Authorization: Bearer`.
+
 As senhas são protegidas com Argon2 por meio do `pwdlib`; somente o hash é
 persistido. Os tokens são criados e verificados com PyJWT e expiram conforme
 `ACCESS_TOKEN_EXPIRE_MINUTES`.

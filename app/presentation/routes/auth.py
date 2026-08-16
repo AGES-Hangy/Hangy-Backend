@@ -1,7 +1,12 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi import APIRouter, Depends, HTTPException, Security, status
+from fastapi.security import (
+    HTTPAuthorizationCredentials,
+    HTTPBearer,
+    OAuth2PasswordBearer,
+    OAuth2PasswordRequestForm,
+)
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -17,7 +22,16 @@ from app.presentation.dtos import RegisterInput, TokenOutput, UserOutput
 from app.presentation.mappers import UserMapper
 
 router = APIRouter(tags=["Authentication"])
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
+oauth2_scheme = OAuth2PasswordBearer(
+    tokenUrl="login",
+    scheme_name="OAuth2Password",
+    auto_error=False,
+)
+bearer_scheme = HTTPBearer(
+    scheme_name="BearerToken",
+    description="Paste an existing JWT access token.",
+    auto_error=False,
+)
 
 
 def get_auth_service(db: Annotated[Session, Depends(get_db)]) -> AuthService:
@@ -34,6 +48,20 @@ credentials_exception = HTTPException(
     detail="Could not validate credentials",
     headers={"WWW-Authenticate": "Bearer"},
 )
+
+
+def get_access_token(
+    oauth2_token: Annotated[str | None, Security(oauth2_scheme)],
+    bearer_credentials: Annotated[
+        HTTPAuthorizationCredentials | None,
+        Security(bearer_scheme),
+    ],
+) -> str:
+    if oauth2_token is not None:
+        return oauth2_token
+    if bearer_credentials is not None:
+        return bearer_credentials.credentials
+    raise credentials_exception
 
 
 @router.post(
@@ -69,7 +97,7 @@ def login(
 
 @router.get("/users/me", response_model=UserOutput)
 def read_current_user(
-    token: Annotated[str, Depends(oauth2_scheme)],
+    token: Annotated[str, Depends(get_access_token)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> UserOutput:
     try:
