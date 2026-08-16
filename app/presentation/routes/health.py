@@ -1,7 +1,8 @@
 from fastapi import APIRouter, status
 
-from app.application.dtos import HealthOutput
-from app.application.use_cases import GetHealth
+from app.domain.assemblers import HealthAssembler
+from app.domain.services import GetHealth
+from app.presentation.dtos import HealthOutput
 
 router = APIRouter(tags=["Health"])
 
@@ -14,4 +15,5 @@ router = APIRouter(tags=["Health"])
     description="Retorna o estado atual da API.",
 )
 def health_check() -> HealthOutput:
-    return GetHealth().execute()
+    health_status = GetHealth().execute()
+    return HealthAssembler.to_dto(health_status)

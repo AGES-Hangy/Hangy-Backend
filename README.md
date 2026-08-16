@@ -64,55 +64,64 @@ ruff check .
 
 ## Arquitetura
 
-O projeto segue os princípios de **Clean Architecture**: as regras de negócio ficam no centro da aplicação e não dependem de FastAPI, SQLAlchemy, banco de dados ou outros detalhes externos. As dependências sempre apontam para dentro.
+O projeto separa a interface HTTP, as regras de negócio e os detalhes de
+persistência em três camadas. O fluxo de uma requisição parte da apresentação,
+passa pelo domínio e usa a infraestrutura apenas quando precisa persistir ou
+consultar dados.
 
 ```text
 Cliente HTTP
-    │
+    │ request DTO
     ▼
-presentation  →  application  →  domain
-    │
-    ▼
-infrastructure
+route → mapper → entity → service
+                            │
+                            ▼
+Cliente HTTP ← response DTO ← assembler
+
+service ↔ infrastructure/repository (quando houver persistência)
 ```
 
-| Camada | Responsabilidade | Não deve conhecer |
-| --- | --- | --- |
-| `domain` | Conceitos e regras puras do negócio, representados por entidades. | HTTP, FastAPI, Pydantic, SQLAlchemy e banco de dados. |
-| `application` | Casos de uso que coordenam as regras de domínio para realizar uma ação da aplicação. | Detalhes de rotas, requests e respostas HTTP. |
-| `infrastructure` | Implementações técnicas: conexão com banco, modelos SQLAlchemy, repositórios e integrações externas. | Regras específicas de apresentação HTTP. |
-| `presentation` | Interface HTTP: rotas FastAPI, validação de entrada e formatação de respostas. | Detalhes de persistência e regras de baixo nível. |
+| Camada | Responsabilidade |
+| --- | --- |
+| `presentation` | Recebe requisições do cliente, define DTOs e converte dados de entrada em entidades. |
+| `domain` | Mantém entidades, enums e serviços com a lógica de negócio, além de montar os DTOs de resposta. |
+| `infrastructure` | Implementa repositórios e os detalhes técnicos de persistência. |
 
 ### Estrutura de diretórios
 
 ```text
 app/
-├── domain/
-│   └── entities/              # Entidades e regras de negócio
-├── application/
-│   ├── dtos/                  # Contratos de entrada e saída dos casos de uso
-│   └── use_cases/             # Ações da aplicação, como GetHealth
-├── infrastructure/
-│   └── database/              # Sessão, base e modelos SQLAlchemy
 ├── presentation/
-│   └── routes/                # Endpoints FastAPI
+│   ├── routes/                # Controllers e endpoints FastAPI
+│   ├── dtos/                  # Dados trocados com o cliente
+│   └── mappers/               # Convertem DTOs de entrada em entidades
+├── domain/
+│   ├── assemblers/            # Convertem entidades em DTOs de resposta
+│   ├── entities/              # Estruturas de dados do domínio
+│   ├── services/              # Regras e operações de negócio
+│   └── enums/                 # Enumerações do domínio
+├── infrastructure/
+│   └── repository/            # Persistência, sessão e modelos SQLAlchemy
 └── main.py                    # Cria e configura a aplicação FastAPI
 ```
 
-### Entidades, modelos e DTOs
+### Responsabilidades e conversões
 
-O mesmo conceito de negócio pode ter representações diferentes em cada limite
-da aplicação:
+O mesmo conceito pode ter representações diferentes entre o cliente, o domínio
+e o banco de dados:
 
 | Tipo | Local | Finalidade |
 | --- | --- | --- |
-| Entidade de domínio | `domain/entities` | Representa o significado e as regras de negócio, sem dependências de frameworks. |
-| Modelo de banco | `infrastructure/database/models` | Define como os dados são persistidos usando SQLAlchemy. |
-| DTO de aplicação | `application/dtos` | Define os dados de entrada e saída dos casos de uso, sem depender de frameworks. |
+| DTO | `presentation/dtos` | Define os dados recebidos e devolvidos pela API. |
+| Mapper | `presentation/mappers` | Transforma DTOs recebidos do cliente em entidades de domínio. |
+| Entidade | `domain/entities` | Representa os dados usados pelas regras de negócio. |
+| Serviço | `domain/services` | Executa a lógica de negócio sobre entidades e valores do domínio. |
+| Assembler | `domain/assemblers` | Transforma entidades em DTOs que os controllers devolvem ao cliente. |
+| Enum | `domain/enums` | Centraliza conjuntos fechados de valores válidos no domínio. |
+| Repositório | `infrastructure/repository` | Encapsula banco de dados, modelos de persistência e acesso aos dados. |
 
 Por exemplo, o endpoint `GET /health` recebe a requisição em
-`presentation/routes` e chama o caso de uso `GetHealth` em `application`.
-O caso de uso trabalha com a entidade `HealthStatus` de `domain` e retorna o
-DTO `HealthOutput`. A camada de apresentação somente o serializa como resposta
-HTTP. Como o health check não persiste dados, ele não precisa de um modelo de
-banco.
+`presentation/routes` e chama o serviço `GetHealth` em `domain/services`. O
+serviço retorna a entidade `HealthStatus`, que `HealthAssembler` transforma no
+DTO `HealthOutput` antes de o controller responder ao cliente. Como o health
+check não persiste dados, ele não usa `infrastructure/repository`.
