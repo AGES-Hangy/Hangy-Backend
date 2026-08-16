@@ -16,10 +16,18 @@ Na raiz do repositório, construa a imagem e inicie a API:
 docker compose up --build
 ```
 
+O Docker Compose lê as configurações de desenvolvimento do arquivo `.env` e
+inicia a API e o PostgreSQL. Antes de usar esses valores fora do ambiente local,
+troque `POSTGRES_PASSWORD` e `JWT_SECRET_KEY` por segredos seguros. O arquivo
+`.env.example` documenta todas as variáveis necessárias.
+
 A aplicação ficará disponível em:
 
 - API: <http://localhost:8000>
 - Health check: <http://localhost:8000/health>
+- Cadastro: `POST http://localhost:8000/register`
+- Login: `POST http://localhost:8000/login`
+- Usuário autenticado: `GET http://localhost:8000/users/me`
 - Swagger UI: <http://localhost:8000/docs>
 - Especificação OpenAPI: <http://localhost:8000/openapi.json>
 
@@ -29,8 +37,39 @@ Para encerrar os contêineres:
 docker compose down
 ```
 
-O banco SQLite é armazenado no volume Docker `hangy_data`. Para também remover
-esse volume, execute `docker compose down -v`.
+O PostgreSQL é armazenado no volume Docker `hangy_postgres_data`. Para também
+remover os dados locais, execute `docker compose down -v`.
+
+## Autenticação
+
+Cadastre um usuário enviando JSON:
+
+```bash
+curl -X POST http://localhost:8000/register \
+  -H "Content-Type: application/json" \
+  -d '{"username":"felipe","password":"strong-password"}'
+```
+
+O login segue o fluxo OAuth2 Password e, por isso, recebe os campos como
+`application/x-www-form-urlencoded`:
+
+```bash
+curl -X POST http://localhost:8000/login \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=felipe&password=strong-password"
+```
+
+A resposta contém um JWT no campo `access_token`. Envie-o como Bearer token
+para acessar uma rota protegida:
+
+```bash
+curl http://localhost:8000/users/me \
+  -H "Authorization: Bearer SEU_ACCESS_TOKEN"
+```
+
+As senhas são protegidas com Argon2 por meio do `pwdlib`; somente o hash é
+persistido. Os tokens são criados e verificados com PyJWT e expiram conforme
+`ACCESS_TOKEN_EXPIRE_MINUTES`.
 
 ## Migrações
 
@@ -48,11 +87,13 @@ docker compose exec api alembic upgrade head
 
 ## Desenvolvimento local
 
-Crie e ative um ambiente virtual e instale as dependências de desenvolvimento:
+Com uma instância PostgreSQL disponível e o `.env` configurado, crie e ative um
+ambiente virtual e instale as dependências de desenvolvimento:
 
 ```bash
 python -m venv .venv
 pip install -r requirements-dev.txt
+alembic upgrade head
 ```
 
 Execute os testes e o lint:
@@ -102,6 +143,7 @@ app/
 │   └── enums/                 # Enumerações do domínio
 ├── infrastructure/
 │   └── repository/            # Persistência, sessão e modelos SQLAlchemy
+├── config.py                   # Configurações carregadas do ambiente
 └── main.py                    # Cria e configura a aplicação FastAPI
 ```
 
@@ -125,3 +167,8 @@ Por exemplo, o endpoint `GET /health` recebe a requisição em
 serviço retorna a entidade `HealthStatus`, que `HealthAssembler` transforma no
 DTO `HealthOutput` antes de o controller responder ao cliente. Como o health
 check não persiste dados, ele não usa `infrastructure/repository`.
+
+No fluxo de autenticação, `UserMapper` converte o DTO de cadastro em
+`UserCredentials`; `AuthService` valida credenciais, protege senhas e emite os
+tokens; `SqlAlchemyUserRepository` persiste usuários no PostgreSQL; e
+`AuthAssembler` produz os DTOs devolvidos pelos controllers.
