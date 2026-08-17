@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.14.7-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -13,4 +13,5 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+### TODO: qnd for pra prod tem q usar fastapi run ao inves de fastapi dev pra tirar o reload (acho?)
+CMD ["fastapi", "dev", "app/main.py", "--port", "8000"]
