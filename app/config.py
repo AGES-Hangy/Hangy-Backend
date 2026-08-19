@@ -21,6 +21,9 @@ class Settings:
     access_token_expire_minutes: int = int(
         os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30")
     )
+    cors_origins: tuple[str, ...] = tuple(
+        os.getenv("CORS_ORIGINS", "http://localhost:8081").split(",")
+    )
 
 
 settings = Settings()
