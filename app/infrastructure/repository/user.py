@@ -16,9 +16,7 @@ class SqlAlchemyUserRepository:
         return self._to_entity(model) if model is not None else None
 
     def get_by_username(self, username: str) -> User | None:
-        model = self.db.scalar(
-            select(UserModel).where(UserModel.username == username)
-        )
+        model = self.db.scalar(select(UserModel).where(UserModel.username == username))
         return self._to_entity(model) if model is not None else None
 
     def add(self, user: User) -> User:
