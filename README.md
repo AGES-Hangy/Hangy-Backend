@@ -31,6 +31,10 @@ A aplicação ficará disponível em:
 - Swagger UI: <http://localhost:8000/docs>
 - Especificação OpenAPI: <http://localhost:8000/openapi.json>
 
+O ambiente de desenvolvimento também cria, de forma idempotente, os usuários
+`user` (senha `user-password`) e `admin` (senha `admin-password`). Eles têm as
+mesmas permissões até que regras de autorização sejam adicionadas.
+
 Para encerrar os contêineres:
 
 ```bash
