@@ -1,0 +1,10 @@
+# Handle text files automatically and normalize them to LF in the repo
+* text=auto eol=lf
+
+# Force specific Windows files to maintain CRLF if necessary
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Treat images and binaries as binary (don't touch EOL)
+*.png binary
+*.jpg binary
