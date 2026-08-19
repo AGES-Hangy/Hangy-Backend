@@ -13,7 +13,7 @@ princípios de Clean Architecture.
 Na raiz do repositório, construa a imagem e inicie a API:
 
 ```bash
-docker compose up --build
+docker compose -f .devcontainer/docker-compose.yml up --build
 ```
 
 O Docker Compose lê as configurações de desenvolvimento do arquivo `.env` e
@@ -34,11 +34,45 @@ A aplicação ficará disponível em:
 Para encerrar os contêineres:
 
 ```bash
-docker compose down
+docker compose -f .devcontainer/docker-compose.yml down
 ```
 
 O PostgreSQL é armazenado no volume Docker `hangy_postgres_data`. Para também
-remover os dados locais, execute `docker compose down -v`.
+remover os dados locais, execute
+`docker compose -f .devcontainer/docker-compose.yml down -v`.
+
+## Executar com Dev Container
+
+O Dev Container reutiliza os serviços `api` e `db` do Docker Compose, monta o
+repositório em `/app` e instala automaticamente as dependências de
+desenvolvimento. Para usá-lo, instale o Docker, o Visual Studio Code e a extensão
+[Dev Containers](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers).
+
+Se o arquivo `.env` ainda não existir, crie-o a partir do exemplo:
+
+```bash
+cp .env.example .env
+```
+
+Abra o repositório no Visual Studio Code, pressione `F1` e execute
+`Dev Containers: Reopen in Container`. Na primeira execução, o Visual Studio
+Code construirá a imagem, iniciará o PostgreSQL, aplicará as migrações e iniciará
+a API com recarregamento automático. A API estará disponível em
+<http://localhost:8000> e a documentação em <http://localhost:8000/docs>.
+
+No terminal integrado do Dev Container, execute os testes e o lint normalmente:
+
+```bash
+pytest
+ruff check .
+```
+
+Depois de alterar o `.devcontainer/Dockerfile`, o
+`.devcontainer/docker-compose.yml`, o `requirements-dev.txt` ou o
+`devcontainer.json`, execute `Dev Containers: Rebuild Container` para recriar o
+ambiente. Para sair, execute `Dev Containers: Reopen Folder Locally`; com
+`shutdownAction` configurado como `stopCompose`, os serviços iniciados pelo Dev
+Container serão encerrados.
 
 ## Autenticação
 
@@ -80,13 +114,13 @@ persistido. Os tokens são criados e verificados com PyJWT e expiram conforme
 Com a API em execução, crie uma nova migração após adicionar ou alterar models:
 
 ```bash
-docker compose exec api alembic revision --autogenerate -m "descricao"
+docker compose -f .devcontainer/docker-compose.yml exec api alembic revision --autogenerate -m "descricao"
 ```
 
 Para aplicar as migrações:
 
 ```bash
-docker compose exec api alembic upgrade head
+docker compose -f .devcontainer/docker-compose.yml exec api alembic upgrade head
 ```
 
 ## Desenvolvimento local
