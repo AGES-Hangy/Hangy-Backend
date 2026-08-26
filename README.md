@@ -129,6 +129,17 @@ docker compose -f .devcontainer/docker-compose.yml exec api alembic upgrade head
 
 ## Desenvolvimento local
 
+### Convenção de branches
+
+Os commits locais são bloqueados quando a branch não segue o formato
+`tidXXX/name-of-branch`, em que `XXX` é um número (por exemplo,
+`tid123/add-login-endpoint`). O nome após a barra segue as regras normais do
+Git. Ative o hook uma vez após clonar o repositório:
+
+```bash
+git config core.hooksPath .githooks
+```
+
 Com uma instância PostgreSQL disponível e o `.env` configurado, crie e ative um
 ambiente virtual e instale as dependências de desenvolvimento:
 
