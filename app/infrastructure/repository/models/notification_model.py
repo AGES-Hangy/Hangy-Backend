@@ -19,13 +19,6 @@ class ConnectionNotificationModel(Base):
     notification_id = Column(UUID(as_uuid=True), ForeignKey("notification.notification_id", ondelete="CASCADE"), primary_key=True)
     connection_id = Column(UUID(as_uuid=True), ForeignKey("user_connection.connection_id", ondelete="CASCADE"), nullable=False)
 
-class EventInviteNotificationModel(Base):
-    __tablename__ = "event_invite_notification"
-
-    notification_id = Column(UUID(as_uuid=True), ForeignKey("notification.notification_id", ondelete="CASCADE"), primary_key=True)
-    event_id = Column(UUID(as_uuid=True), ForeignKey("event.event_id", ondelete="CASCADE"), nullable=False)
-    sender_id = Column(UUID(as_uuid=True), ForeignKey("user.user_id", ondelete="CASCADE"), nullable=False)
-
 class EventParticipantNotificationModel(Base):
     __tablename__ = "event_participant_notification"
 
