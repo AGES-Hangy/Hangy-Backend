@@ -1,5 +1,27 @@
 """Enumerations used by the domain model."""
 
-from app.domain.enums.token_type import TokenType
+from app.domain.enums.enums import (
+    UserTypeEnum,
+    UserRoleEnum,
+    EventPrivacyEnum,
+    EventStatusEnum,
+    EventParticipantStatusEnum,
+    UserConnectionStatusEnum,
+    TagTypeEnum,
+    ReportTypeEnum,
+    ReportStatusEnum,
+    NotificationTypeEnum,
+)
 
-__all__ = ["TokenType"]
+__all__ = [
+    "UserTypeEnum",
+    "UserRoleEnum",
+    "EventPrivacyEnum",
+    "EventStatusEnum",
+    "EventParticipantStatusEnum",
+    "UserConnectionStatusEnum",
+    "TagTypeEnum",
+    "ReportTypeEnum",
+    "ReportStatusEnum",
+    "NotificationTypeEnum",
+]
