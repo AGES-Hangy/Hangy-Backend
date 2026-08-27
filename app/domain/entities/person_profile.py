@@ -1,16 +1,16 @@
 from dataclasses import dataclass
 from datetime import date, datetime
 from uuid import UUID
-from typing import Optional
 
-@dataclass
+
+@dataclass(frozen=True, slots=True)
 class PersonProfile:
     user_id: UUID
     cpf: str
     name: str
-    description: Optional[str] = None
     date_of_birth: date
     country: str
     state: str
     city: str
     updated_at: datetime
+    description: str | None = None

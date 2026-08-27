@@ -1,25 +1,30 @@
-from enum import Enum
+from enum import StrEnum
 
-class UserTypeEnum(str, Enum):
+
+class UserTypeEnum(StrEnum):
     PERSONAL = "PERSONAL"
     BUSINESS = "BUSINESS"
 
-class UserRoleEnum(str, Enum):
+
+class UserRoleEnum(StrEnum):
     USER = "USER"
     ADMIN = "ADMIN"
 
-class EventPrivacyEnum(str, Enum):
+
+class EventPrivacyEnum(StrEnum):
     PUBLIC = "PUBLIC"
     PRIVATE = "PRIVATE"
     INVITE_ONLY = "INVITE_ONLY"
 
-class EventStatusEnum(str, Enum):
+
+class EventStatusEnum(StrEnum):
     DRAFT = "DRAFT"
     CREATED = "CREATED"
     CANCELLED = "CANCELLED"
     FINISHED = "FINISHED"
 
-class EventParticipantStatusEnum(str, Enum):
+
+class EventParticipantStatusEnum(StrEnum):
     INVITED = "INVITED"
     PENDING = "PENDING"
     CONFIRMED = "CONFIRMED"
@@ -27,16 +32,19 @@ class EventParticipantStatusEnum(str, Enum):
     CANCELLED = "CANCELLED"
     REMOVED = "REMOVED"
 
-class UserConnectionStatusEnum(str, Enum):
+
+class UserConnectionStatusEnum(StrEnum):
     CONFIRMED = "CONFIRMED"
     PENDING = "PENDING"
     REJECTED = "REJECTED"
 
-class TagTypeEnum(str, Enum):
+
+class TagTypeEnum(StrEnum):
     MACRO = "MACRO"
     MICRO = "MICRO"
 
-class ReportTypeEnum(str, Enum):
+
+class ReportTypeEnum(StrEnum):
     SPAM = "SPAM"
     HARASSMENT = "HARASSMENT"
     INAPPROPRIATE_CONTENT = "INAPPROPRIATE_CONTENT"
@@ -46,13 +54,15 @@ class ReportTypeEnum(str, Enum):
     SAFETY_CONCERN = "SAFETY_CONCERN"
     OTHER = "OTHER"
 
-class ReportStatusEnum(str, Enum):
+
+class ReportStatusEnum(StrEnum):
     PENDING = "PENDING"
     REVIEWED = "REVIEWED"
     RESOLVED = "RESOLVED"
     REJECTED = "REJECTED"
 
-class NotificationTypeEnum(str, Enum):
+
+class NotificationTypeEnum(StrEnum):
     CONNECTION_REQUEST = "CONNECTION_REQUEST"
     EVENT_INVITE = "EVENT_INVITE"
     EVENT_PARTICIPATION_REQUEST = "EVENT_PARTICIPATION_REQUEST"

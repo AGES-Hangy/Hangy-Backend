@@ -1,18 +1,26 @@
 from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
-from typing import Optional
-from app.domain.enums import UserTypeEnum, UserRoleEnum
 
-@dataclass
+from app.domain.enums import UserRoleEnum, UserTypeEnum
+
+
+@dataclass(frozen=True, slots=True)
+class UserCredentials:
+    email: str
+    password: str
+    user_type: UserTypeEnum = UserTypeEnum.PERSONAL
+
+
+@dataclass(frozen=True, slots=True)
 class User:
-    user_id: UUID
+    user_id: UUID | None
     user_type: UserTypeEnum
-    role: UserRoleEnum
     email: str
     password_hash: str
-    user_phone: Optional[str] = None
-    profile_photo_url: Optional[str] = None
     created_at: datetime
-    updated_at: datetime    
-    deleted_at: Optional[datetime] = None
+    updated_at: datetime
+    role: UserRoleEnum = UserRoleEnum.USER
+    user_phone: str | None = None
+    profile_photo_url: str | None = None
+    deleted_at: datetime | None = None

@@ -1,13 +1,14 @@
 from dataclasses import dataclass
-from uuid import UUID
 from datetime import datetime
-from typing import Optional, Tuple
+from uuid import UUID
 
-@dataclass
+
+@dataclass(frozen=True, slots=True)
 class BusinessProfile:
     user_id: UUID
     cnpj: str
     business_name: str
-    description: Optional[str] = None
-    location: Optional[Tuple[float, float]] = None
     updated_at: datetime
+    description: str | None = None
+    business_latitude: float | None = None
+    business_longitude: float | None = None

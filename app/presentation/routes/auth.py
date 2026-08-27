@@ -13,7 +13,7 @@ from app.config import settings
 from app.domain.assemblers import AuthAssembler
 from app.domain.services import (
     AuthService,
-    DuplicateUsernameError,
+    DuplicateEmailError,
     InvalidAccessTokenError,
 )
 from app.infrastructure.repository import get_db
@@ -76,10 +76,10 @@ def register(
     credentials = UserMapper.to_credentials(payload)
     try:
         user = auth_service.register(credentials)
-    except DuplicateUsernameError as error:
+    except DuplicateEmailError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Username is already registered",
+            detail="Email is already registered",
         ) from error
     return AuthAssembler.to_user_dto(user)
 
@@ -89,6 +89,7 @@ def login(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ) -> TokenOutput:
+    # OAuth2 names the credential field "username"; Hangy authenticates by email.
     user = auth_service.authenticate(form_data.username, form_data.password)
     if user is None:
         raise credentials_exception
