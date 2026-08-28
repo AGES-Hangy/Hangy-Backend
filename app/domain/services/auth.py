@@ -1,24 +1,26 @@
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
+from uuid import UUID
 
 import jwt
 from pwdlib import PasswordHash
 
 from app.domain.entities import AccessToken, User, UserCredentials
+from app.domain.enums import UserRoleEnum
 
 password_hash = PasswordHash.recommended()
 
 
 class UserRepository(Protocol):
-    def get_by_id(self, user_id: int) -> User | None: ...
+    def get_by_id(self, user_id: UUID) -> User | None: ...
 
-    def get_by_username(self, username: str) -> User | None: ...
+    def get_by_email(self, email: str) -> User | None: ...
 
     def add(self, user: User) -> User: ...
 
 
-class DuplicateUsernameError(Exception):
-    """Raised when a username is already registered."""
+class DuplicateEmailError(Exception):
+    """Raised when an email is already registered."""
 
 
 class InvalidAccessTokenError(Exception):
@@ -39,29 +41,36 @@ class AuthService:
         self.access_token_expire_minutes = access_token_expire_minutes
 
     def register(self, credentials: UserCredentials) -> User:
-        if self.repository.get_by_username(credentials.username) is not None:
-            raise DuplicateUsernameError
+        if self.repository.get_by_email(credentials.email) is not None:
+            raise DuplicateEmailError
 
+        now = datetime.now(UTC)
         user = User(
-            id=None,
-            username=credentials.username,
+            user_id=None,
+            user_type=credentials.user_type,
+            email=credentials.email,
             password_hash=password_hash.hash(credentials.password),
-            created_at=datetime.now(UTC),
+            created_at=now,
+            updated_at=now,
+            role=UserRoleEnum.USER,
         )
         return self.repository.add(user)
 
-    def authenticate(self, username: str, password: str) -> User | None:
-        user = self.repository.get_by_username(username)
+    def authenticate(self, email: str, password: str) -> User | None:
+        user = self.repository.get_by_email(email)
         if user is None or not password_hash.verify(password, user.password_hash):
             return None
         return user
 
     def create_access_token(self, user: User) -> AccessToken:
+        if user.user_id is None:
+            raise ValueError("A persisted user must have an id")
+
         expires_at = datetime.now(UTC) + timedelta(
             minutes=self.access_token_expire_minutes
         )
         encoded_jwt = jwt.encode(
-            {"sub": user.username, "exp": expires_at},
+            {"sub": str(user.user_id), "exp": expires_at},
             self.jwt_secret_key,
             algorithm=self.jwt_algorithm,
         )
@@ -74,13 +83,14 @@ class AuthService:
                 self.jwt_secret_key,
                 algorithms=[self.jwt_algorithm],
             )
-            username = payload.get("sub")
-            if not isinstance(username, str):
+            subject = payload.get("sub")
+            if not isinstance(subject, str):
                 raise InvalidAccessTokenError
-        except jwt.InvalidTokenError as error:
+            user_id = UUID(subject)
+        except (jwt.InvalidTokenError, ValueError) as error:
             raise InvalidAccessTokenError from error
 
-        user = self.repository.get_by_username(username)
+        user = self.repository.get_by_id(user_id)
         if user is None:
             raise InvalidAccessTokenError
         return user

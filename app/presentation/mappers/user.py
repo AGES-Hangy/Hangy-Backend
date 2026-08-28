@@ -6,6 +6,7 @@ class UserMapper:
     @staticmethod
     def to_credentials(dto: RegisterInput) -> UserCredentials:
         return UserCredentials(
-            username=dto.username,
+            email=dto.email,
             password=dto.password.get_secret_value(),
+            user_type=dto.user_type,
         )
