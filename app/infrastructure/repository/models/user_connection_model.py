@@ -1,38 +1,48 @@
-import uuid
+from __future__ import annotations
 
-from sqlalchemy import Column, DateTime, ForeignKey, Uuid, func
-from sqlalchemy.orm import relationship
+import uuid
+from datetime import datetime
+from typing import TYPE_CHECKING
+
+from sqlalchemy import DateTime, ForeignKey, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.enums import UserConnectionStatusEnum
 from app.infrastructure.repository.base import Base
 from app.infrastructure.repository.models.types import enum_column
 
+if TYPE_CHECKING:
+    from app.infrastructure.repository.models.user_model import UserModel
+
 
 class UserConnectionModel(Base):
     __tablename__ = "user_connection"
 
-    connection_id = Column(Uuid, primary_key=True, default=uuid.uuid4)
-    requester_id = Column(
-        Uuid, ForeignKey("user.user_id", ondelete="CASCADE"), nullable=False
+    connection_id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4
     )
-    receiver_id = Column(
-        Uuid, ForeignKey("user.user_id", ondelete="CASCADE"), nullable=False
+    requester_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.user_id", ondelete="CASCADE")
     )
-    status = Column(enum_column(UserConnectionStatusEnum), nullable=False)
-    created_at = Column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+    receiver_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.user_id", ondelete="CASCADE")
     )
-    updated_at = Column(
+    status: Mapped[UserConnectionStatusEnum] = mapped_column(
+        enum_column(UserConnectionStatusEnum)
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
     )
-    deleted_at = Column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    requester = relationship(
-        "UserModel", back_populates="sent_connections", foreign_keys=[requester_id]
+    requester: Mapped[UserModel] = relationship(
+        back_populates="sent_connections", foreign_keys=[requester_id]
     )
-    receiver = relationship(
-        "UserModel", back_populates="received_connections", foreign_keys=[receiver_id]
+    receiver: Mapped[UserModel] = relationship(
+        back_populates="received_connections", foreign_keys=[receiver_id]
     )

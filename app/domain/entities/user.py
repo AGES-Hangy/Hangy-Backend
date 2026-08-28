@@ -21,6 +21,8 @@ class User:
     created_at: datetime
     updated_at: datetime
     role: UserRoleEnum = UserRoleEnum.USER
+    name: str | None = None
+    description: str | None = None
     user_phone: str | None = None
     profile_photo_url: str | None = None
     deleted_at: datetime | None = None

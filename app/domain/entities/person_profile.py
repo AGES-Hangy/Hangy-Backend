@@ -7,10 +7,8 @@ from uuid import UUID
 class PersonProfile:
     user_id: UUID
     cpf: str
-    name: str
     date_of_birth: date
     country: str
     state: str
     city: str
     updated_at: datetime
-    description: str | None = None

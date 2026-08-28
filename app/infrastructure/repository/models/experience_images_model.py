@@ -1,24 +1,31 @@
-import uuid
+from __future__ import annotations
 
-from sqlalchemy import Column, DateTime, ForeignKey, String, Uuid, func
-from sqlalchemy.orm import relationship
+import uuid
+from datetime import datetime
+from typing import TYPE_CHECKING
+
+from sqlalchemy import DateTime, ForeignKey, String, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infrastructure.repository.base import Base
+
+if TYPE_CHECKING:
+    from app.infrastructure.repository.models.event_experience_model import (
+        EventExperienceModel,
+    )
 
 
 class ExperienceImagesModel(Base):
     __tablename__ = "experience_images"
 
-    photo_id = Column(Uuid, primary_key=True, default=uuid.uuid4)
-    experience_id = Column(
-        Uuid,
-        ForeignKey("event_experience.experience_id", ondelete="CASCADE"),
-        nullable=False,
+    photo_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    experience_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("event_experience.experience_id", ondelete="CASCADE")
     )
-    photo_url = Column(String, nullable=False)
-    created_at = Column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+    photo_url: Mapped[str] = mapped_column(String(2048))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
-    deleted_at = Column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    experience = relationship("EventExperienceModel", back_populates="images")
+    experience: Mapped[EventExperienceModel] = relationship(back_populates="images")

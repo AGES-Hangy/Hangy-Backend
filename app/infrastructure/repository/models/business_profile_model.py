@@ -1,18 +1,25 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import TYPE_CHECKING
+from uuid import UUID
+
 from sqlalchemy import (
     CheckConstraint,
-    Column,
     DateTime,
     Double,
     ForeignKey,
     Index,
     String,
-    Uuid,
     func,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infrastructure.repository.base import Base
 from app.infrastructure.repository.models.user_model import user_follows
+
+if TYPE_CHECKING:
+    from app.infrastructure.repository.models.user_model import UserModel
 
 
 class BusinessProfileModel(Base):
@@ -35,24 +42,21 @@ class BusinessProfileModel(Base):
         ),
     )
 
-    user_id = Column(
-        Uuid, ForeignKey("user.user_id", ondelete="CASCADE"), primary_key=True
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("user.user_id", ondelete="CASCADE"), primary_key=True
     )
-    cnpj = Column(String, unique=True, nullable=False)
-    business_name = Column(String, nullable=False)
-    description = Column(String, nullable=True)
-    business_latitude = Column(Double, nullable=True)
-    business_longitude = Column(Double, nullable=True)
-    updated_at = Column(
+    # Digits only, no punctuation.
+    cnpj: Mapped[str] = mapped_column(String(14), unique=True)
+    business_latitude: Mapped[float | None] = mapped_column(Double)
+    business_longitude: Mapped[float | None] = mapped_column(Double)
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
     )
 
-    user = relationship("UserModel", back_populates="business_profile")
-    followers = relationship(
-        "UserModel",
+    user: Mapped[UserModel] = relationship(back_populates="business_profile")
+    followers: Mapped[list[UserModel]] = relationship(
         secondary=user_follows,
         back_populates="followed_businesses",
     )

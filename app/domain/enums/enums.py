@@ -39,11 +39,6 @@ class UserConnectionStatusEnum(StrEnum):
     REJECTED = "REJECTED"
 
 
-class TagTypeEnum(StrEnum):
-    MACRO = "MACRO"
-    MICRO = "MICRO"
-
-
 class ReportTypeEnum(StrEnum):
     SPAM = "SPAM"
     HARASSMENT = "HARASSMENT"

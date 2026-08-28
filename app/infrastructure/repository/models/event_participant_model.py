@@ -1,11 +1,22 @@
-import uuid
+from __future__ import annotations
 
-from sqlalchemy import Column, DateTime, ForeignKey, UniqueConstraint, Uuid, func
-from sqlalchemy.orm import relationship
+import uuid
+from datetime import datetime
+from typing import TYPE_CHECKING
+
+from sqlalchemy import DateTime, ForeignKey, UniqueConstraint, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.enums import EventParticipantStatusEnum
 from app.infrastructure.repository.base import Base
 from app.infrastructure.repository.models.types import enum_column
+
+if TYPE_CHECKING:
+    from app.infrastructure.repository.models.event_experience_model import (
+        EventExperienceModel,
+    )
+    from app.infrastructure.repository.models.event_model import EventModel
+    from app.infrastructure.repository.models.user_model import UserModel
 
 
 class EventParticipantModel(Base):
@@ -14,26 +25,29 @@ class EventParticipantModel(Base):
         UniqueConstraint("user_id", "event_id", name="uq_user_event_participant"),
     )
 
-    participant_id = Column(Uuid, primary_key=True, default=uuid.uuid4)
-    user_id = Column(
-        Uuid, ForeignKey("user.user_id", ondelete="CASCADE"), nullable=False
+    participant_id: Mapped[uuid.UUID] = mapped_column(
+        primary_key=True, default=uuid.uuid4
     )
-    event_id = Column(
-        Uuid, ForeignKey("event.event_id", ondelete="CASCADE"), nullable=False
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.user_id", ondelete="CASCADE")
     )
-    status = Column(enum_column(EventParticipantStatusEnum), nullable=False)
-    joined_at = Column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+    event_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("event.event_id", ondelete="CASCADE")
     )
-    updated_at = Column(
+    status: Mapped[EventParticipantStatusEnum] = mapped_column(
+        enum_column(EventParticipantStatusEnum)
+    )
+    joined_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
     )
 
-    user = relationship("UserModel", back_populates="participations")
-    event = relationship("EventModel", back_populates="participants")
-    experiences = relationship(
-        "EventExperienceModel", back_populates="participant", passive_deletes=True
+    user: Mapped[UserModel] = relationship(back_populates="participations")
+    event: Mapped[EventModel] = relationship(back_populates="participants")
+    experiences: Mapped[list[EventExperienceModel]] = relationship(
+        back_populates="participant", passive_deletes=True
     )

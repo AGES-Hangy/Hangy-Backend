@@ -24,7 +24,6 @@ ENUM_TYPES = (
     "eventprivacyenum",
     "eventparticipantstatusenum",
     "userconnectionstatusenum",
-    "tagtypeenum",
     "reporttypeenum",
     "reportstatusenum",
     "notificationtypeenum",
@@ -36,10 +35,7 @@ def upgrade() -> None:
     op.create_table(
         "tag",
         sa.Column("tag_id", sa.UUID(), nullable=False),
-        sa.Column("tag_name", sa.String(), nullable=False),
-        sa.Column(
-            "tag_type", sa.Enum("MACRO", "MICRO", name="tagtypeenum"), nullable=False
-        ),
+        sa.Column("tag_name", sa.String(50), nullable=False),
         sa.Column("tag_parent_id", sa.UUID(), nullable=True),
         sa.ForeignKeyConstraint(["tag_parent_id"], ["tag.tag_id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("tag_id"),
@@ -55,10 +51,12 @@ def upgrade() -> None:
         sa.Column(
             "role", sa.Enum("USER", "ADMIN", name="userroleenum"), nullable=False
         ),
-        sa.Column("email", sa.String(), nullable=False),
-        sa.Column("password_hash", sa.String(), nullable=False),
-        sa.Column("user_phone", sa.String(), nullable=True),
-        sa.Column("profile_photo_url", sa.String(), nullable=True),
+        sa.Column("email", sa.String(255), nullable=False),
+        sa.Column("password_hash", sa.String(255), nullable=False),
+        sa.Column("name", sa.String(120), nullable=True),
+        sa.Column("description", sa.String(500), nullable=True),
+        sa.Column("user_phone", sa.String(20), nullable=True),
+        sa.Column("profile_photo_url", sa.String(2048), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -78,9 +76,7 @@ def upgrade() -> None:
     op.create_table(
         "business_profile",
         sa.Column("user_id", sa.UUID(), nullable=False),
-        sa.Column("cnpj", sa.String(), nullable=False),
-        sa.Column("business_name", sa.String(), nullable=False),
-        sa.Column("description", sa.String(), nullable=True),
+        sa.Column("cnpj", sa.String(14), nullable=False),
         sa.Column("business_latitude", sa.Double(), nullable=True),
         sa.Column("business_longitude", sa.Double(), nullable=True),
         sa.Column(
@@ -111,8 +107,8 @@ def upgrade() -> None:
         "event",
         sa.Column("event_id", sa.UUID(), nullable=False),
         sa.Column("event_creator_id", sa.UUID(), nullable=False),
-        sa.Column("event_title", sa.String(), nullable=False),
-        sa.Column("event_description", sa.String(), nullable=True),
+        sa.Column("event_title", sa.String(50), nullable=False),
+        sa.Column("event_description", sa.String(1000), nullable=True),
         sa.Column("event_latitude", sa.Double(), nullable=False),
         sa.Column("event_longitude", sa.Double(), nullable=False),
         sa.Column("starts_at", sa.DateTime(timezone=True), nullable=False),
@@ -130,7 +126,7 @@ def upgrade() -> None:
             sa.Enum("PUBLIC", "PRIVATE", "INVITE_ONLY", name="eventprivacyenum"),
             nullable=False,
         ),
-        sa.Column("cover_photo_url", sa.String(), nullable=True),
+        sa.Column("cover_photo_url", sa.String(2048), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -191,13 +187,11 @@ def upgrade() -> None:
     op.create_table(
         "person_profile",
         sa.Column("user_id", sa.UUID(), nullable=False),
-        sa.Column("cpf", sa.String(), nullable=False),
-        sa.Column("name", sa.String(), nullable=False),
-        sa.Column("description", sa.String(), nullable=True),
+        sa.Column("cpf", sa.String(11), nullable=False),
         sa.Column("date_of_birth", sa.Date(), nullable=False),
-        sa.Column("country", sa.String(), nullable=False),
-        sa.Column("state", sa.String(), nullable=False),
-        sa.Column("city", sa.String(), nullable=False),
+        sa.Column("country", sa.String(100), nullable=False),
+        sa.Column("state", sa.String(100), nullable=False),
+        sa.Column("city", sa.String(100), nullable=False),
         sa.Column(
             "updated_at",
             sa.DateTime(timezone=True),
@@ -271,7 +265,7 @@ def upgrade() -> None:
         "event_invite_link",
         sa.Column("invite_id", sa.UUID(), nullable=False),
         sa.Column("event_id", sa.UUID(), nullable=False),
-        sa.Column("token", sa.String(), nullable=False),
+        sa.Column("token", sa.String(64), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -347,7 +341,7 @@ def upgrade() -> None:
             ),
             nullable=False,
         ),
-        sa.Column("description", sa.String(), nullable=False),
+        sa.Column("description", sa.String(1000), nullable=False),
         sa.Column(
             "status",
             sa.Enum(
@@ -393,7 +387,7 @@ def upgrade() -> None:
         "event_experience",
         sa.Column("experience_id", sa.UUID(), nullable=False),
         sa.Column("event_participant_id", sa.UUID(), nullable=False),
-        sa.Column("description", sa.String(), nullable=False),
+        sa.Column("description", sa.String(1000), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -424,7 +418,7 @@ def upgrade() -> None:
         "experience_images",
         sa.Column("photo_id", sa.UUID(), nullable=False),
         sa.Column("experience_id", sa.UUID(), nullable=False),
-        sa.Column("photo_url", sa.String(), nullable=False),
+        sa.Column("photo_url", sa.String(2048), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),

@@ -1,4 +1,8 @@
+from __future__ import annotations
+
 import uuid
+from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     CheckConstraint,
@@ -7,17 +11,28 @@ from sqlalchemy import (
     Double,
     ForeignKey,
     Index,
-    Integer,
     String,
     Table,
     Uuid,
     func,
 )
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.enums import EventPrivacyEnum, EventStatusEnum
 from app.infrastructure.repository.base import Base
 from app.infrastructure.repository.models.types import enum_column
+
+if TYPE_CHECKING:
+    from app.infrastructure.repository.models.event_invite_link_model import (
+        EventInviteLinkModel,
+    )
+    from app.infrastructure.repository.models.event_participant_model import (
+        EventParticipantModel,
+    )
+    from app.infrastructure.repository.models.report_model import ReportModel
+    from app.infrastructure.repository.models.tag_model import TagModel
+    from app.infrastructure.repository.models.user_model import UserModel
+
 
 event_tag = Table(
     "event_tag",
@@ -46,41 +61,41 @@ class EventModel(Base):
         Index("idx_event_coordinates", "event_latitude", "event_longitude"),
     )
 
-    event_id = Column(Uuid, primary_key=True, default=uuid.uuid4)
-    event_creator_id = Column(
-        Uuid, ForeignKey("user.user_id", ondelete="CASCADE"), nullable=False
+    event_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    event_creator_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.user_id", ondelete="CASCADE")
     )
-    event_title = Column(String, nullable=False)
-    event_description = Column(String, nullable=True)
-    event_latitude = Column(Double, nullable=False)
-    event_longitude = Column(Double, nullable=False)
-    starts_at = Column(DateTime(timezone=True), nullable=False)
-    ends_at = Column(DateTime(timezone=True), nullable=False)
-    max_participants = Column(Integer, nullable=True)
-    event_status = Column(enum_column(EventStatusEnum), nullable=False)
-    event_privacy = Column(enum_column(EventPrivacyEnum), nullable=False)
-    cover_photo_url = Column(String, nullable=True)
-    created_at = Column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+    event_title: Mapped[str] = mapped_column(String(50))
+    event_description: Mapped[str | None] = mapped_column(String(1000))
+    event_latitude: Mapped[float] = mapped_column(Double)
+    event_longitude: Mapped[float] = mapped_column(Double)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    max_participants: Mapped[int | None]
+    event_status: Mapped[EventStatusEnum] = mapped_column(enum_column(EventStatusEnum))
+    event_privacy: Mapped[EventPrivacyEnum] = mapped_column(
+        enum_column(EventPrivacyEnum)
     )
-    updated_at = Column(
+    cover_photo_url: Mapped[str | None] = mapped_column(String(2048))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
     )
-    deleted_at = Column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    creator = relationship("UserModel", back_populates="created_events")
-    tags = relationship("TagModel", secondary=event_tag)
-    participants = relationship(
-        "EventParticipantModel", back_populates="event", passive_deletes=True
+    creator: Mapped[UserModel] = relationship(back_populates="created_events")
+    tags: Mapped[list[TagModel]] = relationship(secondary=event_tag)
+    participants: Mapped[list[EventParticipantModel]] = relationship(
+        back_populates="event", passive_deletes=True
     )
-    invite_links = relationship(
-        "EventInviteLinkModel", back_populates="event", passive_deletes=True
+    invite_links: Mapped[list[EventInviteLinkModel]] = relationship(
+        back_populates="event", passive_deletes=True
     )
-    reports = relationship(
-        "ReportModel",
+    reports: Mapped[list[ReportModel]] = relationship(
         back_populates="reported_event",
         foreign_keys="ReportModel.reported_event_id",
     )

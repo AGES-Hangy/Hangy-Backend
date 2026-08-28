@@ -7,8 +7,6 @@ from uuid import UUID
 class BusinessProfile:
     user_id: UUID
     cnpj: str
-    business_name: str
     updated_at: datetime
-    description: str | None = None
     business_latitude: float | None = None
     business_longitude: float | None = None
