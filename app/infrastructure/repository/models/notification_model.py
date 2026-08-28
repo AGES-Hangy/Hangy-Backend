@@ -46,11 +46,9 @@ class NotificationModel(Base):
         back_populates="notification",
         passive_deletes=True,
     )
-    participant_detail: Mapped[EventParticipantNotificationModel | None] = (
-        relationship(
-            back_populates="notification",
-            passive_deletes=True,
-        )
+    participant_detail: Mapped[EventParticipantNotificationModel | None] = relationship(
+        back_populates="notification",
+        passive_deletes=True,
     )
     event_cancelled_detail: Mapped[EventCancelledNotificationModel | None] = (
         relationship(
