@@ -65,8 +65,9 @@ A aplicação ficará disponível em:
 - Especificação OpenAPI: <http://localhost:8000/openapi.json>
 
 O ambiente de desenvolvimento também cria, de forma idempotente, os usuários
-`user` (senha `user-password`) e `admin` (senha `admin-password`). Eles têm as
-mesmas permissões até que regras de autorização sejam adicionadas.
+`user@hangy.com` (senha `user-password`) e `admin@hangy.com` (senha
+`admin-password`). Eles têm as mesmas permissões até que regras de autorização
+sejam adicionadas.
 
 Para encerrar os contêineres:
 
@@ -85,16 +86,19 @@ Cadastre um usuário enviando JSON:
 ```bash
 curl -X POST http://localhost:8000/register \
   -H "Content-Type: application/json" \
-  -d '{"username":"felipe","password":"strong-password"}'
+  -d '{"email":"felipe@hangy.com","password":"strong-password"}'
 ```
 
+O campo `user_type` é opcional e aceita `PERSONAL` (padrão) ou `BUSINESS`.
+
 O login segue o fluxo OAuth2 Password e, por isso, recebe os campos como
-`application/x-www-form-urlencoded`:
+`application/x-www-form-urlencoded`. O padrão OAuth2 fixa o nome do campo como
+`username`, mas o valor esperado é o e-mail:
 
 ```bash
 curl -X POST http://localhost:8000/login \
   -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=felipe&password=strong-password"
+  -d "username=felipe@hangy.com&password=strong-password"
 ```
 
 A resposta contém um JWT no campo `access_token`. Envie-o como Bearer token
@@ -106,8 +110,9 @@ curl http://localhost:8000/users/me \
 ```
 
 No Swagger UI, o botão **Authorize** oferece duas opções: `OAuth2Password`
-recebe usuário e senha e chama `/login`; `BearerToken` permite colar diretamente
-um JWT existente. As duas opções enviam o mesmo header `Authorization: Bearer`.
+recebe o e-mail (no campo `username`) e a senha e chama `/login`;
+`BearerToken` permite colar diretamente um JWT existente. As duas opções
+enviam o mesmo header `Authorization: Bearer`.
 
 As senhas são protegidas com Argon2 por meio do `pwdlib`; somente o hash é
 persistido. Os tokens são criados e verificados com PyJWT e expiram conforme

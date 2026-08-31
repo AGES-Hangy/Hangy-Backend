@@ -2,14 +2,14 @@
 
 from app.domain.services.auth import (
     AuthService,
-    DuplicateUsernameError,
+    DuplicateEmailError,
     InvalidAccessTokenError,
 )
 from app.domain.services.get_health import GetHealth
 
 __all__ = [
     "AuthService",
-    "DuplicateUsernameError",
+    "DuplicateEmailError",
     "GetHealth",
     "InvalidAccessTokenError",
 ]

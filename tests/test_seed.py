@@ -15,7 +15,7 @@ def test_seed_users_creates_the_default_users_only_once() -> None:
         seed_users(db)
         seed_users(db)
 
-        users = db.scalars(select(UserModel).order_by(UserModel.username)).all()
+        users = db.scalars(select(UserModel).order_by(UserModel.email)).all()
 
-    assert [user.username for user in users] == ["admin", "user"]
+    assert [user.email for user in users] == ["admin@hangy.com", "user@hangy.com"]
     assert all(user.password_hash for user in users)
