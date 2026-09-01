@@ -5,6 +5,12 @@ from app.domain.services.auth import (
     DuplicateEmailError,
     InvalidAccessTokenError,
 )
+from app.domain.services.event import (
+    EventAlreadyFinishedError,
+    EventNotFoundError,
+    EventsService,
+    NotEventOrganizerError,
+)
 from app.domain.services.get_health import GetHealth
 from app.domain.services.tags import (
     InvalidTagFilterError,
@@ -15,9 +21,13 @@ from app.domain.services.tags import (
 __all__ = [
     "AuthService",
     "DuplicateEmailError",
+    "EventAlreadyFinishedError",
+    "EventNotFoundError",
+    "EventsService",
     "GetHealth",
     "InvalidAccessTokenError",
     "InvalidTagFilterError",
+    "NotEventOrganizerError",
     "TagNotFoundError",
     "TagsService",
 ]
