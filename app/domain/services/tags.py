@@ -23,13 +23,13 @@ class TagNotFoundError(Exception):
     """Raised when the requested parent is not an existing macro tag."""
 
 
-class GetTags:
+class TagsService:
     """List the system tags, optionally narrowed to a single level of the tree."""
 
     def __init__(self, repository: TagRepository) -> None:
         self.repository = repository
 
-    def execute(
+    def get_tags(
         self,
         tag_type: TagTypeEnum | None = None,
         parent_id: UUID | None = None,

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.domain.assemblers import TagAssembler
-from app.domain.services import GetTags, InvalidTagFilterError, TagNotFoundError
+from app.domain.services import InvalidTagFilterError, TagNotFoundError, TagsService
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.tag import SqlAlchemyTagRepository
 from app.presentation.dtos import TagOutput
@@ -13,8 +13,8 @@ from app.presentation.mappers import TagMapper
 router = APIRouter(tags=["Tags"])
 
 
-def get_tags_service(db: Annotated[Session, Depends(get_db)]) -> GetTags:
-    return GetTags(repository=SqlAlchemyTagRepository(db))
+def get_tags_service(db: Annotated[Session, Depends(get_db)]) -> TagsService:
+    return TagsService(repository=SqlAlchemyTagRepository(db))
 
 
 @router.get(
@@ -41,7 +41,7 @@ def get_tags_service(db: Annotated[Session, Depends(get_db)]) -> GetTags:
     },
 )
 def list_tags(
-    get_tags: Annotated[GetTags, Depends(get_tags_service)],
+    tags_service: Annotated[TagsService, Depends(get_tags_service)],
     tag_type: Annotated[
         str | None,
         Query(alias="type", description="MACRO ou MICRO."),
@@ -52,7 +52,7 @@ def list_tags(
     ] = None,
 ) -> list[TagOutput]:
     try:
-        tags = get_tags.execute(
+        tags = tags_service.get_tags(
             tag_type=TagMapper.to_tag_type(tag_type),
             parent_id=TagMapper.to_parent_id(parent_id),
         )
