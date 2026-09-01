@@ -6,7 +6,7 @@
   "overrideCommand": false,
   "shutdownAction": "stopCompose",
 
-  "postCreateCommand": "pip install --no-cache-dir -r requirements-dev.txt",
+  "postCreateCommand": "pip install --no-cache-dir -r requirements-dev.txt && git config core.hooksPath .githooks",
 
   "customizations": {
     "vscode": {

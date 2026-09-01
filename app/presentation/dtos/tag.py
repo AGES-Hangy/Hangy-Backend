@@ -3,15 +3,13 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from app.domain.enums import TagTypeEnum
 
-class TagLeafOutput(BaseModel):
+
+class TagOutput(BaseModel):
+    """A tag as returned to API clients."""
+
     id: UUID
     name: str
-    type: Literal["MICRO"]
-
-
-class TagNodeOutput(BaseModel):
-    id: UUID
-    name: str
-    type: Literal["MACRO"]
-    children: list[TagLeafOutput]
+    type: TagTypeEnum
+    parent_id: UUID | None
