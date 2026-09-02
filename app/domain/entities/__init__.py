@@ -2,7 +2,7 @@
 
 from app.domain.entities.access_token import AccessToken
 from app.domain.entities.business_profile import BusinessProfile
-from app.domain.entities.event import Event
+from app.domain.entities.event import Event, NewEvent
 from app.domain.entities.event_experience import EventExperience, ExperienceImage
 from app.domain.entities.event_invite_link import EventInviteLink
 from app.domain.entities.event_participant import EventParticipant
@@ -31,6 +31,7 @@ __all__ = [
     "EventParticipantNotification",
     "ExperienceImage",
     "HealthStatus",
+    "NewEvent",
     "Notification",
     "PersonProfile",
     "Report",

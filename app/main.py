@@ -2,7 +2,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.presentation.routes import auth_router, health_router, tags_router
+from app.presentation.routes import (
+    auth_router,
+    events_router,
+    health_router,
+    tags_router,
+)
 
 app = FastAPI(
     title="Hangy Backend",
@@ -20,4 +25,5 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(auth_router)
+app.include_router(events_router)
 app.include_router(tags_router)

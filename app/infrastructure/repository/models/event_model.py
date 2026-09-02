@@ -69,6 +69,8 @@ class EventModel(Base):
     event_description: Mapped[str | None] = mapped_column(String(1000))
     event_latitude: Mapped[float] = mapped_column(Double)
     event_longitude: Mapped[float] = mapped_column(Double)
+    # Coordinates alone cannot render "Parcao" on the event card.
+    location_name: Mapped[str | None] = mapped_column(String(120))
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     max_participants: Mapped[int | None]
