@@ -14,6 +14,8 @@ class TagRepository(Protocol):
 
     def list_children(self, parent_id: UUID) -> list[Tag]: ...
 
+    def get_tree(self) -> list[Tag]: ...
+
 
 class InvalidTagFilterError(Exception):
     """Raised when the requested tag filters cannot be parsed or combined."""
@@ -28,6 +30,14 @@ class TagsService:
 
     def __init__(self, repository: TagRepository) -> None:
         self.repository = repository
+        self._tree_cache: list[Tag] | None = None
+
+    def get_tag_tree(self) -> list[Tag]:
+        # The tree is expensive to assemble and macro tags are fixed by seed,
+        # so caching it in memory avoids rebuilding it on every request.
+        if self._tree_cache is None:
+            self._tree_cache = self.repository.get_tree()
+        return self._tree_cache
 
     def get_tags(
         self,

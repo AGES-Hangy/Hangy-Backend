@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from sqlalchemy import Select, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.domain.entities import Tag
 from app.domain.enums import TagTypeEnum
@@ -31,6 +31,17 @@ class SqlAlchemyTagRepository:
     def list_children(self, parent_id: UUID) -> list[Tag]:
         return self._list(select(TagModel).where(TagModel.tag_parent_id == parent_id))
 
+    def get_tree(self) -> list[Tag]:
+        # A single query with the children eagerly loaded avoids N+1 calls
+        # when building the two-level tree.
+        macros = self.db.scalars(
+            select(TagModel)
+            .where(TagModel.tag_parent_id.is_(None))
+            .options(selectinload(TagModel.children))
+            .order_by(TagModel.tag_name)
+        ).all()
+        return [self._to_tree_entity(macro) for macro in macros]
+
     def _list(self, statement: Select[tuple[TagModel]]) -> list[Tag]:
         models = self.db.scalars(statement.order_by(TagModel.tag_name)).all()
         return [self._to_entity(model) for model in models]
@@ -41,4 +52,14 @@ class SqlAlchemyTagRepository:
             tag_id=model.tag_id,
             tag_name=model.tag_name,
             tag_parent_id=model.tag_parent_id,
+        )
+
+    @staticmethod
+    def _to_tree_entity(model: TagModel) -> Tag:
+        children = sorted(model.children, key=lambda child: child.tag_name)
+        return Tag(
+            tag_id=model.tag_id,
+            tag_name=model.tag_name,
+            tag_parent_id=model.tag_parent_id,
+            children=[SqlAlchemyTagRepository._to_entity(child) for child in children],
         )
