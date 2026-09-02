@@ -6,6 +6,7 @@ from app.domain.services.auth import (
     InvalidAccessTokenError,
 )
 from app.domain.services.get_health import GetHealth
+from app.domain.services.tag import TagRepository, TagService
 from app.domain.services.tags import (
     InvalidTagFilterError,
     TagNotFoundError,
@@ -17,6 +18,8 @@ __all__ = [
     "DuplicateEmailError",
     "GetHealth",
     "InvalidAccessTokenError",
+    "TagRepository",
+    "TagService",
     "InvalidTagFilterError",
     "TagNotFoundError",
     "TagsService",

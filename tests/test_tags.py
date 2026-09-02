@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.domain.enums import TagTypeEnum
 from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import TagModel
 from app.main import app
