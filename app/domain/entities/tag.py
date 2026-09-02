@@ -1,4 +1,6 @@
-from dataclasses import dataclass
+from __future__ import annotations
+
+from dataclasses import dataclass, field
 from uuid import UUID
 
 from app.domain.enums import TagTypeEnum
@@ -9,6 +11,7 @@ class Tag:
     tag_id: UUID | None
     tag_name: str
     tag_parent_id: UUID | None = None
+    children: list[Tag] = field(default_factory=list)
 
     @property
     def tag_type(self) -> TagTypeEnum:
