@@ -22,7 +22,12 @@ SEED_USERS = (
     ),
 )
 
-SEED_MACRO_TAGS = ("Esportes", "Música", "Gastronomia", "Arte e Cultura")
+SEED_TAGS = {
+    "Esportes": ("Futebol", "Corrida"),
+    "Música": ("Rock", "Sertanejo"),
+    "Gastronomia": ("Culinária Italiana", "Confeitaria"),
+    "Arte e Cultura": ("Teatro", "Cinema"),
+}
 
 
 def seed_users(db: Session) -> None:
@@ -40,13 +45,27 @@ def seed_users(db: Session) -> None:
 
 
 def seed_tags(db: Session) -> None:
-    existing_names = set(
-        db.scalars(select(TagModel.tag_name).where(TagModel.tag_parent_id.is_(None)))
-    )
+    for macro_name, micro_names in SEED_TAGS.items():
+        macro = db.scalar(
+            select(TagModel).where(
+                TagModel.tag_name == macro_name,
+                TagModel.tag_parent_id.is_(None),
+            )
+        )
+        if macro is None:
+            macro = TagModel(tag_name=macro_name)
+            db.add(macro)
+            db.flush()
 
-    for name in SEED_MACRO_TAGS:
-        if name not in existing_names:
-            db.add(TagModel(tag_name=name))
+        existing_micro_names = set(
+            db.scalars(
+                select(TagModel.tag_name).where(TagModel.tag_parent_id == macro.tag_id)
+            )
+        )
+        for micro_name in micro_names:
+            if micro_name not in existing_micro_names:
+                db.add(TagModel(tag_name=micro_name, tag_parent_id=macro.tag_id))
+
     db.commit()
 
 

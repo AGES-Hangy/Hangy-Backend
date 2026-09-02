@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.infrastructure.repository import Base, get_db
-from app.infrastructure.repository.models import TagModel
 from app.main import app
+from app.seed import SEED_TAGS, seed_tags
 
 
 @pytest.fixture
@@ -33,29 +33,24 @@ def client() -> Iterator[TestClient]:
     engine.dispose()
 
 
-def seed_tags() -> None:
+def run_seed_tags() -> None:
     db_generator = app.dependency_overrides[get_db]()
     db = next(db_generator)
     try:
-        sports = TagModel(tag_name="Esportes")
-        db.add(sports)
-        db.flush()
-        db.add(TagModel(tag_name="Futebol", tag_parent_id=sports.tag_id))
-        db.add(TagModel(tag_name="Corrida", tag_parent_id=sports.tag_id))
-        db.add(TagModel(tag_name="Música"))
-        db.commit()
+        seed_tags(db)
     finally:
         db_generator.close()
 
 
 def test_tags_tree_returns_macros_with_nested_micros(client: TestClient) -> None:
-    seed_tags()
+    run_seed_tags()
 
     response = client.get("/tags/tree")
 
     assert response.status_code == 200
     by_name = {macro["name"]: macro for macro in response.json()}
-    assert by_name["Esportes"]["type"] == "MACRO"
-    esportes_children = [c["name"] for c in by_name["Esportes"]["children"]]
-    assert esportes_children == ["Corrida", "Futebol"]
-    assert by_name["Música"]["children"] == []
+    assert set(by_name) == set(SEED_TAGS)
+    for macro_name, micro_names in SEED_TAGS.items():
+        assert by_name[macro_name]["type"] == "MACRO"
+        children = {child["name"] for child in by_name[macro_name]["children"]}
+        assert children == set(micro_names)
