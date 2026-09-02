@@ -1,7 +1,5 @@
 """Mappers that transform client DTOs into domain entities."""
 
-from app.presentation.mappers.event import EventMapper
-from app.presentation.mappers.tag import TagMapper
-from app.presentation.mappers.user import UserMapper
+from app._package_exports import load_child_exports
 
-__all__ = ["EventMapper", "TagMapper", "UserMapper"]
+load_child_exports(__name__, globals())
