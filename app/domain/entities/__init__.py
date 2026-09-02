@@ -6,6 +6,7 @@ from app.domain.entities.event import Event
 from app.domain.entities.event_experience import EventExperience, ExperienceImage
 from app.domain.entities.event_invite_link import EventInviteLink
 from app.domain.entities.event_participant import EventParticipant
+from app.domain.entities.feed import Feed, FeedItem, FeedSection
 from app.domain.entities.health import HealthStatus
 from app.domain.entities.notification import (
     ConnectionNotification,
@@ -30,6 +31,9 @@ __all__ = [
     "EventParticipant",
     "EventParticipantNotification",
     "ExperienceImage",
+    "Feed",
+    "FeedItem",
+    "FeedSection",
     "HealthStatus",
     "Notification",
     "PersonProfile",
