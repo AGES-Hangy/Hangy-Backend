@@ -2,6 +2,14 @@
 
 from app.presentation.dtos.auth import RegisterInput, TokenOutput, UserOutput
 from app.presentation.dtos.health import HealthOutput
-from app.presentation.dtos.tag import TagOutput
+from app.presentation.dtos.tag import TagLeafOutput, TagNodeOutput, TagOutput
 
-__all__ = ["HealthOutput", "RegisterInput", "TagOutput", "TokenOutput", "UserOutput"]
+__all__ = [
+    "HealthOutput",
+    "RegisterInput",
+    "TagLeafOutput",
+    "TagNodeOutput",
+    "TagOutput",
+    "TokenOutput",
+    "UserOutput",
+]
