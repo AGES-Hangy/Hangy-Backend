@@ -6,18 +6,14 @@ from typing import Any
 
 def load_child_exports(package_name: str, namespace: dict[str, Any]) -> None:
     package = importlib.import_module(package_name)
-    exported_names = {
-        name for name in namespace if name != "load_child_exports"
-    }
+    exported_names = {name for name in namespace if name != "load_child_exports"}
 
     for module_info in pkgutil.iter_modules(package.__path__):
         if module_info.name.startswith("_"):
             continue
 
         module = importlib.import_module(f"{package_name}.{module_info.name}")
-        exported_names.update(
-            _export_module(module, module_info.name, namespace)
-        )
+        exported_names.update(_export_module(module, module_info.name, namespace))
 
     namespace["__all__"] = sorted(
         name for name in exported_names if not name.startswith("_")
