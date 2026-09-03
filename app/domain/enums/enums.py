@@ -19,7 +19,8 @@ class EventPrivacyEnum(StrEnum):
 
 class EventStatusEnum(StrEnum):
     DRAFT = "DRAFT"
-    CREATED = "CREATED"
+    # The Figma flow publishes straight away; DRAFT has no screen yet.
+    PUBLISHED = "PUBLISHED"
     CANCELLED = "CANCELLED"
     FINISHED = "FINISHED"
 
