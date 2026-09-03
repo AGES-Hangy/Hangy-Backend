@@ -68,13 +68,26 @@ A aplicação ficará disponível em:
 - Cadastro: `POST http://localhost:8000/register`
 - Login: `POST http://localhost:8000/login`
 - Usuário autenticado: `GET http://localhost:8000/users/me`
+- Feed da Home: `GET http://localhost:8000/feed`
 - Swagger UI: <http://localhost:8000/docs>
 - Especificação OpenAPI: <http://localhost:8000/openapi.json>
 
-O ambiente de desenvolvimento também cria, de forma idempotente, os usuários
-`user@hangy.com` (senha `user-password`) e `admin@hangy.com` (senha
-`admin-password`). Eles têm as mesmas permissões até que regras de autorização
-sejam adicionadas.
+O ambiente de desenvolvimento também popula o banco, de forma idempotente, com
+usuários, tags, interesses e eventos de exemplo (`python -m app.seed`, executado
+a cada start do contêiner). Os usuários têm as mesmas permissões até que regras
+de autorização sejam adicionadas:
+
+| E-mail            | Senha            | Tipo     | Interesses             |
+| ----------------- | ---------------- | -------- | ---------------------- |
+| `user@hangy.com`  | `user-password`  | PERSONAL | Futebol, Corrida, Rock |
+| `maria@hangy.com` | `maria-password` | PERSONAL | Samba                  |
+| `joao@hangy.com`  | `joao-password`  | PERSONAL | nenhum                 |
+| `admin@hangy.com` | `admin-password` | BUSINESS | nenhum                 |
+
+As tags de exemplo seguem a hierarquia macro → micro usada pelo feed:
+`Esportes` (Futebol, Corrida), `Música` (Rock, Samba, Sertanejo),
+`Gastronomia` (Churrasco, Culinária Italiana, Confeitaria) e `Arte e Cultura`
+(Teatro, Cinema).
 
 Para encerrar os contêineres:
 
@@ -193,11 +206,11 @@ Cliente HTTP ← response DTO ← assembler
 service ↔ infrastructure/repository (quando houver persistência)
 ```
 
-| Camada | Responsabilidade |
-| --- | --- |
-| `presentation` | Recebe requisições do cliente, define DTOs e converte dados de entrada em entidades. |
-| `domain` | Mantém entidades, enums e serviços com a lógica de negócio, além de montar os DTOs de resposta. |
-| `infrastructure` | Implementa repositórios e os detalhes técnicos de persistência. |
+| Camada           | Responsabilidade                                                                                |
+| ---------------- | ----------------------------------------------------------------------------------------------- |
+| `presentation`   | Recebe requisições do cliente, define DTOs e converte dados de entrada em entidades.            |
+| `domain`         | Mantém entidades, enums e serviços com a lógica de negócio, além de montar os DTOs de resposta. |
+| `infrastructure` | Implementa repositórios e os detalhes técnicos de persistência.                                 |
 
 ### Estrutura de diretórios
 
@@ -223,14 +236,14 @@ app/
 O mesmo conceito pode ter representações diferentes entre o cliente, o domínio
 e o banco de dados:
 
-| Tipo | Local | Finalidade |
-| --- | --- | --- |
-| DTO | `presentation/dtos` | Define os dados recebidos e devolvidos pela API. |
-| Mapper | `presentation/mappers` | Transforma DTOs recebidos do cliente em entidades de domínio. |
-| Entidade | `domain/entities` | Representa os dados usados pelas regras de negócio. |
-| Serviço | `domain/services` | Executa a lógica de negócio sobre entidades e valores do domínio. |
-| Assembler | `domain/assemblers` | Transforma entidades em DTOs que os controllers devolvem ao cliente. |
-| Enum | `domain/enums` | Centraliza conjuntos fechados de valores válidos no domínio. |
+| Tipo        | Local                       | Finalidade                                                            |
+| ----------- | --------------------------- | --------------------------------------------------------------------- |
+| DTO         | `presentation/dtos`         | Define os dados recebidos e devolvidos pela API.                      |
+| Mapper      | `presentation/mappers`      | Transforma DTOs recebidos do cliente em entidades de domínio.         |
+| Entidade    | `domain/entities`           | Representa os dados usados pelas regras de negócio.                   |
+| Serviço     | `domain/services`           | Executa a lógica de negócio sobre entidades e valores do domínio.     |
+| Assembler   | `domain/assemblers`         | Transforma entidades em DTOs que os controllers devolvem ao cliente.  |
+| Enum        | `domain/enums`              | Centraliza conjuntos fechados de valores válidos no domínio.          |
 | Repositório | `infrastructure/repository` | Encapsula banco de dados, modelos de persistência e acesso aos dados. |
 
 Por exemplo, o endpoint `GET /health` recebe a requisição em
