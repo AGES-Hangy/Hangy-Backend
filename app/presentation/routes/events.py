@@ -29,7 +29,7 @@ def get_events_service(db: Annotated[Session, Depends(get_db)]) -> EventsService
     return EventsService(repository=SqlAlchemyEventRepository(db))
 
 
-@router.post("/{event_id}/cancel", response_model=CancelEventOutput)
+@router.patch("/{event_id}/cancel", response_model=CancelEventOutput)
 def cancel_event(
     event_id: UUID,
     _: CancelEventInput,
