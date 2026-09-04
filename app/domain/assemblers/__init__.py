@@ -1,8 +1,3 @@
-"""Assemblers that transform domain entities into response DTOs."""
+from app._package_exports import load_child_exports
 
-from app.domain.assemblers.auth import AuthAssembler
-from app.domain.assemblers.event import EventAssembler
-from app.domain.assemblers.health import HealthAssembler
-from app.domain.assemblers.tag import TagAssembler
-
-__all__ = ["AuthAssembler", "EventAssembler", "HealthAssembler", "TagAssembler"]
+load_child_exports(__name__, globals())

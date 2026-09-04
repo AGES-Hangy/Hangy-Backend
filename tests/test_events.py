@@ -61,7 +61,7 @@ def _token_for(user_id: UUID) -> str:
 
 def _create_event(
     db: Session,
-    event_status: EventStatusEnum = EventStatusEnum.CREATED,
+    event_status: EventStatusEnum = EventStatusEnum.PUBLISHED,
 ) -> tuple[UUID, UUID, UUID, UUID, UUID]:
     organizer_id, confirmed_id, pending_id, invited_id = (
         uuid4(),

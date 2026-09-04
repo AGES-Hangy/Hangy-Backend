@@ -30,9 +30,16 @@ a API com recarregamento automático. A API estará disponível em
 No terminal integrado do Dev Container, execute os testes e o lint normalmente:
 
 ```bash
+alembic upgrade head
+python -m app.seed
 pytest
 ruff check .
 ```
+
+Esses comandos usam o serviço PostgreSQL `db` definido pelo Docker Compose. Por
+isso, mantenha `db` como o hostname do `DATABASE_URL` no `.env` ao trabalhar no
+Dev Container. O seed é idempotente e pode ser executado novamente com
+segurança.
 
 Depois de alterar o `.devcontainer/Dockerfile`, o
 `.devcontainer/docker-compose.yml`, o `requirements-dev.txt` ou o
@@ -130,6 +137,12 @@ Para aplicar as migrações:
 
 ```bash
 docker compose -f .devcontainer/docker-compose.yml exec api alembic upgrade head
+```
+
+Para executar o seed manualmente:
+
+```bash
+docker compose -f .devcontainer/docker-compose.yml exec api python -m app.seed
 ```
 
 ## Desenvolvimento local

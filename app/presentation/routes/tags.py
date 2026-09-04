@@ -7,7 +7,7 @@ from app.domain.assemblers import TagAssembler
 from app.domain.services import InvalidTagFilterError, TagNotFoundError, TagsService
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.tag import SqlAlchemyTagRepository
-from app.presentation.dtos import TagOutput
+from app.presentation.dtos import TagNodeOutput, TagOutput
 from app.presentation.mappers import TagMapper
 
 router = APIRouter(tags=["Tags"])
@@ -15,6 +15,22 @@ router = APIRouter(tags=["Tags"])
 
 def get_tags_service(db: Annotated[Session, Depends(get_db)]) -> TagsService:
     return TagsService(repository=SqlAlchemyTagRepository(db))
+
+
+@router.get(
+    "/tags/tree",
+    response_model=list[TagNodeOutput],
+    status_code=status.HTTP_200_OK,
+    summary="Listar a árvore de categorias de tags",
+    description=(
+        "Retorna todas as tags macro com suas tags micro aninhadas, "
+        "em uma única requisição."
+    ),
+)
+def get_tag_tree(
+    tags_service: Annotated[TagsService, Depends(get_tags_service)],
+) -> list[TagNodeOutput]:
+    return TagAssembler.to_tree_dto(tags_service.get_tag_tree())
 
 
 @router.get(
