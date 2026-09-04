@@ -46,3 +46,13 @@ class CreateEventOutput(BaseModel):
     privacy: EventPrivacyEnum
     event_date: datetime
     creator: EventCreatorOutput
+
+
+class CancelEventInput(BaseModel):
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class CancelEventOutput(BaseModel):
+    event_id: UUID
+    status: EventStatusEnum
+    updated_at: datetime
