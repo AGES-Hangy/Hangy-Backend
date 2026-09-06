@@ -73,6 +73,7 @@ EVENT_LONGITUDE = -51.2090
 @dataclass(frozen=True, slots=True)
 class SeedEvent:
     title: str
+    location_name: str
     tag_name: str
     creator_email: str
     # Days from "now", so a restart always leaves the feed with future events.
@@ -88,6 +89,7 @@ SEED_EVENTS = (
     # Visible in the feed of user@hangy.com, under "Esportes".
     SeedEvent(
         title="Pelada no Parcão",
+        location_name="Parque Moinhos de Vento (Parcão)",
         tag_name="Futebol",
         creator_email="admin@hangy.com",
         starts_in_days=1,
@@ -96,15 +98,17 @@ SEED_EVENTS = (
     ),
     SeedEvent(
         title="Corrida da Redenção",
+        location_name="Parque Farroupilha (Redenção)",
         tag_name="Corrida",
         creator_email="admin@hangy.com",
         starts_in_days=4,
         confirmed_emails=("maria@hangy.com",),
         pending_emails=("joao@hangy.com",),
     ),
-    # Visible, but without event_date and location_name.
+    # Visible, but the feed hides event_date and location_name for PRIVATE events.
     SeedEvent(
         title="Aniversário da Maria",
+        location_name="Casa da Maria",
         tag_name="Futebol",
         creator_email="maria@hangy.com",
         starts_in_days=2,
@@ -114,6 +118,7 @@ SEED_EVENTS = (
     # Never visible: reachable only through its invite link.
     SeedEvent(
         title="Rachão fechado",
+        location_name="Quadra do bairro",
         tag_name="Futebol",
         creator_email="admin@hangy.com",
         starts_in_days=3,
@@ -122,6 +127,7 @@ SEED_EVENTS = (
     # Visible, under "Música".
     SeedEvent(
         title="Show de rock no Opinião",
+        location_name="Bar Opinião",
         tag_name="Rock",
         creator_email="admin@hangy.com",
         starts_in_days=5,
@@ -131,12 +137,14 @@ SEED_EVENTS = (
     # Invisible: user@hangy.com has no interest in these tags.
     SeedEvent(
         title="Roda de samba na Cidade Baixa",
+        location_name="Cidade Baixa",
         tag_name="Samba",
         creator_email="maria@hangy.com",
         starts_in_days=6,
     ),
     SeedEvent(
         title="Churrasco do bairro",
+        location_name="Salão de festas do bairro",
         tag_name="Churrasco",
         creator_email="joao@hangy.com",
         starts_in_days=7,
@@ -144,12 +152,14 @@ SEED_EVENTS = (
     # Invisible: already happened, or never published.
     SeedEvent(
         title="Pelada de ontem",
+        location_name="Parque Moinhos de Vento (Parcão)",
         tag_name="Futebol",
         creator_email="admin@hangy.com",
         starts_in_days=-1,
     ),
     SeedEvent(
         title="Pelada em rascunho",
+        location_name="Parque Moinhos de Vento (Parcão)",
         tag_name="Futebol",
         creator_email="admin@hangy.com",
         starts_in_days=8,
@@ -157,6 +167,7 @@ SEED_EVENTS = (
     ),
     SeedEvent(
         title="Pelada cancelada",
+        location_name="Parque Moinhos de Vento (Parcão)",
         tag_name="Futebol",
         creator_email="admin@hangy.com",
         starts_in_days=9,
@@ -244,6 +255,7 @@ def seed_events(db: Session) -> None:
                 event_id=event_id,
                 event_creator_id=creator.user_id,
                 event_title=seed.title,
+                location_name=seed.location_name,
                 event_description=f"Evento de exemplo criado pelo seed: {seed.title}.",
                 event_latitude=EVENT_LATITUDE,
                 event_longitude=EVENT_LONGITUDE,
@@ -263,6 +275,8 @@ def seed_events(db: Session) -> None:
             # restart instead of slowly filling up with past events.
             event.starts_at = starts_at
             event.ends_at = starts_at + EVENT_DURATION
+            if event.location_name is None:
+                event.location_name = seed.location_name
 
         _seed_participants(db, event, seed, users)
     db.commit()

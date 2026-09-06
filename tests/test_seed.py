@@ -74,6 +74,29 @@ def test_seed_creates_the_sample_data_only_once(
         assert count(db, EventParticipantModel) == 6
 
 
+def test_seed_backfills_missing_locations_and_preserves_existing_names(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        events = db.scalars(select(EventModel)).all()
+        assert all(event.location_name for event in events)
+
+        missing, customized = events[:2]
+        expected_location = missing.location_name
+        missing.location_name = None
+        customized.location_name = "Local atualizado"
+        db.commit()
+
+        seed_events(db)
+        db.refresh(missing)
+        db.refresh(customized)
+
+        assert missing.location_name == expected_location
+        assert customized.location_name == "Local atualizado"
+        assert count(db, EventModel) == len(SEED_EVENTS)
+
+
 def test_seed_does_not_modify_an_existing_event_with_the_same_title(
     session_factory: sessionmaker[Session],
 ) -> None:
