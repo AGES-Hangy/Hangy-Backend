@@ -4,20 +4,25 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.domain.assemblers import EventAssembler
-from app.domain.entities import User
 from app.domain.services import (
+    AuthService,
     EventEndsBeforeItStartsError,
     EventsService,
     EventStartsInThePastError,
     EventTagNotFoundError,
+    InvalidAccessTokenError,
     InvalidEventCoordinatesError,
     TooManyEventTagsError,
 )
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
-from app.presentation.dependencies.auth import get_current_user
 from app.presentation.dtos import CreateEventInput, CreateEventOutput
 from app.presentation.mappers import EventMapper
+from app.presentation.routes.auth import (
+    credentials_exception,
+    get_access_token,
+    get_auth_service,
+)
 
 router = APIRouter(prefix="/events", tags=["Events"])
 
@@ -70,9 +75,15 @@ def get_events_service(db: Annotated[Session, Depends(get_db)]) -> EventsService
 )
 def create_event(
     payload: CreateEventInput,
-    organizer: Annotated[User, Depends(get_current_user)],
+    token: Annotated[str, Depends(get_access_token)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
     events_service: Annotated[EventsService, Depends(get_events_service)],
 ) -> CreateEventOutput:
+    try:
+        organizer = auth_service.get_user_from_token(token)
+    except InvalidAccessTokenError as error:
+        raise credentials_exception from error
+
     try:
         event = events_service.create(
             EventMapper.to_new_event(payload, organizer.user_id)

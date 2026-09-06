@@ -8,8 +8,8 @@ from app.domain.entities import User
 from app.domain.services import FeedService, InvalidFeedPaginationError
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.feed import SqlAlchemyFeedRepository
-from app.presentation.dependencies.auth import get_current_user
 from app.presentation.dtos import FeedOutput, FeedQuery
+from app.presentation.routes.auth import get_current_user
 
 router = APIRouter(tags=["Feed"])
 
