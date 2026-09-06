@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.domain.assemblers import AuthAssembler
+from app.domain.entities import User
 from app.domain.services import (
     AuthService,
     DuplicateEmailError,
@@ -96,13 +97,19 @@ def login(
     return AuthAssembler.to_token_dto(auth_service.create_access_token(user))
 
 
-@router.get("/users/me", response_model=UserOutput)
-def read_current_user(
+def get_current_user(
     token: Annotated[str, Depends(get_access_token)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
-) -> UserOutput:
+) -> User:
+    """Resolve the bearer token into the user every protected route needs."""
     try:
-        user = auth_service.get_user_from_token(token)
+        return auth_service.get_user_from_token(token)
     except InvalidAccessTokenError as error:
         raise credentials_exception from error
-    return AuthAssembler.to_user_dto(user)
+
+
+@router.get("/users/me", response_model=UserOutput)
+def read_current_user(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> UserOutput:
+    return AuthAssembler.to_user_dto(current_user)
