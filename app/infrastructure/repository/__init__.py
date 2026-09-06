@@ -1,6 +1,5 @@
 """Persistence configuration and repository implementations."""
 
-from app.infrastructure.repository.base import Base
-from app.infrastructure.repository.session import SessionLocal, engine, get_db
+from app._package_exports import load_child_exports
 
-__all__ = ["Base", "SessionLocal", "engine", "get_db"]
+load_child_exports(__name__, globals())

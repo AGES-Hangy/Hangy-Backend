@@ -99,6 +99,27 @@ O PostgreSQL é armazenado no volume Docker `hangy_postgres_data`. Para também
 remover os dados locais, execute
 `docker compose -f .devcontainer/docker-compose.yml down -v`.
 
+## Feed da Home
+
+`GET /feed?limit=10` exige um Bearer token e retorna `sections`, agrupadas
+pela tag macro dos interesses do usuário. Cada seção contém `tag`, `items`
+e `has_more`. O limite vale por seção (1 a 50); `has_more` indica que existem
+outros eventos, mas este endpoint ainda não aceita cursor ou página seguinte.
+
+Entram apenas eventos futuros, não excluídos e com status `PUBLISHED`.
+Eventos `INVITE_ONLY` não aparecem. Nos eventos `PRIVATE`, `event_date` e
+`location_name` são nulos; nos públicos, o local é o nome salvo no evento.
+A contagem de participantes inclui somente os confirmados.
+
+Sem interesses, a resposta é `{"sections": []}`. O feed padrão para esse
+caso ainda depende de definição de produto. O filtro de criadores que
+bloquearam o usuário depende da implementação de `USER_BLOCK`.
+
+Os eventos de desenvolvimento usam IDs determinísticos para que o seed
+não altere eventos de usuários com o mesmo título. Dados gerados pela versão
+anterior do seed, com IDs aleatórios, são preservados e podem coexistir com
+os novos exemplos.
+
 ## Autenticação
 
 Cadastre um usuário enviando JSON:

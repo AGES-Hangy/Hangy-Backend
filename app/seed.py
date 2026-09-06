@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -78,7 +78,7 @@ class SeedEvent:
     # Days from "now", so a restart always leaves the feed with future events.
     starts_in_days: int
     privacy: EventPrivacyEnum = EventPrivacyEnum.PUBLIC
-    event_status: EventStatusEnum = EventStatusEnum.CREATED
+    event_status: EventStatusEnum = EventStatusEnum.PUBLISHED
     cover_photo_url: str | None = None
     confirmed_emails: tuple[str, ...] = field(default_factory=tuple)
     pending_emails: tuple[str, ...] = field(default_factory=tuple)
@@ -234,11 +234,14 @@ def seed_events(db: Session) -> None:
             continue
 
         starts_at = now + timedelta(days=seed.starts_in_days)
-        event = db.scalar(
-            select(EventModel).where(EventModel.event_title == seed.title)
+        # Titles are not unique and can belong to user-created events.
+        event_id = uuid5(
+            NAMESPACE_URL, f"hangy:seed:event:{seed.creator_email}:{seed.title}"
         )
+        event = db.get(EventModel, event_id)
         if event is None:
             event = EventModel(
+                event_id=event_id,
                 event_creator_id=creator.user_id,
                 event_title=seed.title,
                 event_description=f"Evento de exemplo criado pelo seed: {seed.title}.",

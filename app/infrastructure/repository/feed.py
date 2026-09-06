@@ -19,9 +19,9 @@ from app.infrastructure.repository.models import (
     user_tag,
 )
 
-# CREATED is the published state of an event: DRAFT is still being written and
-# CANCELLED/FINISHED are already over, so only CREATED reaches the feed.
-PUBLISHED_EVENT_STATUS = EventStatusEnum.CREATED
+# PUBLISHED is the published state of an event: DRAFT is still being written and
+# CANCELLED/FINISHED are already over, so only PUBLISHED reaches the feed.
+PUBLISHED_EVENT_STATUS = EventStatusEnum.PUBLISHED
 
 # INVITE_ONLY events are reached only through their invite link, so they are
 # never discoverable; PRIVATE ones are, and the service hides their details.
@@ -96,8 +96,7 @@ class SqlAlchemyFeedRepository:
             event_id=model.event_id,
             title=model.event_title,
             event_date=model.starts_at,
-            # EVENT only stores coordinates; there is no venue name column yet.
-            location_name=None,
+            location_name=model.location_name,
             cover_photo_url=model.cover_photo_url,
             privacy=model.event_privacy,
             participants_count=participants_count,

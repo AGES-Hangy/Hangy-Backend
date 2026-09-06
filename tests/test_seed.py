@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -71,6 +72,41 @@ def test_seed_creates_the_sample_data_only_once(
         assert count(db, EventModel) == len(SEED_EVENTS)
         assert count(db, user_tag) == 4
         assert count(db, EventParticipantModel) == 6
+
+
+def test_seed_does_not_modify_an_existing_event_with_the_same_title(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_users(db)
+        seed_tags(db)
+        creator = db.scalar(
+            select(UserModel).where(UserModel.email == SEED_EVENTS[0].creator_email)
+        )
+        starts_at = datetime.now(UTC) + timedelta(days=30)
+        event = EventModel(
+            event_creator_id=creator.user_id,
+            event_title=SEED_EVENTS[0].title,
+            event_latitude=-30.0,
+            event_longitude=-51.0,
+            starts_at=starts_at,
+            ends_at=starts_at + timedelta(hours=2),
+            event_status=SEED_EVENTS[0].event_status,
+            event_privacy=SEED_EVENTS[0].privacy,
+        )
+        db.add(event)
+        db.commit()
+        original_start = event.starts_at
+        original_end = event.ends_at
+
+        seed_events(db)
+        seed_events(db)
+        db.refresh(event)
+
+        assert event.starts_at == original_start
+        assert event.ends_at == original_end
+        assert event.participants == []
+        assert count(db, EventModel) == len(SEED_EVENTS) + 1
 
 
 def test_seed_tags_creates_the_default_macro_and_micro_tags_only_once(

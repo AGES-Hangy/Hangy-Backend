@@ -110,7 +110,7 @@ def create_event(
     tag_ids: tuple[uuid.UUID, ...] = (),
     starts_at: datetime | None = None,
     privacy: EventPrivacyEnum = EventPrivacyEnum.PUBLIC,
-    event_status: EventStatusEnum = EventStatusEnum.CREATED,
+    event_status: EventStatusEnum = EventStatusEnum.PUBLISHED,
 ) -> uuid.UUID:
     starts_at = starts_at if starts_at is not None else NOW + timedelta(days=1)
     event = EventModel(
@@ -375,6 +375,40 @@ def test_feed_requires_authentication(context: FeedContext) -> None:
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Could not validate credentials"}
+
+
+def test_feed_rejects_an_invalid_token(context: FeedContext) -> None:
+    response = context.client.get("/feed", headers={"Authorization": "Bearer invalid"})
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+@pytest.mark.parametrize("privacy", [EventPrivacyEnum.PUBLIC, EventPrivacyEnum.PRIVATE])
+def test_newly_published_event_is_discoverable_with_appropriate_location(
+    context: FeedContext,
+    privacy: EventPrivacyEnum,
+) -> None:
+    sports = create_tag(context.db, "Esportes")
+    add_interest(context.db, context.user_id, sports)
+    response = context.client.post(
+        "/events",
+        headers=context.auth_headers,
+        json={
+            "title": "New event",
+            "event_date": (NOW + timedelta(days=2)).isoformat(),
+            "end_date": (NOW + timedelta(days=2, hours=2)).isoformat(),
+            "location": {"latitude": -30.0, "longitude": -51.0},
+            "location_name": "Parque",
+            "privacy": privacy.value,
+            "tag_ids": [str(sports)],
+        },
+    )
+    assert response.status_code == 201, response.text
+    item = get_feed(context)["sections"][0]["items"][0]
+    assert item["title"] == "New event"
+    assert item["location_name"] == (
+        "Parque" if privacy == EventPrivacyEnum.PUBLIC else None
+    )
 
 
 @pytest.mark.skip(
