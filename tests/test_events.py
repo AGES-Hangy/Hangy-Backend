@@ -128,7 +128,7 @@ def test_cancel_event_marks_it_cancelled_and_notifies_participants(
     with session_factory() as db:
         event_id, organizer_id, confirmed_id, pending_id, _ = _create_event(db)
 
-    response = client.post(
+    response = client.patch(
         f"/events/{event_id}/cancel",
         json={"reason": "Chuva"},
         headers={"Authorization": f"Bearer {_token_for(organizer_id)}"},
@@ -161,7 +161,7 @@ def test_only_the_organizer_can_cancel_an_event(
     with session_factory() as db:
         event_id, _, confirmed_id, _, _ = _create_event(db)
 
-    response = client.post(
+    response = client.patch(
         f"/events/{event_id}/cancel",
         json={"reason": "Chuva"},
         headers={"Authorization": f"Bearer {_token_for(confirmed_id)}"},
@@ -178,7 +178,7 @@ def test_cannot_cancel_a_finished_event(
     with session_factory() as db:
         event_id, organizer_id, _, _, _ = _create_event(db, EventStatusEnum.FINISHED)
 
-    response = client.post(
+    response = client.patch(
         f"/events/{event_id}/cancel",
         json={"reason": "Chuva"},
         headers={"Authorization": f"Bearer {_token_for(organizer_id)}"},
@@ -195,7 +195,7 @@ def test_cancel_returns_not_found_for_an_unknown_event(
     with session_factory() as db:
         _, organizer_id, _, _, _ = _create_event(db)
 
-    response = client.post(
+    response = client.patch(
         f"/events/{uuid4()}/cancel",
         json={"reason": "Chuva"},
         headers={"Authorization": f"Bearer {_token_for(organizer_id)}"},
