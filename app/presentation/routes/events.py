@@ -125,7 +125,7 @@ def create_event(
     return EventAssembler.to_created_dto(event, organizer)
 
 
-@router.post("/{event_id}/cancel", response_model=CancelEventOutput)
+@router.patch("/{event_id}/cancel", response_model=CancelEventOutput)
 def cancel_event(
     event_id: UUID,
     _: CancelEventInput,
