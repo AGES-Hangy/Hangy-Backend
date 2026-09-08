@@ -1,5 +1,6 @@
 from app.domain.entities import Event, User
 from app.presentation.dtos import (
+    CancelEventOutput,
     CreateEventOutput,
     EventCreatorOutput,
     UpdateEventOutput,
@@ -22,6 +23,16 @@ class EventAssembler:
             privacy=event.event_privacy,
             event_date=event.starts_at,
             creator=EventCreatorOutput(id=creator.user_id, name=creator.name),
+        )
+
+    @staticmethod
+    def to_cancel_dto(event: Event) -> CancelEventOutput:
+        if event.event_id is None:
+            raise ValueError("A persisted event must have an id")
+        return CancelEventOutput(
+            event_id=event.event_id,
+            status=event.event_status,
+            updated_at=event.updated_at,
         )
 
     @staticmethod

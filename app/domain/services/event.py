@@ -16,6 +16,10 @@ class EventRepository(Protocol):
 
     def find_existing_tag_ids(self, tag_ids: Collection[UUID]) -> set[UUID]: ...
 
+    def get_by_id(self, event_id: UUID) -> Event | None: ...
+
+    def cancel(self, event_id: UUID) -> Event: ...
+
     def get(self, event_id: UUID) -> Event | None: ...
 
     def update(self, event: Event, tag_ids: Collection[UUID] | None) -> Event: ...
@@ -41,16 +45,16 @@ class EventTagNotFoundError(Exception):
     """Raised when an event references a tag that does not exist."""
 
 
-class EventNotFoundError(Exception):
-    """Raised when an event does not exist or is no longer visible."""
-
-
-class EventNotOrganizerError(Exception):
-    """Raised when someone other than the organizer tries to edit an event."""
-
-
 class EventAlreadyFinishedError(Exception):
-    """Raised when an event that has finished is edited."""
+    """Raised when an event that has already finished is changed."""
+
+
+class EventNotFoundError(Exception):
+    """Raised when the requested event does not exist or is not visible."""
+
+
+class NotEventOrganizerError(Exception):
+    """Raised when someone other than the creator changes an event."""
 
 
 class EventsService:
@@ -79,13 +83,23 @@ class EventsService:
 
         return self.repository.add(event)
 
+    def cancel(self, event_id: UUID, requester_id: UUID) -> Event:
+        event = self.repository.get_by_id(event_id)
+        if event is None:
+            raise EventNotFoundError
+        if event.event_creator_id != requester_id:
+            raise NotEventOrganizerError
+        if event.event_status is EventStatusEnum.FINISHED:
+            raise EventAlreadyFinishedError
+        return self.repository.cancel(event_id)
+
     def update(self, event_id: UUID, organizer_id: UUID, changes: EventUpdate) -> Event:
         """Apply a partial update after enforcing the event editing rules."""
         event = self.repository.get(event_id)
         if event is None:
             raise EventNotFoundError
         if event.event_creator_id != organizer_id:
-            raise EventNotOrganizerError
+            raise NotEventOrganizerError
         if event.event_status is EventStatusEnum.FINISHED:
             raise EventAlreadyFinishedError
 

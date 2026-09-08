@@ -50,6 +50,16 @@ class CreateEventOutput(BaseModel):
     creator: EventCreatorOutput
 
 
+class CancelEventInput(BaseModel):
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class CancelEventOutput(BaseModel):
+    event_id: UUID
+    status: EventStatusEnum
+    updated_at: datetime
+
+
 class UpdateEventInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
