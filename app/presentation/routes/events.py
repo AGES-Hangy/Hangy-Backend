@@ -1,4 +1,5 @@
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -6,7 +7,10 @@ from sqlalchemy.orm import Session
 from app.domain.assemblers import EventAssembler
 from app.domain.services import (
     AuthService,
+    EventAlreadyFinishedError,
     EventEndsBeforeItStartsError,
+    EventNotFoundError,
+    EventNotOrganizerError,
     EventsService,
     EventStartsInThePastError,
     EventTagNotFoundError,
@@ -16,7 +20,12 @@ from app.domain.services import (
 )
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
-from app.presentation.dtos import CreateEventInput, CreateEventOutput
+from app.presentation.dtos import (
+    CreateEventInput,
+    CreateEventOutput,
+    UpdateEventInput,
+    UpdateEventOutput,
+)
 from app.presentation.mappers import EventMapper
 from app.presentation.routes.auth import (
     credentials_exception,
@@ -114,3 +123,84 @@ def create_event(
             detail="Tag not found",
         ) from error
     return EventAssembler.to_created_dto(event, organizer)
+
+
+@router.patch(
+    "/{event_id}",
+    response_model=UpdateEventOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Editar um evento",
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "A nova data, horario ou local e invalido.",
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Apenas o organizador pode editar o evento.",
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "O evento nao existe ou nao esta visivel.",
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "Eventos encerrados nao podem ser editados.",
+        },
+    },
+)
+def update_event(
+    event_id: UUID,
+    payload: UpdateEventInput,
+    token: Annotated[str, Depends(get_access_token)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    events_service: Annotated[EventsService, Depends(get_events_service)],
+) -> UpdateEventOutput:
+    try:
+        organizer = auth_service.get_user_from_token(token)
+    except InvalidAccessTokenError as error:
+        raise credentials_exception from error
+
+    try:
+        event = events_service.update(
+            event_id,
+            organizer.user_id,
+            EventMapper.to_event_update(payload),
+        )
+    except EventStartsInThePastError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Event date must be in the future",
+        ) from error
+    except EventEndsBeforeItStartsError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Event must end after it starts",
+        ) from error
+    except InvalidEventCoordinatesError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid event coordinates",
+        ) from error
+    except TooManyEventTagsError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An event accepts at most 5 tags",
+        ) from error
+    except EventTagNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tag not found",
+        ) from error
+    except EventNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found",
+        ) from error
+    except EventNotOrganizerError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the organizer can edit this event",
+        ) from error
+    except EventAlreadyFinishedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Event already finished",
+        ) from error
+    return EventAssembler.to_updated_dto(event)

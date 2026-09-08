@@ -41,3 +41,19 @@ class Event:
     max_participants: int | None = None
     cover_photo_url: str | None = None
     deleted_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EventUpdate:
+    """A partial change requested by an event organizer."""
+
+    event_title: str | None = None
+    event_description: str | None = None
+    event_latitude: float | None = None
+    event_longitude: float | None = None
+    location_name: str | None = None
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    cover_photo_url: str | None = None
+    tag_ids: tuple[UUID, ...] = ()
+    fields_to_update: frozenset[str] = frozenset()
