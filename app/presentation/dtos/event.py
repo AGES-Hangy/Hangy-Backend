@@ -3,7 +3,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.domain.enums import EventPrivacyEnum, EventStatusEnum
+from app.domain.enums import (
+    EventParticipantStatusEnum,
+    EventPrivacyEnum,
+    EventStatusEnum,
+)
 
 
 class EventLocationInput(BaseModel):
@@ -46,3 +50,13 @@ class CreateEventOutput(BaseModel):
     privacy: EventPrivacyEnum
     event_date: datetime
     creator: EventCreatorOutput
+
+
+class UpdateEventParticipantInput(BaseModel):
+    status: EventParticipantStatusEnum
+
+
+class UpdateEventParticipantOutput(BaseModel):
+    participant_id: UUID
+    status: EventParticipantStatusEnum
+    updated_at: datetime
