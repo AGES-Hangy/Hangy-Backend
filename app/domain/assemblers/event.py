@@ -1,6 +1,7 @@
 from app.domain.entities import Event, EventInviteLink, User
 from app.presentation.dtos import (
     CreateEventOutput,
+    CancelEventOutput,
     CreateInviteLinkOutput,
     EventCreatorOutput,
 )
@@ -35,4 +36,11 @@ class EventAssembler:
             token=invite_link.token,
             url=f"{base_url}{invite_link.token}",
             expires_at=invite_link.expires_at,
+    def to_cancel_dto(event: Event) -> CancelEventOutput:
+        if event.event_id is None:
+            raise ValueError("A persisted event must have an id")
+        return CancelEventOutput(
+            event_id=event.event_id,
+            status=event.event_status,
+            updated_at=event.updated_at,
         )

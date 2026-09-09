@@ -8,6 +8,7 @@ from app.config import settings
 from app.domain.assemblers import EventAssembler
 from app.domain.services import (
     AuthService,
+    EventAlreadyFinishedError,
     EventEndsBeforeItStartsError,
     EventNotFoundError,
     EventNotInviteOnlyError,
@@ -29,6 +30,8 @@ from app.presentation.dtos import (
     CreateEventInput,
     CreateEventOutput,
     CreateInviteLinkOutput,
+    CancelEventInput,
+    CancelEventOutput,
 )
 from app.presentation.mappers import EventMapper
 from app.presentation.routes.auth import (
@@ -188,6 +191,22 @@ def create_invite_link(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found",
+@router.patch("/{event_id}/cancel", response_model=CancelEventOutput)
+def cancel_event(
+    event_id: UUID,
+    _: CancelEventInput,
+    token: Annotated[str, Depends(get_access_token)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    events_service: Annotated[EventsService, Depends(get_events_service)],
+) -> CancelEventOutput:
+    try:
+        requester = auth_service.get_user_from_token(token)
+        event = events_service.cancel(event_id, requester.user_id)
+    except InvalidAccessTokenError as error:
+        raise credentials_exception from error
+    except EventNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Event not found"
         ) from error
     except NotEventOrganizerError as error:
         raise HTTPException(
@@ -200,3 +219,11 @@ def create_invite_link(
             detail="Event is not invite only",
         ) from error
     return EventAssembler.to_invite_link_dto(invite_link, settings.invite_link_base_url)
+            detail="Only the organizer can edit this event",
+        ) from error
+    except EventAlreadyFinishedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Event already finished",
+        ) from error
+    return EventAssembler.to_cancel_dto(event)

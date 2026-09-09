@@ -6,7 +6,7 @@
   "overrideCommand": false,
   "shutdownAction": "stopCompose",
 
-  "postCreateCommand": "pip install --no-cache-dir -r requirements-dev.txt && git config core.hooksPath .githooks",
+  "postCreateCommand": "git config --global --add safe.directory /app && pip install --no-cache-dir -r requirements-dev.txt && git config core.hooksPath .githooks",
   "postStartCommand": "alembic upgrade head",
 
   "customizations": {
