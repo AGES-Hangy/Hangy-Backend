@@ -5,6 +5,7 @@ from app.config import settings
 from app.presentation.routes import (
     auth_router,
     events_router,
+    feed_router,
     health_router,
     tags_router,
 )
@@ -27,3 +28,4 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(events_router)
 app.include_router(tags_router)
+app.include_router(feed_router)

@@ -1,7 +1,9 @@
 from app.domain.entities import Event, EventParticipant, User
 from app.presentation.dtos import (
+    CancelEventOutput,
     CreateEventOutput,
     EventCreatorOutput,
+    UpdateEventOutput,
     UpdateEventParticipantOutput,
 )
 
@@ -34,4 +36,26 @@ class EventAssembler:
             participant_id=participant.participant_id,
             status=participant.status,
             updated_at=participant.updated_at,
+        )
+
+    @staticmethod
+    def to_cancel_dto(event: Event) -> CancelEventOutput:
+        if event.event_id is None:
+            raise ValueError("A persisted event must have an id")
+        return CancelEventOutput(
+            event_id=event.event_id,
+            status=event.event_status,
+            updated_at=event.updated_at,
+        )
+
+    @staticmethod
+    def to_updated_dto(event: Event) -> UpdateEventOutput:
+        if event.event_id is None:
+            raise ValueError("A persisted event must have an id")
+        return UpdateEventOutput(
+            event_id=event.event_id,
+            title=event.event_title,
+            event_date=event.starts_at,
+            status=event.event_status,
+            updated_at=event.updated_at,
         )

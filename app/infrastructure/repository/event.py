@@ -1,4 +1,5 @@
 from collections.abc import Collection
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -12,6 +13,7 @@ from app.domain.enums import (
 )
 from app.domain.services.event import EventIsFullError, EventParticipantNotFoundError
 from app.infrastructure.repository.models import (
+    EventCancelledNotificationModel,
     EventModel,
     EventParticipantModel,
     EventParticipantNotificationModel,
@@ -24,15 +26,6 @@ class SqlAlchemyEventRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def find_existing_tag_ids(self, tag_ids: Collection[UUID]) -> set[UUID]:
-        if not tag_ids:
-            return set()
-        return set(
-            self.db.scalars(
-                select(TagModel.tag_id).where(TagModel.tag_id.in_(tag_ids))
-            ).all()
-        )
-
     def get_by_id(self, event_id: UUID) -> Event | None:
         model = self.db.scalar(
             select(EventModel).where(
@@ -41,6 +34,48 @@ class SqlAlchemyEventRepository:
             )
         )
         return self._to_entity(model) if model is not None else None
+
+    def cancel(self, event_id: UUID) -> Event:
+        model = self.db.scalar(
+            select(EventModel).where(EventModel.event_id == event_id)
+        )
+        if model is None:
+            raise ValueError("An event validated by the service must exist")
+
+        model.event_status = EventStatusEnum.CANCELLED
+        model.updated_at = datetime.now(UTC)
+        participant_user_ids = self.db.scalars(
+            select(EventParticipantModel.user_id).where(
+                EventParticipantModel.event_id == event_id,
+                EventParticipantModel.status.in_(
+                    (
+                        EventParticipantStatusEnum.CONFIRMED,
+                        EventParticipantStatusEnum.PENDING,
+                    )
+                ),
+            )
+        ).all()
+        for user_id in participant_user_ids:
+            notification = NotificationModel(
+                user_id=user_id,
+                type=NotificationTypeEnum.EVENT_CANCELLED,
+            )
+            notification.event_cancelled_detail = EventCancelledNotificationModel(
+                event_id=event_id
+            )
+            self.db.add(notification)
+        self.db.commit()
+        self.db.refresh(model)
+        return self._to_entity(model)
+
+    def find_existing_tag_ids(self, tag_ids: Collection[UUID]) -> set[UUID]:
+        if not tag_ids:
+            return set()
+        return set(
+            self.db.scalars(
+                select(TagModel.tag_id).where(TagModel.tag_id.in_(tag_ids))
+            ).all()
+        )
 
     def get_participant(
         self, event_id: UUID, participant_id: UUID
@@ -142,6 +177,41 @@ class SqlAlchemyEventRepository:
                 ).all()
             )
         self.db.add(model)
+        self.db.commit()
+        self.db.refresh(model)
+        return self._to_entity(model)
+
+    def get(self, event_id: UUID) -> Event | None:
+        model = self.db.scalar(
+            select(EventModel).where(
+                EventModel.event_id == event_id,
+                EventModel.deleted_at.is_(None),
+            )
+        )
+        return self._to_entity(model) if model is not None else None
+
+    def update(self, event: Event, tag_ids: Collection[UUID] | None) -> Event:
+        if event.event_id is None:
+            raise ValueError("An event update requires an id")
+        model = self.db.get(EventModel, event.event_id)
+        if model is None:
+            raise ValueError("Cannot update an event that does not exist")
+
+        model.event_title = event.event_title
+        model.event_description = event.event_description
+        model.event_latitude = event.event_latitude
+        model.event_longitude = event.event_longitude
+        model.location_name = event.location_name
+        model.starts_at = event.starts_at
+        model.ends_at = event.ends_at
+        model.cover_photo_url = event.cover_photo_url
+        if tag_ids is not None:
+            model.tags = list(
+                self.db.scalars(
+                    select(TagModel).where(TagModel.tag_id.in_(tag_ids))
+                ).all()
+            )
+
         self.db.commit()
         self.db.refresh(model)
         return self._to_entity(model)
