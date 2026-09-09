@@ -21,17 +21,23 @@ from app.domain.services import (
     NotEventOrganizerError,
     TooManyEventTagsError,
 )
+from app.domain.services.event_privacy import (
+    EventNotFoundError as InviteLinkNotFoundError,
+)
+from app.domain.services.event_privacy import (
+    NotEventOrganizerError as NotInviteLinkOrganizerError,
+)
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
 from app.infrastructure.repository.event_invite_link import (
     SqlAlchemyEventInviteLinkRepository,
 )
 from app.presentation.dtos import (
+    CancelEventInput,
+    CancelEventOutput,
     CreateEventInput,
     CreateEventOutput,
     CreateInviteLinkOutput,
-    CancelEventInput,
-    CancelEventOutput,
 )
 from app.presentation.mappers import EventMapper
 from app.presentation.routes.auth import (
@@ -187,10 +193,24 @@ def create_invite_link(
         invite_link = event_privacy_service.create_invite_link(
             event_id, organizer.user_id
         )
-    except EventNotFoundError as error:
+    except InviteLinkNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found",
+        ) from error
+    except NotInviteLinkOrganizerError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the organizer can change privacy",
+        ) from error
+    except EventNotInviteOnlyError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Event is not invite only",
+        ) from error
+    return EventAssembler.to_invite_link_dto(invite_link, settings.invite_link_base_url)
+
+
 @router.patch("/{event_id}/cancel", response_model=CancelEventOutput)
 def cancel_event(
     event_id: UUID,
@@ -211,14 +231,6 @@ def cancel_event(
     except NotEventOrganizerError as error:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the organizer can change privacy",
-        ) from error
-    except EventNotInviteOnlyError as error:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Event is not invite only",
-        ) from error
-    return EventAssembler.to_invite_link_dto(invite_link, settings.invite_link_base_url)
             detail="Only the organizer can edit this event",
         ) from error
     except EventAlreadyFinishedError as error:
