@@ -3,12 +3,36 @@ from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
-from app.domain.entities import Event, EventUpdate, NewEvent
-from app.domain.enums import EventStatusEnum
+from app.domain.entities import Event, EventParticipant, EventUpdate, NewEvent
+from app.domain.enums import (
+    EventParticipantStatusEnum,
+    EventStatusEnum,
+    NotificationTypeEnum,
+)
 
 MAX_EVENT_TAGS = 5
 MIN_LATITUDE, MAX_LATITUDE = -90.0, 90.0
 MIN_LONGITUDE, MAX_LONGITUDE = -180.0, 180.0
+
+VALID_TRANSITIONS: dict[EventParticipantStatusEnum, set[EventParticipantStatusEnum]] = {
+    EventParticipantStatusEnum.PENDING: {
+        EventParticipantStatusEnum.CONFIRMED,
+        EventParticipantStatusEnum.REJECTED,
+    },
+    EventParticipantStatusEnum.INVITED: {
+        EventParticipantStatusEnum.CONFIRMED,
+        EventParticipantStatusEnum.REJECTED,
+    },
+    EventParticipantStatusEnum.CONFIRMED: {
+        EventParticipantStatusEnum.REMOVED,
+    },
+}
+
+NOTIFICATION_TYPE_BY_STATUS: dict[EventParticipantStatusEnum, NotificationTypeEnum] = {
+    EventParticipantStatusEnum.CONFIRMED: NotificationTypeEnum.EVENT_REQUEST_APPROVED,
+    EventParticipantStatusEnum.REJECTED: NotificationTypeEnum.EVENT_REQUEST_REJECTED,
+    EventParticipantStatusEnum.REMOVED: NotificationTypeEnum.EVENT_PARTICIPANT_REMOVED,
+}
 
 
 class EventRepository(Protocol):
@@ -17,6 +41,18 @@ class EventRepository(Protocol):
     def find_existing_tag_ids(self, tag_ids: Collection[UUID]) -> set[UUID]: ...
 
     def get_by_id(self, event_id: UUID) -> Event | None: ...
+
+    def get_participant(
+        self, event_id: UUID, participant_id: UUID
+    ) -> EventParticipant | None: ...
+
+    def update_participant_status_and_notify(
+        self,
+        event_id: UUID,
+        participant_id: UUID,
+        new_status: EventParticipantStatusEnum,
+        notification_type: NotificationTypeEnum,
+    ) -> EventParticipant: ...
 
     def cancel(self, event_id: UUID) -> Event: ...
 
@@ -45,16 +81,28 @@ class EventTagNotFoundError(Exception):
     """Raised when an event references a tag that does not exist."""
 
 
-class EventAlreadyFinishedError(Exception):
-    """Raised when an event that has already finished is changed."""
-
-
 class EventNotFoundError(Exception):
     """Raised when the requested event does not exist or is not visible."""
 
 
+class EventParticipantNotFoundError(Exception):
+    """Raised when a participant does not exist in an event."""
+
+
 class NotEventOrganizerError(Exception):
     """Raised when someone other than the creator changes an event."""
+
+
+class InvalidParticipantStatusTransitionError(Exception):
+    """Raised when an invalid participant state transition is requested."""
+
+
+class EventIsFullError(Exception):
+    """Raised when approving a participant exceeds the event capacity."""
+
+
+class EventAlreadyFinishedError(Exception):
+    """Raised when an event that has already finished is changed."""
 
 
 class EventsService:
@@ -75,13 +123,46 @@ class EventsService:
         if len(event.tag_ids) > MAX_EVENT_TAGS:
             raise TooManyEventTagsError
 
-        # Checking every tag before writing keeps a bad tag from persisting an event.
         if event.tag_ids:
             existing = self.repository.find_existing_tag_ids(event.tag_ids)
             if len(existing) != len(event.tag_ids):
                 raise EventTagNotFoundError
 
         return self.repository.add(event)
+
+    def update_participant_status(
+        self,
+        event_id: UUID,
+        participant_id: UUID,
+        new_status: EventParticipantStatusEnum,
+        requester_id: UUID,
+    ) -> EventParticipant:
+        """Approve, reject, or remove an event participant."""
+        event = self.repository.get_by_id(event_id)
+        if event is None:
+            raise EventNotFoundError
+
+        if event.event_creator_id != requester_id:
+            raise NotEventOrganizerError
+
+        participant = self.repository.get_participant(event_id, participant_id)
+        if participant is None:
+            raise EventParticipantNotFoundError
+
+        allowed_next_statuses = VALID_TRANSITIONS.get(participant.status, set())
+        if new_status not in allowed_next_statuses:
+            raise InvalidParticipantStatusTransitionError
+
+        notification_type = NOTIFICATION_TYPE_BY_STATUS.get(new_status)
+        if notification_type is None:
+            raise InvalidParticipantStatusTransitionError
+
+        return self.repository.update_participant_status_and_notify(
+            event_id=event_id,
+            participant_id=participant_id,
+            new_status=new_status,
+            notification_type=notification_type,
+        )
 
     def cancel(self, event_id: UUID, requester_id: UUID) -> Event:
         event = self.repository.get_by_id(event_id)
