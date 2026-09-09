@@ -5,7 +5,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.domain.entities import Event, NewEvent
+from app.domain.entities import Event, EventInviteLink, NewEvent
 from app.domain.enums import (
     EventParticipantStatusEnum,
     EventStatusEnum,
@@ -13,6 +13,7 @@ from app.domain.enums import (
 )
 from app.infrastructure.repository.models import (
     EventCancelledNotificationModel,
+    EventInviteLinkModel,
     EventModel,
     EventParticipantModel,
     NotificationModel,
@@ -32,6 +33,32 @@ class SqlAlchemyEventRepository:
             )
         )
         return self._to_entity(model) if model is not None else None
+
+    def get_for_share(self, event_id: UUID) -> Event | None:
+        model = self.db.scalar(
+            select(EventModel).where(
+                EventModel.event_id == event_id,
+                EventModel.deleted_at.is_(None),
+                EventModel.event_status == EventStatusEnum.PUBLISHED,
+            )
+        )
+        return self._to_entity(model) if model is not None else None
+
+    def get_invite_link(self, event_id: UUID) -> EventInviteLink | None:
+        model = self.db.scalar(
+            select(EventInviteLinkModel)
+            .where(EventInviteLinkModel.event_id == event_id)
+            .order_by(EventInviteLinkModel.created_at.desc())
+        )
+        if model is None:
+            return None
+        return EventInviteLink(
+            invite_id=model.invite_id,
+            event_id=model.event_id,
+            token=model.token,
+            created_at=model.created_at,
+            expires_at=model.expires_at,
+        )
 
     def cancel(self, event_id: UUID) -> Event:
         model = self.db.scalar(

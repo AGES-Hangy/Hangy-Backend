@@ -56,3 +56,12 @@ class CancelEventOutput(BaseModel):
     event_id: UUID
     status: EventStatusEnum
     updated_at: datetime
+
+
+class EventShareOutput(BaseModel):
+    url: str
+    web_url: str
+    title: str
+    event_date: datetime | None
+    location_name: str | None
+    cover_photo_url: str | None

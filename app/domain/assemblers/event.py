@@ -1,8 +1,9 @@
-from app.domain.entities import Event, User
+from app.domain.entities import Event, EventShare, User
 from app.presentation.dtos import (
     CancelEventOutput,
     CreateEventOutput,
     EventCreatorOutput,
+    EventShareOutput,
 )
 
 
@@ -32,4 +33,15 @@ class EventAssembler:
             event_id=event.event_id,
             status=event.event_status,
             updated_at=event.updated_at,
+        )
+
+    @staticmethod
+    def to_share_dto(share: EventShare) -> EventShareOutput:
+        return EventShareOutput(
+            url=share.url,
+            web_url=share.web_url,
+            title=share.title,
+            event_date=share.event_date,
+            location_name=share.location_name,
+            cover_photo_url=share.cover_photo_url,
         )
