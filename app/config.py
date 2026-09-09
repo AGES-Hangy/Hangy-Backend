@@ -24,6 +24,7 @@ class Settings:
     cors_origins: tuple[str, ...] = tuple(
         os.getenv("CORS_ORIGINS", "http://localhost:8081").split(",")
     )
+    invite_link_base_url: str = os.getenv("INVITE_LINK_BASE_URL", "hangy://invite/")
 
 
 settings = Settings()

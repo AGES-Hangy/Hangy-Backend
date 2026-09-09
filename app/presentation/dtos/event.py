@@ -46,3 +46,10 @@ class CreateEventOutput(BaseModel):
     privacy: EventPrivacyEnum
     event_date: datetime
     creator: EventCreatorOutput
+
+
+class CreateInviteLinkOutput(BaseModel):
+    invite_id: UUID
+    token: str
+    url: str
+    expires_at: datetime

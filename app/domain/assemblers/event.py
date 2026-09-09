@@ -1,5 +1,9 @@
-from app.domain.entities import Event, User
-from app.presentation.dtos import CreateEventOutput, EventCreatorOutput
+from app.domain.entities import Event, EventInviteLink, User
+from app.presentation.dtos import (
+    CreateEventOutput,
+    CreateInviteLinkOutput,
+    EventCreatorOutput,
+)
 
 
 class EventAssembler:
@@ -18,4 +22,17 @@ class EventAssembler:
             privacy=event.event_privacy,
             event_date=event.starts_at,
             creator=EventCreatorOutput(id=creator.user_id, name=creator.name),
+        )
+
+    @staticmethod
+    def to_invite_link_dto(
+        invite_link: EventInviteLink, base_url: str
+    ) -> CreateInviteLinkOutput:
+        if invite_link.invite_id is None:
+            raise ValueError("A persisted invite link must have an id")
+        return CreateInviteLinkOutput(
+            invite_id=invite_link.invite_id,
+            token=invite_link.token,
+            url=f"{base_url}{invite_link.token}",
+            expires_at=invite_link.expires_at,
         )
