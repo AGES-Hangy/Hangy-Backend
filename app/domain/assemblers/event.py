@@ -4,6 +4,7 @@ from app.presentation.dtos import (
     CreateEventOutput,
     CreateInviteLinkOutput,
     EventCreatorOutput,
+    UpdateEventOutput,
 )
 
 
@@ -44,6 +45,18 @@ class EventAssembler:
             raise ValueError("A persisted event must have an id")
         return CancelEventOutput(
             event_id=event.event_id,
+            status=event.event_status,
+            updated_at=event.updated_at,
+        )
+
+    @staticmethod
+    def to_updated_dto(event: Event) -> UpdateEventOutput:
+        if event.event_id is None:
+            raise ValueError("A persisted event must have an id")
+        return UpdateEventOutput(
+            event_id=event.event_id,
+            title=event.event_title,
+            event_date=event.starts_at,
             status=event.event_status,
             updated_at=event.updated_at,
         )
