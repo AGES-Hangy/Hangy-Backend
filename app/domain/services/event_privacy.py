@@ -11,7 +11,7 @@ INVITE_TOKEN_BYTES = 32
 
 
 class EventPrivacyRepository(Protocol):
-    def get_event(self, event_id: UUID) -> Event | None: ...
+    def get_by_id(self, event_id: UUID) -> Event | None: ...
 
     def add_invite_link(self, invite_link: NewEventInviteLink) -> EventInviteLink: ...
 
@@ -34,7 +34,7 @@ class EventPrivacyService:
 
     def create_invite_link(self, event_id: UUID, requester_id: UUID) -> EventInviteLink:
         """Generate an opaque, single-use invite link for an INVITE_ONLY event."""
-        event = self.repository.get_event(event_id)
+        event = self.repository.get_by_id(event_id)
         if event is None:
             raise EventNotFoundError
         if event.event_creator_id != requester_id:
