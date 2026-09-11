@@ -50,6 +50,13 @@ class CreateEventOutput(BaseModel):
     creator: EventCreatorOutput
 
 
+class CreateInviteLinkOutput(BaseModel):
+    invite_id: UUID
+    token: str
+    url: str
+    expires_at: datetime
+
+
 class CancelEventInput(BaseModel):
     reason: str = Field(min_length=1, max_length=1000)
 

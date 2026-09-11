@@ -4,12 +4,15 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.domain.assemblers import EventAssembler
 from app.domain.services import (
     AuthService,
     EventAlreadyFinishedError,
     EventEndsBeforeItStartsError,
     EventNotFoundError,
+    EventNotInviteOnlyError,
+    EventPrivacyService,
     EventsService,
     EventStartsInThePastError,
     EventTagNotFoundError,
@@ -18,13 +21,23 @@ from app.domain.services import (
     NotEventOrganizerError,
     TooManyEventTagsError,
 )
+from app.domain.services.event_privacy import (
+    EventNotFoundError as InviteLinkNotFoundError,
+)
+from app.domain.services.event_privacy import (
+    NotEventOrganizerError as NotInviteLinkOrganizerError,
+)
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
+from app.infrastructure.repository.event_invite_link import (
+    SqlAlchemyEventInviteLinkRepository,
+)
 from app.presentation.dtos import (
     CancelEventInput,
     CancelEventOutput,
     CreateEventInput,
     CreateEventOutput,
+    CreateInviteLinkOutput,
     UpdateEventInput,
     UpdateEventOutput,
 )
@@ -57,8 +70,19 @@ BAD_REQUEST_EXAMPLES = {
 }
 
 
+INVITE_LINK_FORBIDDEN_EXAMPLE = {"detail": "Only the organizer can change privacy"}
+INVITE_LINK_NOT_FOUND_EXAMPLE = {"detail": "Event not found"}
+INVITE_LINK_CONFLICT_EXAMPLE = {"detail": "Event is not invite only"}
+
+
 def get_events_service(db: Annotated[Session, Depends(get_db)]) -> EventsService:
     return EventsService(repository=SqlAlchemyEventRepository(db))
+
+
+def get_event_privacy_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> EventPrivacyService:
+    return EventPrivacyService(repository=SqlAlchemyEventInviteLinkRepository(db))
 
 
 @router.post(
@@ -127,6 +151,68 @@ def create_event(
     return EventAssembler.to_created_dto(event, organizer)
 
 
+@router.post(
+    "/{event_id}/invite-link",
+    response_model=CreateInviteLinkOutput,
+    status_code=status.HTTP_201_CREATED,
+    summary="Gerar link de convite do evento",
+    description=(
+        "Gera um link de convite com token opaco para um evento `INVITE_ONLY`. "
+        "So o organizador pode gerar o link, e ele expira no maximo na data de "
+        "inicio do evento - um convite nunca sobrevive ao evento."
+    ),
+    responses={
+        status.HTTP_403_FORBIDDEN: {
+            "description": "O usuario autenticado nao e o organizador do evento.",
+            "content": {"application/json": {"example": INVITE_LINK_FORBIDDEN_EXAMPLE}},
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "O evento nao existe ou nao esta visivel.",
+            "content": {"application/json": {"example": INVITE_LINK_NOT_FOUND_EXAMPLE}},
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "O evento nao e INVITE_ONLY.",
+            "content": {"application/json": {"example": INVITE_LINK_CONFLICT_EXAMPLE}},
+        },
+    },
+)
+def create_invite_link(
+    event_id: UUID,
+    token: Annotated[str, Depends(get_access_token)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    event_privacy_service: Annotated[
+        EventPrivacyService, Depends(get_event_privacy_service)
+    ],
+) -> CreateInviteLinkOutput:
+    try:
+        organizer = auth_service.get_user_from_token(token)
+    except InvalidAccessTokenError as error:
+        raise credentials_exception from error
+    if organizer.user_id is None:
+        raise credentials_exception
+
+    try:
+        invite_link = event_privacy_service.create_invite_link(
+            event_id, organizer.user_id
+        )
+    except InviteLinkNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found",
+        ) from error
+    except NotInviteLinkOrganizerError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the organizer can change privacy",
+        ) from error
+    except EventNotInviteOnlyError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Event is not invite only",
+        ) from error
+    return EventAssembler.to_invite_link_dto(invite_link, settings.invite_link_base_url)
+
+
 @router.patch(
     "/{event_id}",
     response_model=UpdateEventOutput,
@@ -158,6 +244,8 @@ def update_event(
         organizer = auth_service.get_user_from_token(token)
     except InvalidAccessTokenError as error:
         raise credentials_exception from error
+    if organizer.user_id is None:
+        raise credentials_exception
 
     try:
         event = events_service.update(
