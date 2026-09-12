@@ -34,6 +34,15 @@ class EventParticipantStatusEnum(StrEnum):
     REMOVED = "REMOVED"
 
 
+class EventAvailableActionEnum(StrEnum):
+    ACCEPT_INVITE = "ACCEPT_INVITE"
+    CANCEL_PRESENCE = "CANCEL_PRESENCE"
+    CONFIRM = "CONFIRM"
+    MANAGE = "MANAGE"
+    NONE = "NONE"
+    REQUEST = "REQUEST"
+
+
 class UserConnectionStatusEnum(StrEnum):
     CONFIRMED = "CONFIRMED"
     PENDING = "PENDING"
