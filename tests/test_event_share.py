@@ -127,6 +127,7 @@ def test_an_invite_only_event_returns_its_invite_token(
             EventInviteLinkModel(
                 event_id=event_id,
                 token=token,
+                created_by=organizer_id,
                 expires_at=datetime.now(UTC) + timedelta(days=1),
             )
         )
@@ -152,6 +153,7 @@ def test_an_expired_invite_link_returns_gone(
             EventInviteLinkModel(
                 event_id=event_id,
                 token="expired-invite-token",
+                created_by=organizer_id,
                 expires_at=datetime.now(UTC) - timedelta(minutes=1),
             )
         )
