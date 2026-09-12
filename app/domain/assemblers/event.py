@@ -1,9 +1,11 @@
-from app.domain.entities import Event, EventShare, User
+from app.domain.entities import Event, EventInviteLink, EventShare, User
 from app.presentation.dtos import (
     CancelEventOutput,
     CreateEventOutput,
+    CreateInviteLinkOutput,
     EventCreatorOutput,
     EventShareOutput,
+    UpdateEventOutput,
 )
 
 
@@ -26,6 +28,19 @@ class EventAssembler:
         )
 
     @staticmethod
+    def to_invite_link_dto(
+        invite_link: EventInviteLink, base_url: str
+    ) -> CreateInviteLinkOutput:
+        if invite_link.invite_id is None:
+            raise ValueError("A persisted invite link must have an id")
+        return CreateInviteLinkOutput(
+            invite_id=invite_link.invite_id,
+            token=invite_link.token,
+            url=f"{base_url}{invite_link.token}",
+            expires_at=invite_link.expires_at,
+        )
+
+    @staticmethod
     def to_cancel_dto(event: Event) -> CancelEventOutput:
         if event.event_id is None:
             raise ValueError("A persisted event must have an id")
@@ -44,4 +59,16 @@ class EventAssembler:
             event_date=share.event_date,
             location_name=share.location_name,
             cover_photo_url=share.cover_photo_url,
+        )
+
+    @staticmethod
+    def to_updated_dto(event: Event) -> UpdateEventOutput:
+        if event.event_id is None:
+            raise ValueError("A persisted event must have an id")
+        return UpdateEventOutput(
+            event_id=event.event_id,
+            title=event.event_title,
+            event_date=event.starts_at,
+            status=event.event_status,
+            updated_at=event.updated_at,
         )
