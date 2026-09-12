@@ -5,10 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.domain.assemblers import EventAssembler
+from app.domain.assemblers import EventAssembler, EventDetailsAssembler
 from app.domain.services import (
     AuthService,
     EventAlreadyFinishedError,
+    EventCancelledError,
+    EventDetailsNotFoundError,
+    EventDetailsService,
     EventEndsBeforeItStartsError,
     EventNotFoundError,
     EventNotInviteOnlyError,
@@ -29,6 +32,7 @@ from app.domain.services.event_privacy import (
 )
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
+from app.infrastructure.repository.event_details import SqlAlchemyEventDetailsRepository
 from app.infrastructure.repository.event_invite_link import (
     SqlAlchemyEventInviteLinkRepository,
 )
@@ -38,6 +42,7 @@ from app.presentation.dtos import (
     CreateEventInput,
     CreateEventOutput,
     CreateInviteLinkOutput,
+    EventDetailsOutput,
     UpdateEventInput,
     UpdateEventOutput,
 )
@@ -77,6 +82,12 @@ INVITE_LINK_CONFLICT_EXAMPLE = {"detail": "Event is not invite only"}
 
 def get_events_service(db: Annotated[Session, Depends(get_db)]) -> EventsService:
     return EventsService(repository=SqlAlchemyEventRepository(db))
+
+
+def get_event_details_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> EventDetailsService:
+    return EventDetailsService(repository=SqlAlchemyEventDetailsRepository(db))
 
 
 def get_event_privacy_service(
@@ -149,6 +160,59 @@ def create_event(
             detail="Tag not found",
         ) from error
     return EventAssembler.to_created_dto(event, organizer)
+
+
+@router.get(
+    "/{event_id}",
+    response_model=EventDetailsOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Ver detalhes de um evento",
+    description=(
+        "Resolve a visibilidade e a acao disponivel para o usuario autenticado. "
+        "Eventos por convite e bloqueios usam 404 para nao revelar o evento."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token de acesso ausente ou invalido.",
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "O evento nao existe ou nao esta visivel.",
+            "content": {"application/json": {"example": {"detail": "Event not found"}}},
+        },
+        status.HTTP_410_GONE: {
+            "description": "O evento foi cancelado.",
+            "content": {
+                "application/json": {"example": {"detail": "Event was cancelled"}}
+            },
+        },
+    },
+)
+def get_event_details(
+    event_id: UUID,
+    token: Annotated[str, Depends(get_access_token)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    details_service: Annotated[EventDetailsService, Depends(get_event_details_service)],
+) -> EventDetailsOutput:
+    try:
+        viewer = auth_service.get_user_from_token(token)
+    except InvalidAccessTokenError as error:
+        raise credentials_exception from error
+    if viewer.user_id is None:
+        raise credentials_exception
+
+    try:
+        details = details_service.get_details(event_id, viewer.user_id)
+    except EventDetailsNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found",
+        ) from error
+    except EventCancelledError as error:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Event was cancelled",
+        ) from error
+    return EventDetailsAssembler.to_dto(details)
 
 
 @router.post(
