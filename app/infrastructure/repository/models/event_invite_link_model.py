@@ -21,6 +21,10 @@ class EventInviteLinkModel(Base):
         ForeignKey("event.event_id", ondelete="CASCADE")
     )
     token: Mapped[str] = mapped_column(String(64), unique=True)
+    # Without this we cannot audit who generated the link.
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("user.user_id", ondelete="CASCADE")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
