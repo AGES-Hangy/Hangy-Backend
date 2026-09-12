@@ -27,6 +27,11 @@ from app.domain.services.event_privacy import (
 from app.domain.services.event_privacy import (
     NotEventOrganizerError as NotInviteLinkOrganizerError,
 )
+from app.domain.services.event_share import (
+    EventShareService,
+    InviteLinkExpiredError,
+    ShareableEventNotFoundError,
+)
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
 from app.infrastructure.repository.event_invite_link import (
@@ -38,6 +43,7 @@ from app.presentation.dtos import (
     CreateEventInput,
     CreateEventOutput,
     CreateInviteLinkOutput,
+    EventShareOutput,
     UpdateEventInput,
     UpdateEventOutput,
 )
@@ -77,6 +83,12 @@ INVITE_LINK_CONFLICT_EXAMPLE = {"detail": "Event is not invite only"}
 
 def get_events_service(db: Annotated[Session, Depends(get_db)]) -> EventsService:
     return EventsService(repository=SqlAlchemyEventRepository(db))
+
+
+def get_event_share_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> EventShareService:
+    return EventShareService(repository=SqlAlchemyEventRepository(db))
 
 
 def get_event_privacy_service(
@@ -149,6 +161,49 @@ def create_event(
             detail="Tag not found",
         ) from error
     return EventAssembler.to_created_dto(event, organizer)
+
+
+@router.get(
+    "/{event_id}/share",
+    response_model=EventShareOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Gerar metadados para compartilhar um evento",
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token de acesso ausente ou invalido.",
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "O evento nao pode ser compartilhado.",
+        },
+        status.HTTP_410_GONE: {
+            "description": "O link de convite expirou.",
+        },
+    },
+)
+def get_event_share(
+    event_id: UUID,
+    token: Annotated[str, Depends(get_access_token)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    share_service: Annotated[EventShareService, Depends(get_event_share_service)],
+) -> EventShareOutput:
+    try:
+        auth_service.get_user_from_token(token)
+    except InvalidAccessTokenError as error:
+        raise credentials_exception from error
+
+    try:
+        share = share_service.get_share(event_id)
+    except ShareableEventNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found",
+        ) from error
+    except InviteLinkExpiredError as error:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Invite link expired",
+        ) from error
+    return EventAssembler.to_share_dto(share)
 
 
 @router.post(

@@ -67,6 +67,15 @@ class CancelEventOutput(BaseModel):
     updated_at: datetime
 
 
+class EventShareOutput(BaseModel):
+    url: str
+    web_url: str
+    title: str
+    event_date: datetime | None
+    location_name: str | None
+    cover_photo_url: str | None
+
+
 class UpdateEventInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
