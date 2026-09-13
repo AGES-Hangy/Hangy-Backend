@@ -1,10 +1,11 @@
-from app.domain.entities import Event, EventInviteLink, User
+from app.domain.entities import Event, EventInviteLink, EventParticipant, User
 from app.presentation.dtos import (
     CancelEventOutput,
     CreateEventOutput,
     CreateInviteLinkOutput,
     EventCreatorOutput,
     UpdateEventOutput,
+    UpdateEventParticipantOutput,
 )
 
 
@@ -24,6 +25,18 @@ class EventAssembler:
             privacy=event.event_privacy,
             event_date=event.starts_at,
             creator=EventCreatorOutput(id=creator.user_id, name=creator.name),
+        )
+
+    @staticmethod
+    def to_participant_updated_dto(
+        participant: EventParticipant,
+    ) -> UpdateEventParticipantOutput:
+        if participant.participant_id is None:
+            raise ValueError("A persisted participant must have an id")
+        return UpdateEventParticipantOutput(
+            participant_id=participant.participant_id,
+            status=participant.status,
+            updated_at=participant.updated_at,
         )
 
     @staticmethod
