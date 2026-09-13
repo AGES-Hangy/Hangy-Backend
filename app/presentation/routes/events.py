@@ -1,11 +1,15 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.domain.assemblers import EventAssembler, EventDetailsAssembler
+from app.domain.assemblers import (
+    EventAssembler,
+    EventDetailsAssembler,
+    EventParticipantsAssembler,
+)
 from app.domain.services import (
     AuthService,
     EventAlreadyFinishedError,
@@ -27,6 +31,17 @@ from app.domain.services import (
     NotEventOrganizerError,
     TooManyEventTagsError,
 )
+from app.domain.services.event_participant import (
+    DEFAULT_PARTICIPANTS_LIMIT,
+    EventParticipantsService,
+    InvalidParticipantStatusError,
+)
+from app.domain.services.event_participant import (
+    EventNotFoundError as EventParticipantsNotFoundError,
+)
+from app.domain.services.event_participant import (
+    NotEventOrganizerError as NotEventOrganizerForParticipantsError,
+)
 from app.domain.services.event_privacy import (
     EventNotFoundError as InviteLinkNotFoundError,
 )
@@ -44,6 +59,9 @@ from app.infrastructure.repository.event_details import SqlAlchemyEventDetailsRe
 from app.infrastructure.repository.event_invite_link import (
     SqlAlchemyEventInviteLinkRepository,
 )
+from app.infrastructure.repository.event_participant import (
+    SqlAlchemyEventParticipantsRepository,
+)
 from app.presentation.dtos import (
     CancelEventInput,
     CancelEventOutput,
@@ -51,6 +69,7 @@ from app.presentation.dtos import (
     CreateEventOutput,
     CreateInviteLinkOutput,
     EventDetailsOutput,
+    EventParticipantsOutput,
     EventShareOutput,
     UpdateEventInput,
     UpdateEventOutput,
@@ -114,6 +133,14 @@ def get_event_privacy_service(
     db: Annotated[Session, Depends(get_db)],
 ) -> EventPrivacyService:
     return EventPrivacyService(repository=SqlAlchemyEventInviteLinkRepository(db))
+
+
+def get_event_participants_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> EventParticipantsService:
+    return EventParticipantsService(
+        repository=SqlAlchemyEventParticipantsRepository(db)
+    )
 
 
 @router.post(
@@ -338,6 +365,94 @@ def create_invite_link(
             detail="Event is not invite only",
         ) from error
     return EventAssembler.to_invite_link_dto(invite_link, settings.invite_link_base_url)
+
+
+@router.get(
+    "/{event_id}/participants",
+    response_model=EventParticipantsOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Listar participantes do evento",
+    description=(
+        "Sem filtro devolve os participantes confirmados, visiveis conforme a "
+        "privacidade do evento. So o organizador pode pedir `status=PENDING`. "
+        "Os contadores vem agregados na mesma resposta; o contador de PENDING "
+        "so aparece para o organizador."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token de acesso ausente ou invalido.",
+        },
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "O status informado nao e PENDING nem CONFIRMED.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid participant status"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "So o organizador pode listar participantes pendentes.",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Only the organizer can list pending participants"
+                    }
+                }
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "O evento nao existe ou nao esta visivel.",
+            "content": {"application/json": {"example": {"detail": "Event not found"}}},
+        },
+    },
+)
+def get_event_participants(
+    event_id: UUID,
+    token: Annotated[str, Depends(get_access_token)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    participants_service: Annotated[
+        EventParticipantsService, Depends(get_event_participants_service)
+    ],
+    participant_status: Annotated[
+        str | None,
+        Query(
+            alias="status",
+            description="PENDING ou CONFIRMED. Sem filtro, traz os confirmados.",
+        ),
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = DEFAULT_PARTICIPANTS_LIMIT,
+    cursor: Annotated[str | None, Query()] = None,
+) -> EventParticipantsOutput:
+    try:
+        viewer = auth_service.get_user_from_token(token)
+    except InvalidAccessTokenError as error:
+        raise credentials_exception from error
+    if viewer.user_id is None:
+        raise credentials_exception
+
+    try:
+        page = participants_service.list_participants(
+            event_id=event_id,
+            viewer_id=viewer.user_id,
+            status=participant_status,
+            limit=limit,
+            cursor=cursor,
+        )
+    except EventParticipantsNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Event not found"
+        ) from error
+    except InvalidParticipantStatusError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid participant status",
+        ) from error
+    except NotEventOrganizerForParticipantsError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the organizer can list pending participants",
+        ) from error
+    return EventParticipantsAssembler.to_dto(page)
 
 
 @router.patch(
