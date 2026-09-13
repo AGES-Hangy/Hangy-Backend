@@ -6,7 +6,6 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.domain.entities import Event, EventInviteLink, EventParticipant, NewEvent
-
 from app.domain.enums import (
     EventParticipantStatusEnum,
     EventStatusEnum,

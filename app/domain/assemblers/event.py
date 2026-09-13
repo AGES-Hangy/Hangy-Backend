@@ -1,5 +1,10 @@
-from app.domain.entities import Event, EventInviteLink, EventShare, EventParticipant, User
-
+from app.domain.entities import (
+    Event,
+    EventInviteLink,
+    EventParticipant,
+    EventShare,
+    User,
+)
 from app.presentation.dtos import (
     CancelEventOutput,
     CreateEventOutput,
