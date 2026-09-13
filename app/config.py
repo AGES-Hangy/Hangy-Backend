@@ -25,6 +25,7 @@ class Settings:
         os.getenv("CORS_ORIGINS", "http://localhost:8081").split(",")
     )
     invite_link_base_url: str = os.getenv("INVITE_LINK_BASE_URL", "hangy://invite/")
+    frontend_base_url: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:8081")
 
 
 settings = Settings()

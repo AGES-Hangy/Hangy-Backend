@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -26,7 +27,13 @@ from app.main import app
 
 
 @pytest.fixture
-def share_client() -> Iterator[tuple[TestClient, sessionmaker[Session]]]:
+def share_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[tuple[TestClient, sessionmaker[Session]]]:
+    monkeypatch.setattr(
+        "app.presentation.routes.events.settings",
+        replace(settings, frontend_base_url="https://frontend.example.test/"),
+    )
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -108,7 +115,7 @@ def test_a_public_event_returns_direct_share_links(
     assert response.status_code == 200
     assert response.json() == {
         "url": f"hangy://event/{event_id}",
-        "web_url": f"https://hangy.app/e/{event_id}",
+        "web_url": f"https://frontend.example.test/e/{event_id}",
         "title": "Pelada no Parcao",
         "event_date": response.json()["event_date"],
         "location_name": "Parcao",
@@ -140,7 +147,7 @@ def test_an_invite_only_event_returns_its_invite_token(
 
     assert response.status_code == 200
     assert response.json()["url"] == f"hangy://invite/{token}"
-    assert response.json()["web_url"] == f"https://hangy.app/invite/{token}"
+    assert response.json()["web_url"] == f"https://frontend.example.test/invite/{token}"
 
 
 def test_an_expired_invite_link_returns_gone(

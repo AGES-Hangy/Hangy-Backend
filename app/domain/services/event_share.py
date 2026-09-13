@@ -5,10 +5,6 @@ from uuid import UUID
 from app.domain.entities import Event, EventInviteLink, EventShare
 from app.domain.enums import EventPrivacyEnum
 
-WEB_EVENT_URL = "https://hangy.app/e"
-WEB_INVITE_URL = "https://hangy.app/invite"
-
-
 class EventShareRepository(Protocol):
     def get_for_share(self, event_id: UUID) -> Event | None: ...
 
@@ -24,8 +20,11 @@ class InviteLinkExpiredError(Exception):
 
 
 class EventShareService:
-    def __init__(self, repository: EventShareRepository) -> None:
+    def __init__(
+        self, repository: EventShareRepository, frontend_base_url: str
+    ) -> None:
         self.repository = repository
+        self.frontend_base_url = frontend_base_url.rstrip("/")
 
     def get_share(self, event_id: UUID) -> EventShare:
         event = self.repository.get_for_share(event_id)
@@ -33,7 +32,7 @@ class EventShareService:
             raise ShareableEventNotFoundError
 
         url = f"hangy://event/{event_id}"
-        web_url = f"{WEB_EVENT_URL}/{event_id}"
+        web_url = f"{self.frontend_base_url}/e/{event_id}"
         if event.event_privacy is EventPrivacyEnum.INVITE_ONLY:
             invite_link = self.repository.get_invite_link(event_id)
             if invite_link is None:
@@ -42,7 +41,7 @@ class EventShareService:
             if expires_at <= datetime.now(UTC):
                 raise InviteLinkExpiredError
             url = f"hangy://invite/{invite_link.token}"
-            web_url = f"{WEB_INVITE_URL}/{invite_link.token}"
+            web_url = f"{self.frontend_base_url}/invite/{invite_link.token}"
 
         event_date = event.starts_at
         location_name = event.location_name

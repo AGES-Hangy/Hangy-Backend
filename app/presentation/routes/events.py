@@ -88,7 +88,10 @@ def get_events_service(db: Annotated[Session, Depends(get_db)]) -> EventsService
 def get_event_share_service(
     db: Annotated[Session, Depends(get_db)],
 ) -> EventShareService:
-    return EventShareService(repository=SqlAlchemyEventRepository(db))
+    return EventShareService(
+        repository=SqlAlchemyEventRepository(db),
+        frontend_base_url=settings.frontend_base_url,
+    )
 
 
 def get_event_privacy_service(
