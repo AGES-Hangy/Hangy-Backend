@@ -5,7 +5,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.domain.enums import EventPrivacyEnum, EventStatusEnum
+from app.domain.enums import (
+    EventParticipantStatusEnum,
+    EventPrivacyEnum,
+    EventStatusEnum,
+)
 
 
 class EventLocationInput(BaseModel):
@@ -50,6 +54,16 @@ class CreateEventOutput(BaseModel):
     creator: EventCreatorOutput
 
 
+class UpdateEventParticipantInput(BaseModel):
+    status: EventParticipantStatusEnum
+
+
+class UpdateEventParticipantOutput(BaseModel):
+    participant_id: UUID
+    status: EventParticipantStatusEnum
+    updated_at: datetime
+
+
 class CreateInviteLinkOutput(BaseModel):
     invite_id: UUID
     token: str
@@ -65,6 +79,15 @@ class CancelEventOutput(BaseModel):
     event_id: UUID
     status: EventStatusEnum
     updated_at: datetime
+
+
+class EventShareOutput(BaseModel):
+    url: str
+    web_url: str
+    title: str
+    event_date: datetime | None
+    location_name: str | None
+    cover_photo_url: str | None
 
 
 class UpdateEventInput(BaseModel):

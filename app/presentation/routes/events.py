@@ -13,14 +13,17 @@ from app.domain.services import (
     EventDetailsNotFoundError,
     EventDetailsService,
     EventEndsBeforeItStartsError,
+    EventIsFullError,
     EventNotFoundError,
     EventNotInviteOnlyError,
+    EventParticipantNotFoundError,
     EventPrivacyService,
     EventsService,
     EventStartsInThePastError,
     EventTagNotFoundError,
     InvalidAccessTokenError,
     InvalidEventCoordinatesError,
+    InvalidParticipantStatusTransitionError,
     NotEventOrganizerError,
     TooManyEventTagsError,
 )
@@ -29,6 +32,11 @@ from app.domain.services.event_privacy import (
 )
 from app.domain.services.event_privacy import (
     NotEventOrganizerError as NotInviteLinkOrganizerError,
+)
+from app.domain.services.event_share import (
+    EventShareService,
+    InviteLinkExpiredError,
+    ShareableEventNotFoundError,
 )
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
@@ -43,8 +51,11 @@ from app.presentation.dtos import (
     CreateEventOutput,
     CreateInviteLinkOutput,
     EventDetailsOutput,
+    EventShareOutput,
     UpdateEventInput,
     UpdateEventOutput,
+    UpdateEventParticipantInput,
+    UpdateEventParticipantOutput,
 )
 from app.presentation.mappers import EventMapper
 from app.presentation.routes.auth import (
@@ -88,6 +99,15 @@ def get_event_details_service(
     db: Annotated[Session, Depends(get_db)],
 ) -> EventDetailsService:
     return EventDetailsService(repository=SqlAlchemyEventDetailsRepository(db))
+
+
+def get_event_share_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> EventShareService:
+    return EventShareService(
+        repository=SqlAlchemyEventRepository(db),
+        frontend_base_url=settings.frontend_base_url,
+    )
 
 
 def get_event_privacy_service(
@@ -215,6 +235,49 @@ def get_event_details(
     return EventDetailsAssembler.to_dto(details)
 
 
+@router.get(
+    "/{event_id}/share",
+    response_model=EventShareOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Gerar metadados para compartilhar um evento",
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token de acesso ausente ou invalido.",
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "O evento nao pode ser compartilhado.",
+        },
+        status.HTTP_410_GONE: {
+            "description": "O link de convite expirou.",
+        },
+    },
+)
+def get_event_share(
+    event_id: UUID,
+    token: Annotated[str, Depends(get_access_token)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    share_service: Annotated[EventShareService, Depends(get_event_share_service)],
+) -> EventShareOutput:
+    try:
+        auth_service.get_user_from_token(token)
+    except InvalidAccessTokenError as error:
+        raise credentials_exception from error
+
+    try:
+        share = share_service.get_share(event_id)
+    except ShareableEventNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found",
+        ) from error
+    except InviteLinkExpiredError as error:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail="Invite link expired",
+        ) from error
+    return EventAssembler.to_share_dto(share)
+
+
 @router.post(
     "/{event_id}/invite-link",
     response_model=CreateInviteLinkOutput,
@@ -275,6 +338,104 @@ def create_invite_link(
             detail="Event is not invite only",
         ) from error
     return EventAssembler.to_invite_link_dto(invite_link, settings.invite_link_base_url)
+
+
+@router.patch(
+    "/{event_id}/participants/{participant_id}",
+    response_model=UpdateEventParticipantOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Aprovar, recusar ou remover um participante",
+    description=(
+        "Permite ao organizador do evento atualizar o status de um participante "
+        "respeitando a maquina de estados: PENDING -> CONFIRMED|REJECTED, "
+        "CONFIRMED -> REMOVED, INVITED -> CONFIRMED|REJECTED. Aprovacoes "
+        "respeitam o limite maximo de participantes (max_participants). Todas "
+        "as alteracoes notificam o participante."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "Transição de status inválida para o participante.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid participant status transition"}
+                }
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token de acesso ausente ou inválido.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Usuário autenticado não é o organizador do evento.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Only the organizer can manage participants"}
+                }
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Participante ou evento não encontrado.",
+            "content": {
+                "application/json": {"example": {"detail": "Participant not found"}}
+            },
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "O evento atingiu o limite máximo de participantes.",
+            "content": {"application/json": {"example": {"detail": "Event is full"}}},
+        },
+    },
+)
+def update_event_participant(
+    event_id: UUID,
+    participant_id: UUID,
+    payload: UpdateEventParticipantInput,
+    token: Annotated[str, Depends(get_access_token)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    events_service: Annotated[EventsService, Depends(get_events_service)],
+) -> UpdateEventParticipantOutput:
+    try:
+        user = auth_service.get_user_from_token(token)
+    except InvalidAccessTokenError as error:
+        raise credentials_exception from error
+
+    try:
+        participant = events_service.update_participant_status(
+            event_id=event_id,
+            participant_id=participant_id,
+            new_status=payload.status,
+            requester_id=user.user_id,
+        )
+    except EventNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Participant not found",
+        ) from error
+    except NotEventOrganizerError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the organizer can manage participants",
+        ) from error
+    except EventParticipantNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Participant not found",
+        ) from error
+    except InvalidParticipantStatusTransitionError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid participant status transition",
+        ) from error
+    except EventIsFullError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Event is full",
+        ) from error
+
+    return EventAssembler.to_participant_updated_dto(participant)
 
 
 @router.patch(

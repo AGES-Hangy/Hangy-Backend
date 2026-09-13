@@ -1,10 +1,18 @@
-from app.domain.entities import Event, EventInviteLink, User
+from app.domain.entities import (
+    Event,
+    EventInviteLink,
+    EventParticipant,
+    EventShare,
+    User,
+)
 from app.presentation.dtos import (
     CancelEventOutput,
     CreateEventOutput,
     CreateInviteLinkOutput,
     EventCreatorOutput,
+    EventShareOutput,
     UpdateEventOutput,
+    UpdateEventParticipantOutput,
 )
 
 
@@ -24,6 +32,18 @@ class EventAssembler:
             privacy=event.event_privacy,
             event_date=event.starts_at,
             creator=EventCreatorOutput(id=creator.user_id, name=creator.name),
+        )
+
+    @staticmethod
+    def to_participant_updated_dto(
+        participant: EventParticipant,
+    ) -> UpdateEventParticipantOutput:
+        if participant.participant_id is None:
+            raise ValueError("A persisted participant must have an id")
+        return UpdateEventParticipantOutput(
+            participant_id=participant.participant_id,
+            status=participant.status,
+            updated_at=participant.updated_at,
         )
 
     @staticmethod
@@ -47,6 +67,17 @@ class EventAssembler:
             event_id=event.event_id,
             status=event.event_status,
             updated_at=event.updated_at,
+        )
+
+    @staticmethod
+    def to_share_dto(share: EventShare) -> EventShareOutput:
+        return EventShareOutput(
+            url=share.url,
+            web_url=share.web_url,
+            title=share.title,
+            event_date=share.event_date,
+            location_name=share.location_name,
+            cover_photo_url=share.cover_photo_url,
         )
 
     @staticmethod
