@@ -430,9 +430,7 @@ def test_non_organizer_returns_403(
     )
 
     assert response.status_code == 403
-    assert response.json() == {
-        "detail": "Only the event organizer can manage participants"
-    }
+    assert response.json() == {"detail": "Only the organizer can manage participants"}
 
 
 def test_non_existent_event_returns_404(
@@ -447,7 +445,7 @@ def test_non_existent_event_returns_404(
     )
 
     assert response.status_code == 404
-    assert response.json() == {"detail": "Event not found"}
+    assert response.json() == {"detail": "Participant not found"}
 
 
 def test_non_existent_participant_returns_404(

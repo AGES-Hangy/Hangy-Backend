@@ -251,27 +251,14 @@ def create_invite_link(
             "description": "Usuário autenticado não é o organizador do evento.",
             "content": {
                 "application/json": {
-                    "example": {
-                        "detail": "Only the event organizer can manage participants"
-                    }
+                    "example": {"detail": "Only the organizer can manage participants"}
                 }
             },
         },
         status.HTTP_404_NOT_FOUND: {
-            "description": "Evento ou participante não encontrado.",
+            "description": "Participante ou evento não encontrado.",
             "content": {
-                "application/json": {
-                    "examples": {
-                        "event_not_found": {
-                            "summary": "Evento não encontrado",
-                            "value": {"detail": "Event not found"},
-                        },
-                        "participant_not_found": {
-                            "summary": "Participante não encontrado",
-                            "value": {"detail": "Participant not found"},
-                        },
-                    }
-                }
+                "application/json": {"example": {"detail": "Participant not found"}}
             },
         },
         status.HTTP_409_CONFLICT: {
@@ -303,12 +290,12 @@ def update_event_participant(
     except EventNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Event not found",
+            detail="Participant not found",
         ) from error
     except NotEventOrganizerError as error:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only the event organizer can manage participants",
+            detail="Only the organizer can manage participants",
         ) from error
     except EventParticipantNotFoundError as error:
         raise HTTPException(

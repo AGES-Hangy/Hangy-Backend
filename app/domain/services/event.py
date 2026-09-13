@@ -40,9 +40,9 @@ class EventRepository(Protocol):
 
     def find_existing_tag_ids(self, tag_ids: Collection[UUID]) -> set[UUID]: ...
 
-    def get_by_id(self, event_id: UUID) -> Event | None: ...
+    def get_by_id_for_update(self, event_id: UUID) -> Event | None: ...
 
-    def get_participant(
+    def get_participant_for_update(
         self, event_id: UUID, participant_id: UUID
     ) -> EventParticipant | None: ...
 
@@ -138,14 +138,18 @@ class EventsService:
         requester_id: UUID,
     ) -> EventParticipant:
         """Approve, reject, or remove an event participant."""
-        event = self.repository.get_by_id(event_id)
+        # Lock the event before inspecting state or capacity. The lock is held
+        # until the repository commits the status and notification together.
+        event = self.repository.get_by_id_for_update(event_id)
         if event is None:
             raise EventNotFoundError
 
         if event.event_creator_id != requester_id:
             raise NotEventOrganizerError
 
-        participant = self.repository.get_participant(event_id, participant_id)
+        participant = self.repository.get_participant_for_update(
+            event_id, participant_id
+        )
         if participant is None:
             raise EventParticipantNotFoundError
 

@@ -35,6 +35,17 @@ class SqlAlchemyEventRepository:
         )
         return self._to_entity(model) if model is not None else None
 
+    def get_by_id_for_update(self, event_id: UUID) -> Event | None:
+        model = self.db.scalar(
+            select(EventModel)
+            .where(
+                EventModel.event_id == event_id,
+                EventModel.deleted_at.is_(None),
+            )
+            .with_for_update()
+        )
+        return self._to_entity(model) if model is not None else None
+
     def cancel(self, event_id: UUID) -> Event:
         model = self.db.scalar(
             select(EventModel).where(EventModel.event_id == event_id)
@@ -77,14 +88,16 @@ class SqlAlchemyEventRepository:
             ).all()
         )
 
-    def get_participant(
+    def get_participant_for_update(
         self, event_id: UUID, participant_id: UUID
     ) -> EventParticipant | None:
         model = self.db.scalar(
-            select(EventParticipantModel).where(
+            select(EventParticipantModel)
+            .where(
                 EventParticipantModel.participant_id == participant_id,
                 EventParticipantModel.event_id == event_id,
             )
+            .with_for_update()
         )
         return self._to_participant_entity(model) if model is not None else None
 
@@ -95,20 +108,6 @@ class SqlAlchemyEventRepository:
         new_status: EventParticipantStatusEnum,
         notification_type: NotificationTypeEnum,
     ) -> EventParticipant:
-        event_model = self.db.scalar(
-            select(EventModel)
-            .where(
-                EventModel.event_id == event_id,
-                EventModel.deleted_at.is_(None),
-            )
-            .with_for_update()
-        )
-        if event_model is None:
-            # Fallback if event is not found
-            event_model = self.db.scalar(
-                select(EventModel).where(EventModel.event_id == event_id)
-            )
-
         participant_model = self.db.scalar(
             select(EventParticipantModel)
             .where(
@@ -121,7 +120,12 @@ class SqlAlchemyEventRepository:
             raise EventParticipantNotFoundError
 
         if new_status == EventParticipantStatusEnum.CONFIRMED:
-            if event_model is not None and event_model.max_participants is not None:
+            event_model = self.db.scalar(
+                select(EventModel).where(EventModel.event_id == event_id)
+            )
+            if event_model is None:
+                raise ValueError("An event validated by the service must exist")
+            if event_model.max_participants is not None:
                 confirmed_count = (
                     self.db.scalar(
                         select(func.count(EventParticipantModel.participant_id)).where(
