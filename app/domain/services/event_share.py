@@ -5,6 +5,7 @@ from uuid import UUID
 from app.domain.entities import Event, EventInviteLink, EventShare
 from app.domain.enums import EventPrivacyEnum
 
+
 class EventShareRepository(Protocol):
     def get_for_share(self, event_id: UUID) -> Event | None: ...
 
