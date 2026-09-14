@@ -96,12 +96,16 @@ SEED_EVENTS = (
         cover_photo_url="https://picsum.photos/seed/pelada/800/450",
         confirmed_emails=("maria@hangy.com", "joao@hangy.com"),
     ),
+    # user@hangy.com's own event, kept PRIVATE on purpose: it's what makes
+    # ManageEvent worth opening as user@hangy.com — a confirmed participant,
+    # a pending request to approve, and the privacy badge/masking to check.
     SeedEvent(
         title="Corrida da Redenção",
         location_name="Parque Farroupilha (Redenção)",
         tag_name="Corrida",
-        creator_email="admin@hangy.com",
+        creator_email="user@hangy.com",
         starts_in_days=4,
+        privacy=EventPrivacyEnum.PRIVATE,
         confirmed_emails=("maria@hangy.com",),
         pending_emails=("joao@hangy.com",),
     ),
