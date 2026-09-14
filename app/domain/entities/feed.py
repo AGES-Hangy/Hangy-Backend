@@ -18,6 +18,10 @@ class FeedItem:
     participants_count: int
     location_name: str | None = None
     cover_photo_url: str | None = None
+    # The event's own micro tags under this section's macro tag — the reason
+    # it matched here, and what the card should show instead of repeating the
+    # section's own macro tag on every item.
+    tags: tuple[Tag, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

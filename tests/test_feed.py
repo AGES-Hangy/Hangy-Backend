@@ -204,6 +204,29 @@ def test_feed_groups_sections_by_macro_tag_and_orders_events_by_date(
     }
 
 
+def test_feed_item_shows_its_own_matched_tag_not_the_section_macro_tag(
+    context: FeedContext,
+) -> None:
+    creator_id = create_user(context.db, "creator@hangy.com")
+    sports = create_tag(context.db, "Esportes")
+    football = create_tag(context.db, "Futebol", parent_id=sports)
+    running = create_tag(context.db, "Corrida", parent_id=sports)
+    add_interest(context.db, context.user_id, football)
+    add_interest(context.db, context.user_id, running)
+
+    # Tagged with both a micro tag under Esportes and an unrelated one: the
+    # card should show only the micro tag that actually put it in this
+    # section, not the section's own "Esportes" (that's already the title)
+    # nor a tag from a section the viewer has no interest in.
+    music = create_tag(context.db, "Música")
+    create_event(context.db, creator_id, "Pelada no Parcão", (football, music))
+
+    payload = get_feed(context)
+    item = payload["sections"][0]["items"][0]
+
+    assert [tag["name"] for tag in item["tags"]] == ["Futebol"]
+
+
 def test_feed_hides_past_and_unpublished_events(context: FeedContext) -> None:
     creator_id = create_user(context.db, "creator@hangy.com")
     sports = create_tag(context.db, "Esportes")

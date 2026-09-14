@@ -199,9 +199,10 @@ def test_seeded_feed_matches_the_documented_sample(
     ]
     assert sports == [
         ("Pelada no Parcão", 2, False),
-        # PRIVATE: discoverable, but the schedule stays hidden.
+        # Both PRIVATE: discoverable, but the schedule stays hidden — even
+        # from "Corrida da Redenção"'s own creator, user@hangy.com.
         ("Aniversário da Maria", 0, True),
-        ("Corrida da Redenção", 1, False),
+        ("Corrida da Redenção", 1, True),
     ]
     assert [item["title"] for item in sections[1]["items"]] == [
         "Show de rock no Opinião"

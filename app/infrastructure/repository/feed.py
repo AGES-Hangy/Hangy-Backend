@@ -3,7 +3,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.domain.entities import FeedItem, Tag
 from app.domain.enums import (
@@ -75,6 +75,7 @@ class SqlAlchemyFeedRepository:
         )
         rows = self.db.execute(
             select(EventModel, participants_count)
+            .options(selectinload(EventModel.tags))
             .where(
                 EventModel.event_id.in_(tagged_events),
                 EventModel.deleted_at.is_(None),
@@ -88,10 +89,13 @@ class SqlAlchemyFeedRepository:
             .order_by(EventModel.starts_at, EventModel.event_id)
             .limit(limit)
         ).all()
-        return [self._to_entity(model, count) for model, count in rows]
+        matched_tag_ids = set(tag_ids)
+        return [self._to_entity(model, count, matched_tag_ids) for model, count in rows]
 
     @staticmethod
-    def _to_entity(model: EventModel, participants_count: int) -> FeedItem:
+    def _to_entity(
+        model: EventModel, participants_count: int, matched_tag_ids: set[UUID]
+    ) -> FeedItem:
         return FeedItem(
             event_id=model.event_id,
             title=model.event_title,
@@ -100,6 +104,13 @@ class SqlAlchemyFeedRepository:
             cover_photo_url=model.cover_photo_url,
             privacy=model.event_privacy,
             participants_count=participants_count,
+            # Only the tag(s) that matched this section — an event tagged
+            # `Futebol` and `Rock` shows just `Futebol` under Esportes.
+            tags=tuple(
+                SqlAlchemyFeedRepository._to_tag_entity(tag)
+                for tag in model.tags
+                if tag.tag_id in matched_tag_ids
+            ),
         )
 
     @staticmethod

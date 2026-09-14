@@ -36,4 +36,9 @@ class FeedAssembler:
             cover_photo_url=item.cover_photo_url,
             privacy=item.privacy,
             participants_count=item.participants_count,
+            tags=[
+                FeedTagOutput(id=tag.tag_id, name=tag.tag_name)
+                for tag in item.tags
+                if tag.tag_id is not None
+            ],
         )
