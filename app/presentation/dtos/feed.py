@@ -29,6 +29,10 @@ class FeedItemOutput(BaseModel):
     cover_photo_url: str | None
     privacy: EventPrivacyEnum
     participants_count: int
+    # The event's own tag(s) that matched this section, e.g. `Futebol` under
+    # `Esportes` — not the section's own macro tag, which is already the
+    # section title.
+    tags: list[FeedTagOutput] = []
 
 
 class FeedSectionOutput(BaseModel):
