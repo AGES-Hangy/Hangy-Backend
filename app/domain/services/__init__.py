@@ -1,15 +1,5 @@
 """Services that implement domain business logic."""
 
-from app.domain.services.auth import (
-    AuthService,
-    DuplicateUsernameError,
-    InvalidAccessTokenError,
-)
-from app.domain.services.get_health import GetHealth
+from app._package_exports import load_child_exports
 
-__all__ = [
-    "AuthService",
-    "DuplicateUsernameError",
-    "GetHealth",
-    "InvalidAccessTokenError",
-]
+load_child_exports(__name__, globals())

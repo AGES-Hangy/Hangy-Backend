@@ -1,5 +1,6 @@
 """Import SQLAlchemy models here so Alembic can discover their metadata."""
 
-from app.infrastructure.repository.models.user import UserModel
+from app._package_exports import load_child_exports
+from app.infrastructure.repository.base import Base as Base
 
-__all__ = ["UserModel"]
+load_child_exports(__name__, globals())

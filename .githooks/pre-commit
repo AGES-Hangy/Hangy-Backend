@@ -1,0 +1,12 @@
+#!/bin/sh
+
+# Branches must be named like: tid123/branch-name
+branch="$(git symbolic-ref --quiet --short HEAD)" || exit 0
+
+pattern='^tid[0-9]+/.+$'
+
+if ! printf '%s\n' "$branch" | grep -Eq "$pattern"; then
+  echo "Commit blocked: branch '$branch' does not follow the required convention." >&2
+  echo "Use: tidXXX/name-of-branch (for example, tid123/add-login-endpoint)." >&2
+  exit 1
+fi

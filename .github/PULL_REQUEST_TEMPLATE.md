@@ -11,40 +11,12 @@ Os comentários de orientação não aparecem no PR publicado e podem permanecer
 - Tarefa: <!-- link -->
 - PR relacionado do frontend: <!-- link ou "Não se aplica" -->
 
-## O que foi feito
+## Descrição
 
 <!-- Liste as principais mudanças e regras de negócio afetadas. Evite apenas repetir nomes de arquivos. -->
 
 -
 -
-
-## Detalhes do backend
-
-### Regras de negócio
-
-<!-- Explique o comportamento esperado, validações e casos especiais. -->
-
-
-### Contrato da API
-
-<!-- Liste apenas endpoints criados ou alterados. Use "Não se aplica" se não houver. -->
-
-| Método | Rota | O que mudou | Autenticação/perfil |
-| --- | --- | --- | --- |
-| <!-- GET/POST/... --> | <!-- /rota --> | <!-- resumo --> | <!-- público/perfis --> |
-
-### Dados, migrações e configuração
-
-<!-- Descreva alterações de modelo, migrações, seeds, variáveis de ambiente ou serviços externos. Nunca informe valores secretos. Use "Não se aplica" se não houver. -->
-
-- Banco de dados/migração:
-- Nova configuração ou variável:
-- Estratégia de rollback:
-
-### Impacto no frontend
-
-<!-- Explique o que o front precisa adaptar, a compatibilidade com versões atuais e se há mudança quebrável. -->
-
 
 ## Evidência de funcionamento — obrigatória
 
@@ -73,14 +45,9 @@ O que foi testado nesta evidência:
 2.
 3.
 
-## Validações realizadas
+## Considerações
 
-<!-- Informe os comandos/testes realmente executados e os resultados. -->
-
-- [ ] Testes automatizados
-- [ ] Teste manual dos endpoints alterados
-- [ ] Casos de sucesso verificados
-- [ ] Casos de erro e validação verificados
-- [ ] Migração aplicada e revertida localmente
-
-Resultado, comandos executados ou pendências:
+<!--
+Explique mudanças e decisões que possam precisar ser repensadas durante a correção.
+Impacto no Frontend; precauções que devem ser tomadas após o merge dessa pr (e.g. nunca chame esse servico duas vezes na mesma stack de chamados); pendências; justificativa por trás de decisões específicas ou bibliotecas adicionadas.
+-->

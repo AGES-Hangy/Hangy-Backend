@@ -12,10 +12,12 @@ class AuthAssembler:
 
     @staticmethod
     def to_user_dto(user: User) -> UserOutput:
-        if user.id is None:
+        if user.user_id is None:
             raise ValueError("A persisted user must have an id")
         return UserOutput(
-            id=user.id,
-            username=user.username,
+            user_id=user.user_id,
+            email=user.email,
+            user_type=user.user_type,
+            role=user.role,
             created_at=user.created_at,
         )

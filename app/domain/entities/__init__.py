@@ -1,7 +1,5 @@
 """Domain entities."""
 
-from app.domain.entities.access_token import AccessToken
-from app.domain.entities.health import HealthStatus
-from app.domain.entities.user import User, UserCredentials
+from app._package_exports import load_child_exports
 
-__all__ = ["AccessToken", "HealthStatus", "User", "UserCredentials"]
+load_child_exports(__name__, globals())
