@@ -463,9 +463,9 @@ def get_event_participants(
     description=(
         "Permite ao organizador do evento atualizar o status de um participante "
         "respeitando a maquina de estados: PENDING -> CONFIRMED|REJECTED, "
-        "CONFIRMED -> REMOVED, INVITED -> CONFIRMED|REJECTED. Aprovacoes "
-        "respeitam o limite maximo de participantes (max_participants). Todas "
-        "as alteracoes notificam o participante."
+        "CONFIRMED -> REMOVED. Aprovacoes respeitam o limite maximo de "
+        "participantes (max_participants). Todas as alteracoes notificam o "
+        "participante."
     ),
     responses={
         status.HTTP_400_BAD_REQUEST: {

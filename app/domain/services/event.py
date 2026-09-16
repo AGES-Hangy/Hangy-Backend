@@ -19,10 +19,6 @@ VALID_TRANSITIONS: dict[EventParticipantStatusEnum, set[EventParticipantStatusEn
         EventParticipantStatusEnum.CONFIRMED,
         EventParticipantStatusEnum.REJECTED,
     },
-    EventParticipantStatusEnum.INVITED: {
-        EventParticipantStatusEnum.CONFIRMED,
-        EventParticipantStatusEnum.REJECTED,
-    },
     EventParticipantStatusEnum.CONFIRMED: {
         EventParticipantStatusEnum.REMOVED,
     },
