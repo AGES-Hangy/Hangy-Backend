@@ -8,8 +8,6 @@ DEFAULT_PARTICIPANTS_LIMIT = 20
 MIN_PARTICIPANTS_LIMIT = 1
 MAX_PARTICIPANTS_LIMIT = 100
 
-# INVITED is not a listable status here: the app only ever asks for the
-# confirmed list or, as the organizer, the pending queue.
 LISTABLE_STATUSES = (
     EventParticipantStatusEnum.CONFIRMED,
     EventParticipantStatusEnum.PENDING,

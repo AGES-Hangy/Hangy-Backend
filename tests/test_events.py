@@ -63,7 +63,7 @@ def _create_event(
     db: Session,
     event_status: EventStatusEnum = EventStatusEnum.PUBLISHED,
 ) -> tuple[UUID, UUID, UUID, UUID, UUID]:
-    organizer_id, confirmed_id, pending_id, invited_id = (
+    organizer_id, confirmed_id, pending_id, rejected_id = (
         uuid4(),
         uuid4(),
         uuid4(),
@@ -80,7 +80,7 @@ def _create_event(
                 email=f"{user_id}@hangy.test",
                 password_hash="hash",
             )
-            for user_id in (organizer_id, confirmed_id, pending_id, invited_id)
+            for user_id in (organizer_id, confirmed_id, pending_id, rejected_id)
         ]
     )
     db.add(
@@ -111,14 +111,14 @@ def _create_event(
                 status=EventParticipantStatusEnum.PENDING,
             ),
             EventParticipantModel(
-                user_id=invited_id,
+                user_id=rejected_id,
                 event_id=event_id,
-                status=EventParticipantStatusEnum.INVITED,
+                status=EventParticipantStatusEnum.REJECTED,
             ),
         ]
     )
     db.commit()
-    return event_id, organizer_id, confirmed_id, pending_id, invited_id
+    return event_id, organizer_id, confirmed_id, pending_id, rejected_id
 
 
 def test_cancel_event_marks_it_cancelled_and_notifies_participants(
