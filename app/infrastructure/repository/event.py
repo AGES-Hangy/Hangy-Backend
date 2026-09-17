@@ -13,19 +13,20 @@ from app.domain.enums import (
 )
 from app.domain.services.event import EventIsFullError, EventParticipantNotFoundError
 from app.infrastructure.repository.models import (
-    EventCancelledNotificationModel,
     EventInviteLinkModel,
     EventModel,
     EventParticipantModel,
-    EventParticipantNotificationModel,
-    NotificationModel,
     TagModel,
 )
+from app.infrastructure.repository.notification import SqlAlchemyNotificationRepository
 
 
 class SqlAlchemyEventRepository:
-    def __init__(self, db: Session) -> None:
+    def __init__(
+        self, db: Session, notification_repo: SqlAlchemyNotificationRepository
+    ) -> None:
         self.db = db
+        self.notification_repo = notification_repo
 
     def get_by_id(self, event_id: UUID) -> Event | None:
         model = self.db.scalar(
@@ -95,14 +96,7 @@ class SqlAlchemyEventRepository:
             )
         ).all()
         for user_id in participant_user_ids:
-            notification = NotificationModel(
-                user_id=user_id,
-                type=NotificationTypeEnum.EVENT_CANCELLED,
-            )
-            notification.event_cancelled_detail = EventCancelledNotificationModel(
-                event_id=event_id
-            )
-            self.db.add(notification)
+            self.notification_repo.notify_event_cancelled(user_id, event_id)
         self.db.commit()
         self.db.refresh(model)
         return self._to_entity(model)
@@ -169,19 +163,11 @@ class SqlAlchemyEventRepository:
 
         participant_model.status = new_status
 
-        notification_model = NotificationModel(
-            user_id=participant_model.user_id,
-            type=notification_type,
-            read=False,
-        )
-        self.db.add(notification_model)
-        self.db.flush()
-
-        participant_notification = EventParticipantNotificationModel(
-            notification_id=notification_model.notification_id,
+        self.notification_repo.notify_participant(
+            recipient_id=participant_model.user_id,
             participant_id=participant_model.participant_id,
+            type=notification_type,
         )
-        self.db.add(participant_notification)
 
         self.db.commit()
         self.db.refresh(participant_model)
@@ -247,6 +233,22 @@ class SqlAlchemyEventRepository:
         self.db.commit()
         self.db.refresh(model)
         return self._to_entity(model)
+
+    def get_confirmed_participant_ids(self, event_id: UUID) -> list[UUID]:
+        return list(
+            self.db.scalars(
+                select(EventParticipantModel.user_id).where(
+                    EventParticipantModel.event_id == event_id,
+                    EventParticipantModel.status
+                    == EventParticipantStatusEnum.CONFIRMED,
+                )
+            ).all()
+        )
+
+    def notify_event_updated(self, event_id: UUID, participant_ids: list[UUID]) -> None:
+        for user_id in participant_ids:
+            self.notification_repo.notify_event_updated(user_id, event_id)
+        self.db.commit()
 
     @staticmethod
     def _to_entity(model: EventModel) -> Event:

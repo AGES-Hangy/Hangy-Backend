@@ -56,6 +56,12 @@ class EventRepository(Protocol):
 
     def update(self, event: Event, tag_ids: Collection[UUID] | None) -> Event: ...
 
+    def get_confirmed_participant_ids(self, event_id: UUID) -> list[UUID]: ...
+
+    def notify_event_updated(
+        self, event_id: UUID, participant_ids: list[UUID]
+    ) -> None: ...
+
 
 class EventStartsInThePastError(Exception):
     """Raised when an event is published with a start date that already passed."""
@@ -254,4 +260,11 @@ class EventsService:
             ),
             deleted_at=event.deleted_at,
         )
-        return self.repository.update(updated_event, tag_ids)
+        updated_event = self.repository.update(updated_event, tag_ids)
+
+        if {"event_date", "location"} & changes.fields_to_update:
+            participant_ids = self.repository.get_confirmed_participant_ids(event_id)
+            if participant_ids:
+                self.repository.notify_event_updated(event_id, participant_ids)
+
+        return updated_event
