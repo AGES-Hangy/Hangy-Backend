@@ -47,6 +47,8 @@ class BusinessProfileModel(Base):
     )
     # Digits only, no punctuation.
     cnpj: Mapped[str] = mapped_column(String(14), unique=True)
+    # The point alone can't render "Av. Independência, 100" on the app card.
+    address: Mapped[str] = mapped_column(String(255))
     business_latitude: Mapped[float | None] = mapped_column(Double)
     business_longitude: Mapped[float | None] = mapped_column(Double)
     updated_at: Mapped[datetime] = mapped_column(
