@@ -90,6 +90,16 @@ class EventShareOutput(BaseModel):
     cover_photo_url: str | None
 
 
+class EventInvitePreviewOutput(BaseModel):
+    event_id: UUID
+    title: str
+    event_date: datetime
+    location_name: str | None
+    cover_photo_url: str | None
+    privacy: EventPrivacyEnum
+    requires_login: bool
+
+
 class UpdateEventInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 

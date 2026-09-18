@@ -63,6 +63,21 @@ class SqlAlchemyEventRepository:
             expires_at=model.expires_at,
         )
 
+    def get_invite_link_by_token(self, token: str) -> EventInviteLink | None:
+        model = self.db.scalar(
+            select(EventInviteLinkModel).where(EventInviteLinkModel.token == token)
+        )
+        if model is None:
+            return None
+        return EventInviteLink(
+            invite_id=model.invite_id,
+            event_id=model.event_id,
+            token=model.token,
+            created_by=model.created_by,
+            created_at=model.created_at,
+            expires_at=model.expires_at,
+        )
+
     def get_by_id_for_update(self, event_id: UUID) -> Event | None:
         model = self.db.scalar(
             select(EventModel)

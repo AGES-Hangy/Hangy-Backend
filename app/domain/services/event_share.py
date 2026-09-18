@@ -3,13 +3,17 @@ from typing import Protocol
 from uuid import UUID
 
 from app.domain.entities import Event, EventInviteLink, EventShare
-from app.domain.enums import EventPrivacyEnum
+from app.domain.enums import EventPrivacyEnum, EventStatusEnum
 
 
 class EventShareRepository(Protocol):
     def get_for_share(self, event_id: UUID) -> Event | None: ...
 
     def get_invite_link(self, event_id: UUID) -> EventInviteLink | None: ...
+
+    def get_invite_link_by_token(self, token: str) -> EventInviteLink | None: ...
+
+    def get_by_id(self, event_id: UUID) -> Event | None: ...
 
 
 class ShareableEventNotFoundError(Exception):
@@ -58,6 +62,21 @@ class EventShareService:
             location_name=location_name,
             cover_photo_url=event.cover_photo_url,
         )
+
+    def resolve_invite(self, token: str) -> Event:
+        invite_link = self.repository.get_invite_link_by_token(token)
+        if invite_link is None:
+            raise ShareableEventNotFoundError
+
+        expires_at = self._as_utc(invite_link.expires_at)
+        if expires_at <= datetime.now(UTC):
+            raise InviteLinkExpiredError
+
+        event = self.repository.get_by_id(invite_link.event_id)
+        if event is None or event.event_status is EventStatusEnum.CANCELLED:
+            raise ShareableEventNotFoundError
+
+        return event
 
     @staticmethod
     def _as_utc(value: datetime) -> datetime:

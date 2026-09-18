@@ -10,6 +10,7 @@ from app.presentation.dtos import (
     CreateEventOutput,
     CreateInviteLinkOutput,
     EventCreatorOutput,
+    EventInvitePreviewOutput,
     EventShareOutput,
     UpdateEventOutput,
     UpdateEventParticipantOutput,
@@ -90,4 +91,18 @@ class EventAssembler:
             event_date=event.starts_at,
             status=event.event_status,
             updated_at=event.updated_at,
+        )
+
+    @staticmethod
+    def to_invite_preview_dto(event: Event) -> EventInvitePreviewOutput:
+        if event.event_id is None:
+            raise ValueError("A persisted event must have an id")
+        return EventInvitePreviewOutput(
+            event_id=event.event_id,
+            title=event.event_title,
+            event_date=event.starts_at,
+            location_name=event.location_name,
+            cover_photo_url=event.cover_photo_url,
+            privacy=event.event_privacy,
+            requires_login=True,
         )
