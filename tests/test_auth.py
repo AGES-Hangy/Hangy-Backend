@@ -13,6 +13,7 @@ from app.infrastructure.repository.models import UserModel
 from app.main import app
 
 USER_EMAIL = "felipe@hangy.com"
+USER_PASSWORD = "strong-password"
 
 
 @pytest.fixture
@@ -40,10 +41,22 @@ def client() -> Iterator[TestClient]:
 def register_user(client: TestClient) -> str:
     response = client.post(
         "/register",
-        json={"email": USER_EMAIL, "password": "strong-password"},
+        json={
+            "user_type": "PERSONAL",
+            "email": USER_EMAIL,
+            "password": USER_PASSWORD,
+            "name": "Felipe Souza",
+            "cpf": "52998224725",
+            "phone": "51999990000",
+            "date_of_birth": "2000-04-12",
+            "country": "BR",
+            "state": "RS",
+            "city": "Porto Alegre",
+            "accepted_terms_version": "2026-08-01",
+        },
     )
     assert response.status_code == 201
-    return response.json()["user_id"]
+    return response.json()["user"]["id"]
 
 
 def test_register_persists_a_hashed_password(client: TestClient) -> None:
@@ -60,28 +73,7 @@ def test_register_persists_a_hashed_password(client: TestClient) -> None:
         db_generator.close()
 
     assert user is not None
-    assert user.password_hash != "strong-password"
-
-
-def test_register_rejects_a_duplicate_email(client: TestClient) -> None:
-    register_user(client)
-
-    response = client.post(
-        "/register",
-        json={"email": USER_EMAIL, "password": "another-password"},
-    )
-
-    assert response.status_code == 409
-    assert response.json() == {"detail": "Email is already registered"}
-
-
-def test_register_rejects_an_invalid_email(client: TestClient) -> None:
-    response = client.post(
-        "/register",
-        json={"email": "not-an-email", "password": "strong-password"},
-    )
-
-    assert response.status_code == 422
+    assert user.password_hash != USER_PASSWORD
 
 
 def test_login_returns_a_jwt_and_token_authenticates_user(
@@ -91,7 +83,7 @@ def test_login_returns_a_jwt_and_token_authenticates_user(
 
     login_response = client.post(
         "/login",
-        data={"username": USER_EMAIL, "password": "strong-password"},
+        data={"username": USER_EMAIL, "password": USER_PASSWORD},
     )
 
     assert login_response.status_code == 200

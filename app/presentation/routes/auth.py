@@ -14,12 +14,32 @@ from app.domain.assemblers import AuthAssembler
 from app.domain.entities import User
 from app.domain.services import (
     AuthService,
+    DuplicateCnpjError,
+    DuplicateCpfError,
     DuplicateEmailError,
     InvalidAccessTokenError,
+    InvalidCnpjError,
+    InvalidCoordinatesError,
+    InvalidCpfError,
+    MinimumAgeError,
+    RegisterBusinessService,
+    RegisterPersonalService,
+    RegisterService,
 )
 from app.infrastructure.repository import get_db
+from app.infrastructure.repository.business_profile import (
+    SqlAlchemyBusinessRegistrationRepository,
+)
+from app.infrastructure.repository.person_profile import (
+    SqlAlchemyPersonRegistrationRepository,
+)
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
-from app.presentation.dtos import RegisterInput, TokenOutput, UserOutput
+from app.presentation.dtos import (
+    RegisterOutput,
+    RegisterRequest,
+    TokenOutput,
+    UserOutput,
+)
 from app.presentation.mappers import UserMapper
 
 router = APIRouter(tags=["Authentication"])
@@ -41,6 +61,17 @@ def get_auth_service(db: Annotated[Session, Depends(get_db)]) -> AuthService:
         jwt_secret_key=settings.jwt_secret_key,
         jwt_algorithm=settings.jwt_algorithm,
         access_token_expire_minutes=settings.access_token_expire_minutes,
+    )
+
+
+def get_register_service(db: Annotated[Session, Depends(get_db)]) -> RegisterService:
+    return RegisterService(
+        personal_service=RegisterPersonalService(
+            SqlAlchemyPersonRegistrationRepository(db)
+        ),
+        business_service=RegisterBusinessService(
+            SqlAlchemyBusinessRegistrationRepository(db)
+        ),
     )
 
 
@@ -67,22 +98,55 @@ def get_access_token(
 
 @router.post(
     "/register",
-    response_model=UserOutput,
+    response_model=RegisterOutput,
     status_code=status.HTTP_201_CREATED,
 )
 def register(
-    payload: RegisterInput,
+    payload: RegisterRequest,
+    register_service: Annotated[RegisterService, Depends(get_register_service)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
-) -> UserOutput:
-    credentials = UserMapper.to_credentials(payload)
+) -> RegisterOutput:
+    registration = UserMapper.to_registration(payload)
     try:
-        user = auth_service.register(credentials)
+        user = register_service.register(registration)
     except DuplicateEmailError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Email is already registered",
         ) from error
-    return AuthAssembler.to_user_dto(user)
+    except DuplicateCpfError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="CPF is already registered",
+        ) from error
+    except DuplicateCnpjError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="CNPJ is already registered",
+        ) from error
+    except InvalidCpfError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="CPF is invalid",
+        ) from error
+    except InvalidCnpjError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="CNPJ is invalid",
+        ) from error
+    except InvalidCoordinatesError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid coordinates",
+        ) from error
+    except MinimumAgeError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Minimum age is 18 years",
+        ) from error
+
+    token = auth_service.create_access_token(user)
+    return AuthAssembler.to_register_dto(user, token)
 
 
 @router.post("/login", response_model=TokenOutput)
