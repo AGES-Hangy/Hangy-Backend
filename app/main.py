@@ -7,6 +7,7 @@ from app.presentation.routes import (
     events_router,
     feed_router,
     health_router,
+    invites_router,
     tags_router,
 )
 
@@ -27,5 +28,6 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(events_router)
+app.include_router(invites_router)
 app.include_router(tags_router)
 app.include_router(feed_router)
