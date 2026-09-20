@@ -15,6 +15,7 @@ from app.domain.enums import (
 )
 from app.domain.services import AuthService
 from app.infrastructure.repository.models import (
+    EventInviteLinkModel,
     EventModel,
     EventParticipantModel,
     TagModel,
@@ -81,6 +82,7 @@ class SeedEvent:
     privacy: EventPrivacyEnum = EventPrivacyEnum.PUBLIC
     event_status: EventStatusEnum = EventStatusEnum.PUBLISHED
     cover_photo_url: str | None = None
+    invite_token: str | None = None
     confirmed_emails: tuple[str, ...] = field(default_factory=tuple)
     pending_emails: tuple[str, ...] = field(default_factory=tuple)
 
@@ -123,6 +125,7 @@ SEED_EVENTS = (
         creator_email="admin@hangy.com",
         starts_in_days=3,
         privacy=EventPrivacyEnum.INVITE_ONLY,
+        invite_token="seed-invite-racha-fechado",
     ),
     # Visible, under "Música".
     SeedEvent(
@@ -279,6 +282,7 @@ def seed_events(db: Session) -> None:
                 event.location_name = seed.location_name
 
         _seed_participants(db, event, seed, users)
+        _seed_invite_link(db, event, seed)
     db.commit()
 
 
@@ -304,6 +308,29 @@ def _seed_participants(
                     status=status,
                 )
             )
+
+
+def _seed_invite_link(db: Session, event: EventModel, seed: SeedEvent) -> None:
+    if seed.invite_token is None:
+        return
+
+    invite_link = db.scalar(
+        select(EventInviteLinkModel).where(
+            EventInviteLinkModel.event_id == event.event_id,
+            EventInviteLinkModel.token == seed.invite_token,
+        )
+    )
+    if invite_link is None:
+        db.add(
+            EventInviteLinkModel(
+                event_id=event.event_id,
+                token=seed.invite_token,
+                expires_at=event.starts_at,
+            )
+        )
+    else:
+        # Keep the link valid after a local environment is restarted.
+        invite_link.expires_at = event.starts_at
 
 
 def _users_by_email(db: Session) -> dict[str, UserModel]:

@@ -84,6 +84,10 @@ de autorização sejam adicionadas:
 | `joao@hangy.com`  | `joao-password`  | PERSONAL | nenhum                 |
 | `admin@hangy.com` | `admin-password` | BUSINESS | nenhum                 |
 
+O seed também cria o evento `Rachão fechado` como `INVITE_ONLY`. Para testar o
+aceite por link com `user@hangy.com`, use o token
+`seed-invite-racha-fechado`.
+
 As tags de exemplo seguem a hierarquia macro → micro usada pelo feed:
 `Esportes` (Futebol, Corrida), `Música` (Rock, Samba, Sertanejo),
 `Gastronomia` (Churrasco, Culinária Italiana, Confeitaria) e `Arte e Cultura`

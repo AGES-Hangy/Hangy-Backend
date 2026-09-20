@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import (
+    EventInviteLinkModel,
     EventModel,
     EventParticipantModel,
     TagModel,
@@ -70,8 +71,22 @@ def test_seed_creates_the_sample_data_only_once(
         assert all(user.password_hash for user in users)
         assert len(tags) == SEED_TAG_COUNT
         assert count(db, EventModel) == len(SEED_EVENTS)
+        assert count(db, EventInviteLinkModel) == 1
         assert count(db, user_tag) == 4
         assert count(db, EventParticipantModel) == 6
+
+
+def test_seed_creates_a_reusable_invite_only_link(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+
+        invite_link = db.scalar(select(EventInviteLinkModel))
+        assert invite_link is not None
+        assert invite_link.token == "seed-invite-racha-fechado"
+        assert invite_link.event.event_title == "Rachão fechado"
+        assert invite_link.expires_at == invite_link.event.starts_at
 
 
 def test_seed_backfills_missing_locations_and_preserves_existing_names(
