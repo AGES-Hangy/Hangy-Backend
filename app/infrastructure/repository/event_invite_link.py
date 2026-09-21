@@ -5,12 +5,15 @@ from sqlalchemy.orm import Session
 from app.domain.entities import Event, EventInviteLink, NewEventInviteLink
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
 from app.infrastructure.repository.models import EventInviteLinkModel
+from app.infrastructure.repository.notification import SqlAlchemyNotificationRepository
 
 
 class SqlAlchemyEventInviteLinkRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
-        self.event_repository = SqlAlchemyEventRepository(db)
+        self.event_repository = SqlAlchemyEventRepository(
+            db, SqlAlchemyNotificationRepository(db)
+        )
 
     def get_by_id(self, event_id: UUID) -> Event | None:
         return self.event_repository.get_by_id(event_id)
