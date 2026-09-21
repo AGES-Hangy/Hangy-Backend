@@ -324,6 +324,7 @@ def _seed_invite_link(db: Session, event: EventModel, seed: SeedEvent) -> None:
         db.add(
             EventInviteLinkModel(
                 event_id=event.event_id,
+                created_by=event.event_creator_id,
                 token=seed.invite_token,
                 expires_at=event.starts_at,
             )

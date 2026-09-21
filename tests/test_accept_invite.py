@@ -97,6 +97,7 @@ def create_invite(
     db.add(
         EventInviteLinkModel(
             event_id=event_id,
+            created_by=organizer_id,
             token=token,
             expires_at=expires_at or now + timedelta(days=1),
         )
