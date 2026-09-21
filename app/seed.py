@@ -11,12 +11,14 @@ from app.domain.enums import (
     EventParticipantStatusEnum,
     EventPrivacyEnum,
     EventStatusEnum,
+    NotificationTypeEnum,
     UserTypeEnum,
 )
 from app.domain.services import AuthService
 from app.infrastructure.repository.models import (
     EventModel,
     EventParticipantModel,
+    NotificationModel,
     TagModel,
     UserModel,
     event_tag,
@@ -180,6 +182,50 @@ SEED_EVENTS = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class SeedNotification:
+    user_email: str
+    # Only tells notifications of the same user and type apart, so each one
+    # keeps a stable id across restarts.
+    key: str
+    type: NotificationTypeEnum
+    read: bool = False
+
+
+# user@hangy.com has 3 unread and 2 read notifications, so the bell badge shows
+# 3. maria@hangy.com's unread one must never leak into that count.
+SEED_NOTIFICATIONS = (
+    SeedNotification(
+        "user@hangy.com",
+        "participation-request",
+        NotificationTypeEnum.EVENT_PARTICIPATION_REQUEST,
+    ),
+    SeedNotification(
+        "user@hangy.com", "connection-request", NotificationTypeEnum.CONNECTION_REQUEST
+    ),
+    SeedNotification(
+        "user@hangy.com", "event-updated", NotificationTypeEnum.EVENT_UPDATED
+    ),
+    SeedNotification(
+        "user@hangy.com",
+        "request-approved",
+        NotificationTypeEnum.EVENT_REQUEST_APPROVED,
+        read=True,
+    ),
+    SeedNotification(
+        "user@hangy.com",
+        "starting-soon",
+        NotificationTypeEnum.EVENT_STARTING_SOON,
+        read=True,
+    ),
+    SeedNotification(
+        "maria@hangy.com",
+        "connection-accepted",
+        NotificationTypeEnum.CONNECTION_ACCEPTED,
+    ),
+)
+
+
 def seed_users(db: Session) -> None:
     repository = SqlAlchemyUserRepository(db)
     auth_service = AuthService(
@@ -286,6 +332,30 @@ def seed_events(db: Session) -> None:
     db.commit()
 
 
+def seed_notifications(db: Session) -> None:
+    users = _users_by_email(db)
+
+    for seed in SEED_NOTIFICATIONS:
+        user = users.get(seed.user_email)
+        if user is None:
+            continue
+
+        notification_id = uuid5(
+            NAMESPACE_URL, f"hangy:seed:notification:{seed.user_email}:{seed.key}"
+        )
+        # An existing one is left alone: the user may have read it since.
+        if db.get(NotificationModel, notification_id) is None:
+            db.add(
+                NotificationModel(
+                    notification_id=notification_id,
+                    user_id=user.user_id,
+                    type=seed.type,
+                    read=seed.read,
+                )
+            )
+    db.commit()
+
+
 def _seed_participants(
     db: Session,
     event: EventModel,
@@ -348,6 +418,7 @@ def main() -> None:
         seed_tags(db)
         seed_user_interests(db)
         seed_events(db)
+        seed_notifications(db)
 
 
 if __name__ == "__main__":
