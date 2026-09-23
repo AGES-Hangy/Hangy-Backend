@@ -74,7 +74,7 @@ class SqlAlchemyInviteRepository:
         self.db.flush()
         notification = NotificationModel(
             user_id=event.event_creator_id,
-            type=NotificationTypeEnum.EVENT_PARTICIPATION_REQUEST,
+            type=NotificationTypeEnum.EVENT_PARTICIPANT_JOINED,
             read=False,
         )
         notification.participant_detail = EventParticipantNotificationModel(

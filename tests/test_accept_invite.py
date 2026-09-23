@@ -143,7 +143,7 @@ def test_accepting_a_valid_link_confirms_participant_and_notifies_organizer(
         notification = db.scalar(select(NotificationModel))
         assert notification is not None
         assert notification.user_id == organizer_id
-        assert notification.type is NotificationTypeEnum.EVENT_PARTICIPATION_REQUEST
+        assert notification.type is NotificationTypeEnum.EVENT_PARTICIPANT_JOINED
 
 
 def test_expired_link_returns_gone(
