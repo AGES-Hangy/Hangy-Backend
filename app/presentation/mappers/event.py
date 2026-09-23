@@ -1,8 +1,8 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from app.domain.entities import NewEvent
-from app.presentation.dtos import CreateEventInput
+from app.domain.entities import EventUpdate, NewEvent
+from app.presentation.dtos import CreateEventInput, UpdateEventInput
 
 
 class EventMapper:
@@ -22,6 +22,33 @@ class EventMapper:
             cover_photo_url=dto.cover_photo_url,
             # dict.fromkeys drops duplicates without losing the client's order.
             tag_ids=tuple(dict.fromkeys(dto.tag_ids)),
+        )
+
+    @staticmethod
+    def to_event_update(dto: UpdateEventInput) -> EventUpdate:
+        return EventUpdate(
+            event_title=dto.title,
+            event_description=dto.description,
+            event_latitude=(
+                dto.location.latitude if dto.location is not None else None
+            ),
+            event_longitude=(
+                dto.location.longitude if dto.location is not None else None
+            ),
+            location_name=dto.location_name,
+            starts_at=(
+                EventMapper._as_utc(dto.event_date)
+                if dto.event_date is not None
+                else None
+            ),
+            ends_at=(
+                EventMapper._as_utc(dto.end_date) if dto.end_date is not None else None
+            ),
+            cover_photo_url=dto.cover_photo_url,
+            tag_ids=(
+                tuple(dict.fromkeys(dto.tag_ids)) if dto.tag_ids is not None else ()
+            ),
+            fields_to_update=frozenset(dto.model_fields_set),
         )
 
     @staticmethod

@@ -1,19 +1,20 @@
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import settings
-from app.domain.entities import UserCredentials
+from app.domain.entities import BusinessRegistration, PersonRegistration
 from app.domain.enums import (
     EventParticipantStatusEnum,
     EventPrivacyEnum,
     EventStatusEnum,
-    UserTypeEnum,
 )
-from app.domain.services import AuthService
+from app.domain.services import RegisterBusinessService, RegisterPersonalService
+from app.infrastructure.repository.business_profile import (
+    SqlAlchemyBusinessRegistrationRepository,
+)
 from app.infrastructure.repository.models import (
     EventInviteLinkModel,
     EventModel,
@@ -23,29 +24,57 @@ from app.infrastructure.repository.models import (
     event_tag,
     user_tag,
 )
+from app.infrastructure.repository.person_profile import (
+    SqlAlchemyPersonRegistrationRepository,
+)
 from app.infrastructure.repository.session import SessionLocal
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
 
-SEED_USERS = (
-    UserCredentials(
+SEED_TERMS_VERSION = "2026-08-01"
+
+SEED_USERS: tuple[PersonRegistration | BusinessRegistration, ...] = (
+    PersonRegistration(
         email="user@hangy.com",
         password="user-password",
-        user_type=UserTypeEnum.PERSONAL,
+        name="Usuário Hangy",
+        cpf="52998224725",
+        date_of_birth=date(1995, 4, 12),
+        country="BR",
+        state="RS",
+        city="Porto Alegre",
+        accepted_terms_version=SEED_TERMS_VERSION,
     ),
-    UserCredentials(
+    BusinessRegistration(
         email="admin@hangy.com",
         password="admin-password",
-        user_type=UserTypeEnum.BUSINESS,
+        business_name="Admin Hangy",
+        cnpj="11222333000181",
+        address="Av. Independência, 100 — Porto Alegre",
+        latitude=-30.0331,
+        longitude=-51.23,
+        accepted_terms_version=SEED_TERMS_VERSION,
     ),
-    UserCredentials(
+    PersonRegistration(
         email="maria@hangy.com",
         password="maria-password",
-        user_type=UserTypeEnum.PERSONAL,
+        name="Maria Silva",
+        cpf="11144477735",
+        date_of_birth=date(1998, 8, 3),
+        country="BR",
+        state="RS",
+        city="Porto Alegre",
+        accepted_terms_version=SEED_TERMS_VERSION,
     ),
-    UserCredentials(
+    PersonRegistration(
         email="joao@hangy.com",
         password="joao-password",
-        user_type=UserTypeEnum.PERSONAL,
+        name="João Souza",
+        cpf="46713890296",
+        date_of_birth=date(2000, 1, 20),
+        country="BR",
+        state="RS",
+        city="Porto Alegre",
+        accepted_terms_version=SEED_TERMS_VERSION,
     ),
 )
 
@@ -98,12 +127,16 @@ SEED_EVENTS = (
         cover_photo_url="https://picsum.photos/seed/pelada/800/450",
         confirmed_emails=("maria@hangy.com", "joao@hangy.com"),
     ),
+    # user@hangy.com's own event, kept PRIVATE on purpose: it's what makes
+    # ManageEvent worth opening as user@hangy.com — a confirmed participant,
+    # a pending request to approve, and the privacy badge/masking to check.
     SeedEvent(
         title="Corrida da Redenção",
         location_name="Parque Farroupilha (Redenção)",
         tag_name="Corrida",
-        creator_email="admin@hangy.com",
+        creator_email="user@hangy.com",
         starts_in_days=4,
+        privacy=EventPrivacyEnum.PRIVATE,
         confirmed_emails=("maria@hangy.com",),
         pending_emails=("joao@hangy.com",),
     ),
@@ -180,17 +213,21 @@ SEED_EVENTS = (
 
 
 def seed_users(db: Session) -> None:
-    repository = SqlAlchemyUserRepository(db)
-    auth_service = AuthService(
-        repository=repository,
-        jwt_secret_key=settings.jwt_secret_key,
-        jwt_algorithm=settings.jwt_algorithm,
-        access_token_expire_minutes=settings.access_token_expire_minutes,
+    user_repository = SqlAlchemyUserRepository(db)
+    personal_service = RegisterPersonalService(
+        SqlAlchemyPersonRegistrationRepository(db)
+    )
+    business_service = RegisterBusinessService(
+        SqlAlchemyBusinessRegistrationRepository(db)
     )
 
-    for credentials in SEED_USERS:
-        if repository.get_by_email(credentials.email) is None:
-            auth_service.register(credentials)
+    for registration in SEED_USERS:
+        if user_repository.get_by_email(registration.email) is not None:
+            continue
+        if isinstance(registration, PersonRegistration):
+            personal_service.register(registration)
+        else:
+            business_service.register(registration)
 
 
 def seed_tags(db: Session) -> None:

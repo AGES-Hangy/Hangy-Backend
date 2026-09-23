@@ -93,6 +93,7 @@ class SqlAlchemyInviteRepository:
             invite_id=model.invite_id,
             event_id=model.event_id,
             token=model.token,
+            created_by=model.created_by,
             created_at=model.created_at,
             expires_at=model.expires_at,
         )
