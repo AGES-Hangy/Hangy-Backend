@@ -4,17 +4,36 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.domain.assemblers import TagAssembler
-from app.domain.services import InvalidTagFilterError, TagNotFoundError, TagsService
+from app.domain.entities import User
+from app.domain.services import (
+    InvalidTagFilterError,
+    OnlyMicroTagsSelectableError,
+    TagNotFoundError,
+    TagsService,
+    UserTagNotFoundError,
+    UserTagsService,
+)
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.tag import SqlAlchemyTagRepository
-from app.presentation.dtos import TagNodeOutput, TagOutput
-from app.presentation.mappers import TagMapper
+from app.infrastructure.repository.user_tags import SqlAlchemyUserTagsRepository
+from app.presentation.dtos import (
+    ReplaceUserTagsInput,
+    TagNodeOutput,
+    TagOutput,
+    UserTagsOutput,
+)
+from app.presentation.mappers import TagMapper, UserTagsMapper
+from app.presentation.routes.auth import get_current_user
 
 router = APIRouter(tags=["Tags"])
 
 
 def get_tags_service(db: Annotated[Session, Depends(get_db)]) -> TagsService:
     return TagsService(repository=SqlAlchemyTagRepository(db))
+
+
+def get_user_tags_service(db: Annotated[Session, Depends(get_db)]) -> UserTagsService:
+    return UserTagsService(repository=SqlAlchemyUserTagsRepository(db))
 
 
 @router.get(
@@ -83,3 +102,54 @@ def list_tags(
             detail="Tag not found",
         ) from error
     return TagAssembler.to_dtos(tags)
+
+
+@router.put(
+    "/users/me/tags",
+    response_model=UserTagsOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Substituir as tags de interesse do usuario autenticado",
+    description=(
+        "Define o conjunto final de tags de interesse do usuario logado, usado "
+        "no passo de tags do cadastro e na edicao posterior. Apenas tags MICRO "
+        "podem ser selecionadas; a macro e derivada pelo parent_tag_id. A "
+        "operacao e idempotente: o conjunto enviado substitui integralmente o "
+        "anterior."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "Uma das tags selecionadas e uma tag macro.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Only micro tags can be selected"}
+                }
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Uma das tags selecionadas nao existe.",
+            "content": {"application/json": {"example": {"detail": "Tag not found"}}},
+        },
+    },
+)
+def replace_user_tags(
+    payload: ReplaceUserTagsInput,
+    current_user: Annotated[User, Depends(get_current_user)],
+    user_tags_service: Annotated[UserTagsService, Depends(get_user_tags_service)],
+) -> UserTagsOutput:
+    if current_user.user_id is None:
+        raise ValueError("An authenticated user must have an id")
+
+    tag_ids = UserTagsMapper.to_tag_ids(payload)
+    try:
+        tags = user_tags_service.replace_tags(current_user.user_id, tag_ids)
+    except UserTagNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tag not found",
+        ) from error
+    except OnlyMicroTagsSelectableError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only micro tags can be selected",
+        ) from error
+    return TagAssembler.to_user_tags_dto(tags)
