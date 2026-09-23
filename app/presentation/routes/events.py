@@ -49,6 +49,11 @@ from app.domain.services.event_privacy import (
 from app.domain.services.event_privacy import (
     NotEventOrganizerError as NotInviteLinkOrganizerError,
 )
+from app.domain.services.event_share import (
+    EventShareService,
+    InviteLinkExpiredError,
+    ShareableEventNotFoundError,
+)
 from app.domain.services.participation import (
     AlreadyParticipatingError,
     InviteOnlyEventError,
@@ -64,11 +69,6 @@ from app.domain.services.participation import (
 )
 from app.domain.services.participation import (
     EventNotFoundError as ParticipationEventNotFoundError,
-)
-from app.domain.services.event_share import (
-    EventShareService,
-    InviteLinkExpiredError,
-    ShareableEventNotFoundError,
 )
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
