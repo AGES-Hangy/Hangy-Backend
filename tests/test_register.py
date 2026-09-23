@@ -115,6 +115,47 @@ def test_invalid_cnpj_returns_400(client: TestClient) -> None:
 
 
 @pytest.mark.parametrize(
+    "phone",
+    [
+        "51999990000",
+        "5133330000",
+        "(51) 99999-0000",
+        "(51) 3333-0000",
+        "51 99999-0000",
+        "51-99999-0000",
+        "+5551999990000",
+        "+55 51 99999-0000",
+        "5551999990000",
+    ],
+)
+def test_accepted_phone_formats_return_201(client: TestClient, phone: str) -> None:
+    payload = {**VALID_PERSONAL_PAYLOAD, "phone": phone}
+
+    response = client.post("/register", json=payload)
+
+    assert response.status_code == 201
+
+
+@pytest.mark.parametrize(
+    "phone",
+    [
+        "123",
+        "abcdefghijk",
+        "5199999",
+        "051999990000000",
+        "00999990000",
+        "11 1234",
+    ],
+)
+def test_invalid_phone_returns_422(client: TestClient, phone: str) -> None:
+    payload = {**VALID_PERSONAL_PAYLOAD, "phone": phone}
+
+    response = client.post("/register", json=payload)
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
     "location",
     [
         {"latitude": 91, "longitude": -51.23},
