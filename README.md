@@ -171,32 +171,36 @@ E-mail, CPF e CNPJ são únicos entre contas ativas (409 em caso de duplicidade;
 o e-mail é único por conta, não por tipo). O sucesso devolve `201` já com o
 `access_token`, no mesmo formato de resposta do login.
 
-O login segue o fluxo OAuth2 Password e, por isso, recebe os campos como
-`application/x-www-form-urlencoded`. O padrão OAuth2 fixa o nome do campo como
-`username`, mas o valor esperado é o e-mail:
+`POST /login` recebe e-mail e senha como JSON:
 
 ```bash
 curl -X POST http://localhost:8000/login \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=felipe@hangy.com&password=strong-password"
+  -H "Content-Type: application/json" \
+  -d '{"email": "felipe@hangy.com", "password": "strong-password"}'
 ```
 
-A resposta contém um JWT no campo `access_token`. Envie-o como Bearer token
-para acessar uma rota protegida:
+Credenciais inválidas (e-mail inexistente ou senha errada) sempre devolvem o
+mesmo `401` com `{"detail": "Incorrect email or password"}`, para não indicar
+qual dos dois estava errado. Uma conta excluída (`deleted_at` preenchido)
+devolve `403` mesmo com a senha correta.
+
+A resposta, igual à de `/register`, contém um JWT no campo `access_token` e o
+usuário autenticado. Envie o token como Bearer para acessar uma rota
+protegida:
 
 ```bash
 curl http://localhost:8000/users/me \
   -H "Authorization: Bearer SEU_ACCESS_TOKEN"
 ```
 
-No Swagger UI, o botão **Authorize** oferece duas opções: `OAuth2Password`
-recebe o e-mail (no campo `username`) e a senha e chama `/login`;
-`BearerToken` permite colar diretamente um JWT existente. As duas opções
-enviam o mesmo header `Authorization: Bearer`.
+No Swagger UI, o botão **Authorize** oferece `BearerToken`: cole ali um JWT
+obtido em `/login` ou `/register`.
 
 As senhas são protegidas com Argon2 por meio do `pwdlib`; somente o hash é
-persistido. Os tokens são criados e verificados com PyJWT e expiram conforme
-`ACCESS_TOKEN_EXPIRE_MINUTES`.
+persistido. Os tokens são criados e verificados com PyJWT, carregam a data de
+emissão (`iat`) e expiram conforme `ACCESS_TOKEN_EXPIRE_MINUTES`. Trocar a
+senha atualiza `password_changed_at` e invalida tokens emitidos antes dessa
+troca, mesmo que ainda não tenham expirado.
 
 ## Migrações
 

@@ -180,7 +180,7 @@ def test_seeded_feed_matches_the_documented_sample(
     with TestClient(app) as client:
         login = client.post(
             "/login",
-            data={"username": "user@hangy.com", "password": "user-password"},
+            json={"email": "user@hangy.com", "password": "user-password"},
         )
         assert login.status_code == 200
         response = client.get(
@@ -223,7 +223,7 @@ def test_seeded_business_user_has_an_empty_feed(
     with TestClient(app) as client:
         login = client.post(
             "/login",
-            data={"username": "admin@hangy.com", "password": "admin-password"},
+            json={"email": "admin@hangy.com", "password": "admin-password"},
         )
         response = client.get(
             "/feed",

@@ -34,4 +34,5 @@ class User:
     profile_photo_url: str | None = None
     accepted_terms_at: datetime | None = None
     accepted_terms_version: str | None = None
+    password_changed_at: datetime | None = None
     deleted_at: datetime | None = None

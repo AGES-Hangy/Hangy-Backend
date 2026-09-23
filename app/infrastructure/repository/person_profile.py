@@ -41,6 +41,7 @@ class SqlAlchemyPersonRegistrationRepository:
             profile_photo_url=user.profile_photo_url,
             accepted_terms_at=user.accepted_terms_at,
             accepted_terms_version=user.accepted_terms_version,
+            password_changed_at=user.password_changed_at,
             created_at=user.created_at,
             updated_at=user.updated_at,
         )
