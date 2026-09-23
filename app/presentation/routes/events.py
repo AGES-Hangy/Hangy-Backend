@@ -62,6 +62,7 @@ from app.infrastructure.repository.event_invite_link import (
 from app.infrastructure.repository.event_participant import (
     SqlAlchemyEventParticipantsRepository,
 )
+from app.infrastructure.repository.notification import SqlAlchemyNotificationRepository
 from app.presentation.dtos import (
     CancelEventInput,
     CancelEventOutput,
@@ -111,7 +112,9 @@ INVITE_LINK_CONFLICT_EXAMPLE = {"detail": "Event is not invite only"}
 
 
 def get_events_service(db: Annotated[Session, Depends(get_db)]) -> EventsService:
-    return EventsService(repository=SqlAlchemyEventRepository(db))
+    return EventsService(
+        repository=SqlAlchemyEventRepository(db, SqlAlchemyNotificationRepository(db))
+    )
 
 
 def get_event_details_service(
@@ -124,7 +127,7 @@ def get_event_share_service(
     db: Annotated[Session, Depends(get_db)],
 ) -> EventShareService:
     return EventShareService(
-        repository=SqlAlchemyEventRepository(db),
+        repository=SqlAlchemyEventRepository(db, SqlAlchemyNotificationRepository(db)),
         frontend_base_url=settings.frontend_base_url,
     )
 
