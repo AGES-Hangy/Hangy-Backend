@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from app.infrastructure.repository.models.user_connection_model import (
         UserConnectionModel,
     )
+    from app.infrastructure.repository.models.user_device_model import UserDeviceModel
 
 
 user_tag = Table(
@@ -132,4 +133,7 @@ class UserModel(Base):
         back_populates="reported_user",
         foreign_keys="ReportModel.reported_user_id",
         passive_deletes=True,
+    )
+    devices: Mapped[list[UserDeviceModel]] = relationship(
+        back_populates="user", passive_deletes=True
     )
