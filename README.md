@@ -122,15 +122,54 @@ os novos exemplos.
 
 ## Autenticação
 
-Cadastre um usuário enviando JSON:
+`POST /register` é um único endpoint que decide o tipo de conta pelo campo
+`user_type` do próprio corpo (`PERSONAL` ou `BUSINESS`), uma união
+discriminada validada pelo Pydantic. Os dois formatos aparecem no Swagger UI.
+
+Cadastro de pessoa física:
 
 ```bash
 curl -X POST http://localhost:8000/register \
   -H "Content-Type: application/json" \
-  -d '{"email":"felipe@hangy.com","password":"strong-password"}'
+  -d '{
+        "user_type": "PERSONAL",
+        "email": "felipe@hangy.com",
+        "password": "strong-password",
+        "name": "Felipe Souza",
+        "cpf": "52998224725",
+        "phone": "51999990000",
+        "date_of_birth": "2000-04-12",
+        "country": "BR",
+        "state": "RS",
+        "city": "Porto Alegre",
+        "accepted_terms_version": "2026-08-01"
+      }'
 ```
 
-O campo `user_type` é opcional e aceita `PERSONAL` (padrão) ou `BUSINESS`.
+Cadastro de pessoa jurídica:
+
+```bash
+curl -X POST http://localhost:8000/register \
+  -H "Content-Type: application/json" \
+  -d '{
+        "user_type": "BUSINESS",
+        "email": "contato@bar.com",
+        "password": "strong-password",
+        "business_name": "Bar do Zé",
+        "cnpj": "11222333000181",
+        "phone": "5133330000",
+        "description": "Bar e petiscaria",
+        "location": {"latitude": -30.0331, "longitude": -51.23},
+        "address": "Av. Independência, 100 — Porto Alegre",
+        "accepted_terms_version": "2026-08-01"
+      }'
+```
+
+CPF e CNPJ são validados por dígito verificador (400 se inválidos); cadastro
+`PERSONAL` exige 18 anos completos na data de nascimento (403 caso contrário).
+E-mail, CPF e CNPJ são únicos entre contas ativas (409 em caso de duplicidade;
+o e-mail é único por conta, não por tipo). O sucesso devolve `201` já com o
+`access_token`, no mesmo formato de resposta do login.
 
 O login segue o fluxo OAuth2 Password e, por isso, recebe os campos como
 `application/x-www-form-urlencoded`. O padrão OAuth2 fixa o nome do campo como

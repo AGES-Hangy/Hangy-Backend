@@ -5,8 +5,7 @@ from uuid import UUID
 import jwt
 from pwdlib import PasswordHash
 
-from app.domain.entities import AccessToken, User, UserCredentials
-from app.domain.enums import UserRoleEnum
+from app.domain.entities import AccessToken, User
 
 password_hash = PasswordHash.recommended()
 
@@ -15,8 +14,6 @@ class UserRepository(Protocol):
     def get_by_id(self, user_id: UUID) -> User | None: ...
 
     def get_by_email(self, email: str) -> User | None: ...
-
-    def add(self, user: User) -> User: ...
 
 
 class DuplicateEmailError(Exception):
@@ -39,22 +36,6 @@ class AuthService:
         self.jwt_secret_key = jwt_secret_key
         self.jwt_algorithm = jwt_algorithm
         self.access_token_expire_minutes = access_token_expire_minutes
-
-    def register(self, credentials: UserCredentials) -> User:
-        if self.repository.get_by_email(credentials.email) is not None:
-            raise DuplicateEmailError
-
-        now = datetime.now(UTC)
-        user = User(
-            user_id=None,
-            user_type=credentials.user_type,
-            email=credentials.email,
-            password_hash=password_hash.hash(credentials.password),
-            created_at=now,
-            updated_at=now,
-            role=UserRoleEnum.USER,
-        )
-        return self.repository.add(user)
 
     def authenticate(self, email: str, password: str) -> User | None:
         user = self.repository.get_by_email(email)

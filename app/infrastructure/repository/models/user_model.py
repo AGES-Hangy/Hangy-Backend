@@ -4,7 +4,17 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Column, DateTime, ForeignKey, String, Table, Uuid, func
+from sqlalchemy import (
+    Column,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Table,
+    Uuid,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.enums import UserRoleEnum, UserTypeEnum
@@ -69,13 +79,24 @@ user_follows = Table(
 
 class UserModel(Base):
     __tablename__ = "user"
+    __table_args__ = (
+        # Partial index instead of a plain unique column: a soft-deleted
+        # account (deleted_at set) must free its email up for reuse.
+        Index(
+            "uq_user_email_active",
+            "email",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+            sqlite_where=text("deleted_at IS NULL"),
+        ),
+    )
 
     user_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_type: Mapped[UserTypeEnum] = mapped_column(enum_column(UserTypeEnum))
     role: Mapped[UserRoleEnum] = mapped_column(
         enum_column(UserRoleEnum), default=UserRoleEnum.USER
     )
-    email: Mapped[str] = mapped_column(String(255), unique=True)
+    email: Mapped[str] = mapped_column(String(255))
     password_hash: Mapped[str] = mapped_column(String(255))
     # Display name and bio are shared by every user type, so they live here
     # instead of being duplicated across person_profile and business_profile.
@@ -83,6 +104,10 @@ class UserModel(Base):
     description: Mapped[str | None] = mapped_column(String(500))
     user_phone: Mapped[str | None] = mapped_column(String(20))
     profile_photo_url: Mapped[str | None] = mapped_column(String(2048))
+    # LGPD requires recording when and which version of the terms a user
+    # accepted, not just a boolean flag.
+    accepted_terms_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    accepted_terms_version: Mapped[str | None] = mapped_column(String(50))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
