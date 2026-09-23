@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from app.infrastructure.repository.models.business_profile_model import (
         BusinessProfileModel,
     )
+    from app.infrastructure.repository.models.device_model import DeviceModel
     from app.infrastructure.repository.models.event_model import EventModel
     from app.infrastructure.repository.models.event_participant_model import (
         EventParticipantModel,
@@ -106,6 +107,9 @@ class UserModel(Base):
         back_populates="user", passive_deletes=True
     )
     notifications: Mapped[list[NotificationModel]] = relationship(
+        back_populates="user", passive_deletes=True
+    )
+    devices: Mapped[list[DeviceModel]] = relationship(
         back_populates="user", passive_deletes=True
     )
     tags: Mapped[list[TagModel]] = relationship(secondary=user_tag)

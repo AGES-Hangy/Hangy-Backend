@@ -14,6 +14,7 @@ from app.domain.assemblers import AuthAssembler
 from app.domain.entities import User
 from app.domain.services import (
     AuthService,
+    DeviceService,
     DuplicateEmailError,
     InvalidAccessTokenError,
 )
@@ -113,3 +114,29 @@ def read_current_user(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> UserOutput:
     return AuthAssembler.to_user_dto(current_user)
+
+
+def get_device_service(db: Annotated[Session, Depends(get_db)]) -> DeviceService:
+    from app.domain.services.device import DeviceService
+    from app.infrastructure.repository.device import SqlAlchemyDeviceRepository
+
+    return DeviceService(SqlAlchemyDeviceRepository(db))
+
+
+@router.delete(
+    "/users/me/devices/{device_token}", status_code=status.HTTP_204_NO_CONTENT
+)
+def remove_device_token(
+    device_token: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    device_service: Annotated[DeviceService, Depends(get_device_service)],
+) -> None:
+    from app.domain.services.device import DeviceNotFoundError
+
+    try:
+        device_service.remove_device(device_token, current_user.user_id)
+    except DeviceNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Device not found",
+        ) from e
