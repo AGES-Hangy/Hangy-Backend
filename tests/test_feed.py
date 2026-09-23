@@ -78,7 +78,7 @@ def context() -> Iterator[FeedContext]:
         assert register.status_code == 201
         login = client.post(
             "/login",
-            data={"username": USER_EMAIL, "password": USER_PASSWORD},
+            json={"email": USER_EMAIL, "password": USER_PASSWORD},
         )
         assert login.status_code == 200
         yield FeedContext(

@@ -83,7 +83,7 @@ def test_login_returns_a_jwt_and_token_authenticates_user(
 
     login_response = client.post(
         "/login",
-        data={"username": USER_EMAIL, "password": USER_PASSWORD},
+        json={"email": USER_EMAIL, "password": USER_PASSWORD},
     )
 
     assert login_response.status_code == 200
@@ -112,26 +112,23 @@ def test_login_rejects_an_invalid_password(client: TestClient) -> None:
 
     response = client.post(
         "/login",
-        data={"username": USER_EMAIL, "password": "wrong-password"},
+        json={"email": USER_EMAIL, "password": "wrong-password"},
     )
 
     assert response.status_code == 401
-    assert response.headers["www-authenticate"] == "Bearer"
+    assert response.json() == {"detail": "Incorrect email or password"}
 
 
-def test_openapi_offers_oauth2_and_direct_bearer_authentication(
+def test_openapi_offers_only_bearer_token_authentication(
     client: TestClient,
 ) -> None:
     schema = client.get("/openapi.json").json()
     security_schemes = schema["components"]["securitySchemes"]
 
-    assert security_schemes["OAuth2Password"]["type"] == "oauth2"
+    assert "OAuth2Password" not in security_schemes
     assert security_schemes["BearerToken"] == {
         "type": "http",
         "description": "Paste an existing JWT access token.",
         "scheme": "bearer",
     }
-    assert schema["paths"]["/users/me"]["get"]["security"] == [
-        {"OAuth2Password": []},
-        {"BearerToken": []},
-    ]
+    assert schema["paths"]["/users/me"]["get"]["security"] == [{"BearerToken": []}]

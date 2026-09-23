@@ -64,6 +64,7 @@ class RegisterBusinessService:
             user_phone=registration.phone,
             accepted_terms_at=now,
             accepted_terms_version=registration.accepted_terms_version,
+            password_changed_at=now,
         )
         profile = BusinessProfile(
             user_id=user.user_id,

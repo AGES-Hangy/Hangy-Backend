@@ -61,24 +61,31 @@ RegisterRequest = Annotated[
 ]
 
 
-class RegisterPersonalUserOutput(BaseModel):
+class LoginRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    email: str = Field(max_length=254, pattern=EMAIL_PATTERN)
+    password: SecretStr
+
+
+class AuthPersonalUserOutput(BaseModel):
     id: UUID
     email: str
     user_type: Literal[UserTypeEnum.PERSONAL]
     name: str
 
 
-class RegisterBusinessUserOutput(BaseModel):
+class AuthBusinessUserOutput(BaseModel):
     id: UUID
     email: str
     user_type: Literal[UserTypeEnum.BUSINESS]
     business_name: str
 
 
-class RegisterOutput(BaseModel):
+class AuthOutput(BaseModel):
     access_token: str
     token_type: Literal["bearer"]
-    user: RegisterPersonalUserOutput | RegisterBusinessUserOutput
+    user: AuthPersonalUserOutput | AuthBusinessUserOutput
 
 
 class UserOutput(BaseModel):
@@ -87,8 +94,3 @@ class UserOutput(BaseModel):
     user_type: UserTypeEnum
     role: UserRoleEnum
     created_at: datetime
-
-
-class TokenOutput(BaseModel):
-    access_token: str
-    token_type: Literal["bearer"]

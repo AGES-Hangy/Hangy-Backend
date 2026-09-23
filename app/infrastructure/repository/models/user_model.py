@@ -98,6 +98,11 @@ class UserModel(Base):
     )
     email: Mapped[str] = mapped_column(String(255))
     password_hash: Mapped[str] = mapped_column(String(255))
+    # Compared against a JWT's iat so tokens minted before a password change
+    # stop working, without needing server-side session storage.
+    password_changed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
     # Display name and bio are shared by every user type, so they live here
     # instead of being duplicated across person_profile and business_profile.
     name: Mapped[str | None] = mapped_column(String(120))
