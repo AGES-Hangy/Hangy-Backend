@@ -14,6 +14,26 @@ USER_EMAIL = "device_user@hangy.com"
 USER_PASSWORD = "strong-password"
 VALID_TOKEN = "ExponentPushToken[abc123]"
 OTHER_TOKEN = "ExponentPushToken[xyz789]"
+TERMS_VERSION = "2026-08-01"
+
+
+def _personal_payload(email: str) -> dict:
+    cpf_by_email = {
+        "user_a@hangy.com": "52998224725",
+        "user_b@hangy.com": "11144477735",
+    }
+    return {
+        "user_type": "PERSONAL",
+        "email": email,
+        "password": USER_PASSWORD,
+        "name": "Test User",
+        "cpf": cpf_by_email.get(email, "52998224725"),
+        "date_of_birth": "2000-01-01",
+        "country": "BR",
+        "state": "RS",
+        "city": "Porto Alegre",
+        "accepted_terms_version": TERMS_VERSION,
+    }
 
 
 @pytest.fixture
@@ -39,8 +59,8 @@ def client() -> Iterator[TestClient]:
 
 
 def register_and_login(client: TestClient, email: str = USER_EMAIL) -> str:
-    client.post("/register", json={"email": email, "password": USER_PASSWORD})
-    resp = client.post("/login", data={"username": email, "password": USER_PASSWORD})
+    client.post("/register", json=_personal_payload(email))
+    resp = client.post("/login", json={"email": email, "password": USER_PASSWORD})
     return resp.json()["access_token"]
 
 
