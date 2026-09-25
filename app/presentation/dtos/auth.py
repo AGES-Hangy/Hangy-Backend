@@ -1,10 +1,10 @@
-from datetime import date, datetime
+from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from app.domain.enums import UserRoleEnum, UserTypeEnum
+from app.domain.enums import UserTypeEnum
 
 EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 CPF_PATTERN = r"^\d{11}$"
@@ -88,9 +88,24 @@ class AuthOutput(BaseModel):
     user: AuthPersonalUserOutput | AuthBusinessUserOutput
 
 
-class UserOutput(BaseModel):
-    user_id: UUID
+class PersonalProfileOutput(BaseModel):
+    date_of_birth: date
+    city: str
+    state: str
+    photo_url: str | None = None
+
+
+class BusinessProfileOutput(BaseModel):
+    cnpj: str
+    address: str
+    latitude: float | None = None
+    longitude: float | None = None
+    photo_url: str | None = None
+
+
+class CurrentUserOutput(BaseModel):
+    id: UUID
     email: str
     user_type: UserTypeEnum
-    role: UserRoleEnum
-    created_at: datetime
+    name: str | None = None
+    profile: PersonalProfileOutput | BusinessProfileOutput | None = None

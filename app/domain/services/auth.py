@@ -86,6 +86,8 @@ class AuthService:
         user = self.repository.get_by_id(user_id)
         if user is None:
             raise InvalidAccessTokenError
+        if user.deleted_at is not None:
+            raise AccountDeletedError
         # A token with no "iat" carries no freshness info to check, so it is
         # left alone here (e.g. tokens minted before this claim existed).
         if (

@@ -104,7 +104,6 @@ def test_login_returns_a_jwt_and_token_authenticates_user(
     assert me_response.status_code == 200
     assert me_response.json()["email"] == USER_EMAIL
     assert me_response.json()["user_type"] == "PERSONAL"
-    assert me_response.json()["role"] == "USER"
 
 
 def test_login_rejects_an_invalid_password(client: TestClient) -> None:
