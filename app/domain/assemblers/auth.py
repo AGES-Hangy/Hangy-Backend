@@ -1,24 +1,46 @@
-from app.domain.entities import AccessToken, User
+from app.domain.entities import AccessToken, BusinessProfile, PersonProfile, User
 from app.domain.enums import UserTypeEnum
 from app.presentation.dtos import (
     AuthBusinessUserOutput,
     AuthOutput,
     AuthPersonalUserOutput,
-    UserOutput,
+    BusinessProfileOutput,
+    CurrentUserOutput,
+    PersonalProfileOutput,
 )
 
 
 class AuthAssembler:
     @staticmethod
-    def to_user_dto(user: User) -> UserOutput:
+    def to_current_user_dto(
+        user: User, profile: PersonProfile | BusinessProfile | None
+    ) -> CurrentUserOutput:
         if user.user_id is None:
             raise ValueError("A persisted user must have an id")
-        return UserOutput(
-            user_id=user.user_id,
+
+        profile_dto: PersonalProfileOutput | BusinessProfileOutput | None = None
+        if isinstance(profile, PersonProfile):
+            profile_dto = PersonalProfileOutput(
+                date_of_birth=profile.date_of_birth,
+                city=profile.city,
+                state=profile.state,
+                photo_url=user.profile_photo_url,
+            )
+        elif isinstance(profile, BusinessProfile):
+            profile_dto = BusinessProfileOutput(
+                cnpj=profile.cnpj,
+                address=profile.address,
+                latitude=profile.business_latitude,
+                longitude=profile.business_longitude,
+                photo_url=user.profile_photo_url,
+            )
+
+        return CurrentUserOutput(
+            id=user.user_id,
             email=user.email,
             user_type=user.user_type,
-            role=user.role,
-            created_at=user.created_at,
+            name=user.name,
+            profile=profile_dto,
         )
 
     @staticmethod

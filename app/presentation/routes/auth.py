@@ -22,6 +22,7 @@ from app.domain.services import (
     RegisterBusinessService,
     RegisterPersonalService,
     RegisterService,
+    UserProfileService,
 )
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.business_profile import (
@@ -31,11 +32,12 @@ from app.infrastructure.repository.person_profile import (
     SqlAlchemyPersonRegistrationRepository,
 )
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
+from app.infrastructure.repository.user_profile import SqlAlchemyUserProfileRepository
 from app.presentation.dtos import (
     AuthOutput,
+    CurrentUserOutput,
     LoginRequest,
     RegisterRequest,
-    UserOutput,
 )
 from app.presentation.mappers import UserMapper
 
@@ -65,6 +67,12 @@ def get_register_service(db: Annotated[Session, Depends(get_db)]) -> RegisterSer
             SqlAlchemyBusinessRegistrationRepository(db)
         ),
     )
+
+
+def get_user_profile_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> UserProfileService:
+    return UserProfileService(repository=SqlAlchemyUserProfileRepository(db))
 
 
 credentials_exception = HTTPException(
@@ -169,12 +177,43 @@ def get_current_user(
     """Resolve the bearer token into the user every protected route needs."""
     try:
         return auth_service.get_user_from_token(token)
+    except AccountDeletedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account has been deleted",
+        ) from error
     except InvalidAccessTokenError as error:
         raise credentials_exception from error
 
 
-@router.get("/users/me", response_model=UserOutput)
+@router.get(
+    "/users/me",
+    response_model=CurrentUserOutput,
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": (
+                "Token ausente, invalido, expirado ou emitido antes da "
+                "ultima troca de senha."
+            ),
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "A conta associada ao token foi excluida.",
+            "content": {
+                "application/json": {"example": {"detail": "Account has been deleted"}}
+            },
+        },
+    },
+)
 def read_current_user(
     current_user: Annotated[User, Depends(get_current_user)],
-) -> UserOutput:
-    return AuthAssembler.to_user_dto(current_user)
+    user_profile_service: Annotated[
+        UserProfileService, Depends(get_user_profile_service)
+    ],
+) -> CurrentUserOutput:
+    profile = user_profile_service.get_profile_for_user(current_user)
+    return AuthAssembler.to_current_user_dto(current_user, profile)
