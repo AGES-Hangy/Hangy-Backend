@@ -1,8 +1,9 @@
-from app.domain.entities import EventParticipantsPage
+from app.domain.entities import EventParticipant, EventParticipantsPage
 from app.presentation.dtos import (
     EventParticipantItemOutput,
     EventParticipantsOutput,
     EventParticipantUserOutput,
+    EventParticipationOutput,
 )
 
 
@@ -29,4 +30,16 @@ class EventParticipantsAssembler:
             ],
             counts=counts,
             next_cursor=page.next_cursor,
+        )
+
+
+class EventParticipationAssembler:
+    """Build the participation response DTO from a domain entity."""
+
+    @staticmethod
+    def to_dto(participant: EventParticipant) -> EventParticipationOutput:
+        return EventParticipationOutput(
+            participant_id=participant.participant_id,
+            status=participant.status,
+            joined_at=participant.joined_at,
         )
