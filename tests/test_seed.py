@@ -269,12 +269,14 @@ def test_seeded_notifications_feed_the_unread_count(
     with TestClient(app) as client:
         login = client.post(
             "/login",
-            data={"username": "user@hangy.com", "password": "user-password"},
+            json={"email": "user@hangy.com", "password": "user-password"},
         )
+        assert login.status_code == 200
         response = client.get(
             "/notifications/unread-count",
             headers={"Authorization": f"Bearer {login.json()['access_token']}"},
         )
     app.dependency_overrides.clear()
 
+    assert response.status_code == 200
     assert response.json() == {"unread_count": 3}

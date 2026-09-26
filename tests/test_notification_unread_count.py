@@ -51,19 +51,30 @@ def context() -> Iterator[NotificationContext]:
     with testing_session() as db, TestClient(app) as client:
         register = client.post(
             "/register",
-            json={"email": USER_EMAIL, "password": USER_PASSWORD},
+            json={
+                "user_type": "PERSONAL",
+                "email": USER_EMAIL,
+                "password": USER_PASSWORD,
+                "name": "Felipe",
+                "cpf": "52998224725",
+                "date_of_birth": "2000-04-12",
+                "country": "BR",
+                "state": "RS",
+                "city": "Porto Alegre",
+                "accepted_terms_version": "2026-08-01",
+            },
         )
         assert register.status_code == 201
         login = client.post(
             "/login",
-            data={"username": USER_EMAIL, "password": USER_PASSWORD},
+            json={"email": USER_EMAIL, "password": USER_PASSWORD},
         )
         assert login.status_code == 200
         yield NotificationContext(
             client=client,
             db=db,
             token=login.json()["access_token"],
-            user_id=uuid.UUID(register.json()["user_id"]),
+            user_id=uuid.UUID(register.json()["user"]["id"]),
         )
     app.dependency_overrides.clear()
     Base.metadata.drop_all(engine)
