@@ -1,50 +1,82 @@
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import settings
-from app.domain.entities import UserCredentials
+from app.domain.entities import BusinessRegistration, PersonRegistration
 from app.domain.enums import (
     EventParticipantStatusEnum,
     EventPrivacyEnum,
     EventStatusEnum,
-    UserTypeEnum,
+    NotificationTypeEnum,
 )
-from app.domain.services import AuthService
+from app.domain.services import RegisterBusinessService, RegisterPersonalService
+from app.infrastructure.repository.business_profile import (
+    SqlAlchemyBusinessRegistrationRepository,
+)
 from app.infrastructure.repository.models import (
+    EventInviteLinkModel,
     EventModel,
     EventParticipantModel,
+    NotificationModel,
     TagModel,
     UserModel,
     event_tag,
     user_tag,
 )
+from app.infrastructure.repository.person_profile import (
+    SqlAlchemyPersonRegistrationRepository,
+)
 from app.infrastructure.repository.session import SessionLocal
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
 
-SEED_USERS = (
-    UserCredentials(
+SEED_TERMS_VERSION = "2026-08-01"
+
+SEED_USERS: tuple[PersonRegistration | BusinessRegistration, ...] = (
+    PersonRegistration(
         email="user@hangy.com",
         password="user-password",
-        user_type=UserTypeEnum.PERSONAL,
+        name="Usuário Hangy",
+        cpf="52998224725",
+        date_of_birth=date(1995, 4, 12),
+        country="BR",
+        state="RS",
+        city="Porto Alegre",
+        accepted_terms_version=SEED_TERMS_VERSION,
     ),
-    UserCredentials(
+    BusinessRegistration(
         email="admin@hangy.com",
         password="admin-password",
-        user_type=UserTypeEnum.BUSINESS,
+        business_name="Admin Hangy",
+        cnpj="11222333000181",
+        address="Av. Independência, 100 — Porto Alegre",
+        latitude=-30.0331,
+        longitude=-51.23,
+        accepted_terms_version=SEED_TERMS_VERSION,
     ),
-    UserCredentials(
+    PersonRegistration(
         email="maria@hangy.com",
         password="maria-password",
-        user_type=UserTypeEnum.PERSONAL,
+        name="Maria Silva",
+        cpf="11144477735",
+        date_of_birth=date(1998, 8, 3),
+        country="BR",
+        state="RS",
+        city="Porto Alegre",
+        accepted_terms_version=SEED_TERMS_VERSION,
     ),
-    UserCredentials(
+    PersonRegistration(
         email="joao@hangy.com",
         password="joao-password",
-        user_type=UserTypeEnum.PERSONAL,
+        name="João Souza",
+        cpf="46713890296",
+        date_of_birth=date(2000, 1, 20),
+        country="BR",
+        state="RS",
+        city="Porto Alegre",
+        accepted_terms_version=SEED_TERMS_VERSION,
     ),
 )
 
@@ -81,6 +113,7 @@ class SeedEvent:
     privacy: EventPrivacyEnum = EventPrivacyEnum.PUBLIC
     event_status: EventStatusEnum = EventStatusEnum.PUBLISHED
     cover_photo_url: str | None = None
+    invite_token: str | None = None
     confirmed_emails: tuple[str, ...] = field(default_factory=tuple)
     pending_emails: tuple[str, ...] = field(default_factory=tuple)
 
@@ -127,6 +160,7 @@ SEED_EVENTS = (
         creator_email="admin@hangy.com",
         starts_in_days=3,
         privacy=EventPrivacyEnum.INVITE_ONLY,
+        invite_token="seed-invite-racha-fechado",
     ),
     # Visible, under "Música".
     SeedEvent(
@@ -180,18 +214,66 @@ SEED_EVENTS = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class SeedNotification:
+    user_email: str
+    # Only tells notifications of the same user and type apart, so each one
+    # keeps a stable id across restarts.
+    key: str
+    type: NotificationTypeEnum
+    read: bool = False
+
+
+# user@hangy.com has 3 unread and 2 read notifications, so the bell badge shows
+# 3. maria@hangy.com's unread one must never leak into that count.
+SEED_NOTIFICATIONS = (
+    SeedNotification(
+        "user@hangy.com",
+        "participation-request",
+        NotificationTypeEnum.EVENT_PARTICIPATION_REQUEST,
+    ),
+    SeedNotification(
+        "user@hangy.com", "connection-request", NotificationTypeEnum.CONNECTION_REQUEST
+    ),
+    SeedNotification(
+        "user@hangy.com", "event-updated", NotificationTypeEnum.EVENT_UPDATED
+    ),
+    SeedNotification(
+        "user@hangy.com",
+        "request-approved",
+        NotificationTypeEnum.EVENT_REQUEST_APPROVED,
+        read=True,
+    ),
+    SeedNotification(
+        "user@hangy.com",
+        "starting-soon",
+        NotificationTypeEnum.EVENT_STARTING_SOON,
+        read=True,
+    ),
+    SeedNotification(
+        "maria@hangy.com",
+        "connection-accepted",
+        NotificationTypeEnum.CONNECTION_ACCEPTED,
+    ),
+)
+
+
 def seed_users(db: Session) -> None:
-    repository = SqlAlchemyUserRepository(db)
-    auth_service = AuthService(
-        repository=repository,
-        jwt_secret_key=settings.jwt_secret_key,
-        jwt_algorithm=settings.jwt_algorithm,
-        access_token_expire_minutes=settings.access_token_expire_minutes,
+    user_repository = SqlAlchemyUserRepository(db)
+    personal_service = RegisterPersonalService(
+        SqlAlchemyPersonRegistrationRepository(db)
+    )
+    business_service = RegisterBusinessService(
+        SqlAlchemyBusinessRegistrationRepository(db)
     )
 
-    for credentials in SEED_USERS:
-        if repository.get_by_email(credentials.email) is None:
-            auth_service.register(credentials)
+    for registration in SEED_USERS:
+        if user_repository.get_by_email(registration.email) is not None:
+            continue
+        if isinstance(registration, PersonRegistration):
+            personal_service.register(registration)
+        else:
+            business_service.register(registration)
 
 
 def seed_tags(db: Session) -> None:
@@ -283,6 +365,31 @@ def seed_events(db: Session) -> None:
                 event.location_name = seed.location_name
 
         _seed_participants(db, event, seed, users)
+        _seed_invite_link(db, event, seed)
+    db.commit()
+
+
+def seed_notifications(db: Session) -> None:
+    users = _users_by_email(db)
+
+    for seed in SEED_NOTIFICATIONS:
+        user = users.get(seed.user_email)
+        if user is None:
+            continue
+
+        notification_id = uuid5(
+            NAMESPACE_URL, f"hangy:seed:notification:{seed.user_email}:{seed.key}"
+        )
+        # An existing one is left alone: the user may have read it since.
+        if db.get(NotificationModel, notification_id) is None:
+            db.add(
+                NotificationModel(
+                    notification_id=notification_id,
+                    user_id=user.user_id,
+                    type=seed.type,
+                    read=seed.read,
+                )
+            )
     db.commit()
 
 
@@ -308,6 +415,30 @@ def _seed_participants(
                     status=status,
                 )
             )
+
+
+def _seed_invite_link(db: Session, event: EventModel, seed: SeedEvent) -> None:
+    if seed.invite_token is None:
+        return
+
+    invite_link = db.scalar(
+        select(EventInviteLinkModel).where(
+            EventInviteLinkModel.event_id == event.event_id,
+            EventInviteLinkModel.token == seed.invite_token,
+        )
+    )
+    if invite_link is None:
+        db.add(
+            EventInviteLinkModel(
+                event_id=event.event_id,
+                created_by=event.event_creator_id,
+                token=seed.invite_token,
+                expires_at=event.starts_at,
+            )
+        )
+    else:
+        # Keep the link valid after a local environment is restarted.
+        invite_link.expires_at = event.starts_at
 
 
 def _users_by_email(db: Session) -> dict[str, UserModel]:
@@ -348,6 +479,7 @@ def main() -> None:
         seed_tags(db)
         seed_user_interests(db)
         seed_events(db)
+        seed_notifications(db)
 
 
 if __name__ == "__main__":
