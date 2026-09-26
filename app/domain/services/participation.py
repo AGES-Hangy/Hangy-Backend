@@ -71,7 +71,7 @@ class ParticipationService:
         if event.event_privacy is EventPrivacyEnum.INVITE_ONLY:
             raise InviteOnlyEventError
 
-        if event.event_status is EventStatusEnum.FINISHED:
+        if event.event_status is not EventStatusEnum.PUBLISHED:
             raise EventAlreadyFinishedError
 
         if event.event_creator_id == user_id:

@@ -310,6 +310,56 @@ def test_finished_public_event_is_blocked(
     assert response.json()["detail"] == "Event already finished"
 
 
+def test_cancelled_public_event_is_blocked(
+    participation_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = participation_client
+    organizer_id, user_id, event_id = uuid4(), uuid4(), uuid4()
+    with session_factory() as db:
+        _add_user(db, organizer_id, "Organizador")
+        _add_user(db, user_id, "Participante")
+        _add_event(
+            db,
+            event_id,
+            organizer_id,
+            EventPrivacyEnum.PUBLIC,
+            status=EventStatusEnum.CANCELLED,
+        )
+        db.commit()
+
+    response = client.post(
+        f"/events/{event_id}/participation", headers=_authorization(user_id)
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Event already finished"
+
+
+def test_draft_event_is_blocked(
+    participation_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = participation_client
+    organizer_id, user_id, event_id = uuid4(), uuid4(), uuid4()
+    with session_factory() as db:
+        _add_user(db, organizer_id, "Organizador")
+        _add_user(db, user_id, "Participante")
+        _add_event(
+            db,
+            event_id,
+            organizer_id,
+            EventPrivacyEnum.PUBLIC,
+            status=EventStatusEnum.DRAFT,
+        )
+        db.commit()
+
+    response = client.post(
+        f"/events/{event_id}/participation", headers=_authorization(user_id)
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "Event already finished"
+
+
 def test_public_confirmation_notifies_organizer(
     participation_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
