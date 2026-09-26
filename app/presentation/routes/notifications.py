@@ -20,6 +20,16 @@ def get_notification_service(
     return NotificationService(repository=SqlAlchemyNotificationRepository(db))
 
 
+@router.patch("/notifications/read-all", status_code=status.HTTP_204_NO_CONTENT)
+def mark_all_notifications_as_read(
+    current_user: Annotated[User, Depends(get_current_user)],
+    notification_service: Annotated[
+        NotificationService, Depends(get_notification_service)
+    ],
+) -> None:
+    notification_service.mark_all_as_read(current_user.user_id)
+
+
 @router.get(
     "/notifications/unread-count",
     response_model=UnreadNotificationCountOutput,

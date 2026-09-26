@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.domain.enums import NotificationTypeEnum
@@ -86,3 +86,14 @@ class SqlAlchemyNotificationRepository:
                 event_id=event_id,
             )
         )
+
+    def mark_all_as_read(self, user_id: UUID) -> None:
+        self.db.execute(
+            update(NotificationModel)
+            .where(
+                NotificationModel.user_id == user_id,
+                NotificationModel.read.is_(False),
+            )
+            .values(read=True)
+        )
+        self.db.commit()
