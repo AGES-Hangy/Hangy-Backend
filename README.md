@@ -88,6 +88,13 @@ O seed também cria o evento `Rachão fechado` como `INVITE_ONLY`. Para testar o
 aceite por link com `user@hangy.com`, use o token
 `seed-invite-racha-fechado`.
 
+Para testar `PATCH /notifications/{notification_id}/read`, use
+`joao@hangy.com`: a notificação `76331ed0-0a64-55c8-819a-35958e434add` é dele e
+volta a ficar não lida a cada execução do seed. A
+`d3bcd888-24d8-5fe0-a022-e0e5aae5920d` é da `maria@hangy.com` e serve para o
+caso `403`. A collection `postman/tid219_patch_notifications_read.postman_collection.json`
+percorre todos os cenários.
+
 As tags de exemplo seguem a hierarquia macro → micro usada pelo feed:
 `Esportes` (Futebol, Corrida), `Música` (Rock, Samba, Sertanejo),
 `Gastronomia` (Churrasco, Culinária Italiana, Confeitaria) e `Arte e Cultura`
