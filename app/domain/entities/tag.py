@@ -12,6 +12,7 @@ class Tag:
     tag_name: str
     tag_parent_id: UUID | None = None
     children: list[Tag] = field(default_factory=list)
+    parent: Tag | None = None
 
     @property
     def tag_type(self) -> TagTypeEnum:
