@@ -30,3 +30,8 @@ class EventParticipantNotification:
 class EventCancelledNotification:
     notification_id: UUID
     event_id: UUID
+
+
+@dataclass(frozen=True, slots=True)
+class UnreadNotificationCount:
+    count: int

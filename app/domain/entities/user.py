@@ -1,15 +1,22 @@
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from app.domain.enums import UserRoleEnum, UserTypeEnum
 
 
 @dataclass(frozen=True, slots=True)
-class UserCredentials:
+class PersonRegistration:
     email: str
     password: str
-    user_type: UserTypeEnum = UserTypeEnum.PERSONAL
+    name: str
+    cpf: str
+    date_of_birth: date
+    country: str
+    state: str
+    city: str
+    accepted_terms_version: str
+    phone: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,4 +32,7 @@ class User:
     description: str | None = None
     user_phone: str | None = None
     profile_photo_url: str | None = None
+    accepted_terms_at: datetime | None = None
+    accepted_terms_version: str | None = None
+    password_changed_at: datetime | None = None
     deleted_at: datetime | None = None
