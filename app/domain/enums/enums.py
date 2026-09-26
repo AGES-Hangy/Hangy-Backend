@@ -82,3 +82,8 @@ class NotificationTypeEnum(StrEnum):
 class TagTypeEnum(StrEnum):
     MACRO = "MACRO"
     MICRO = "MICRO"
+
+
+class DevicePlatformEnum(StrEnum):
+    ANDROID = "ANDROID"
+    IOS = "IOS"
