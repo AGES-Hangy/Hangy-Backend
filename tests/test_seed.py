@@ -199,7 +199,7 @@ def test_seeded_feed_matches_the_documented_sample(
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as client:
         login = client.post(
-            "/login",
+            "/auth/login",
             json={"email": "user@hangy.com", "password": "user-password"},
         )
         assert login.status_code == 200
@@ -242,7 +242,7 @@ def test_seeded_business_user_has_an_empty_feed(
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as client:
         login = client.post(
-            "/login",
+            "/auth/login",
             json={"email": "admin@hangy.com", "password": "admin-password"},
         )
         response = client.get(
@@ -268,7 +268,7 @@ def test_seeded_notifications_feed_the_unread_count(
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as client:
         login = client.post(
-            "/login",
+            "/auth/login",
             json={"email": "user@hangy.com", "password": "user-password"},
         )
         assert login.status_code == 200
