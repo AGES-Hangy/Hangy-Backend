@@ -65,7 +65,6 @@ class RegisterPersonalService:
             user_id=user.user_id,
             cpf=registration.cpf,
             date_of_birth=registration.date_of_birth,
-            country=registration.country,
             state=registration.state,
             city=registration.city,
             updated_at=now,

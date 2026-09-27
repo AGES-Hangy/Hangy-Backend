@@ -58,7 +58,6 @@ def context() -> Iterator[NotificationContext]:
                 "name": "Felipe",
                 "cpf": "52998224725",
                 "date_of_birth": "2000-04-12",
-                "country": "BR",
                 "state": "RS",
                 "city": "Porto Alegre",
                 "accepted_terms_version": "2026-08-01",
