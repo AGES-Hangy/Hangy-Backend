@@ -60,7 +60,7 @@ def context() -> Iterator[FeedContext]:
     app.dependency_overrides[get_db] = override_get_db
     with testing_session() as db, TestClient(app) as client:
         register = client.post(
-            "/register",
+            "/auth/register",
             json={
                 "user_type": "PERSONAL",
                 "email": USER_EMAIL,
@@ -77,7 +77,7 @@ def context() -> Iterator[FeedContext]:
         )
         assert register.status_code == 201
         login = client.post(
-            "/login",
+            "/auth/login",
             json={"email": USER_EMAIL, "password": USER_PASSWORD},
         )
         assert login.status_code == 200

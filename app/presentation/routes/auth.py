@@ -86,7 +86,7 @@ def get_access_token(
 
 
 @router.post(
-    "/register",
+    "/auth/register",
     response_model=AuthOutput,
     status_code=status.HTTP_201_CREATED,
 )
@@ -138,7 +138,7 @@ def register(
     return AuthAssembler.to_auth_dto(user, token)
 
 
-@router.post("/login", response_model=AuthOutput)
+@router.post("/auth/login", response_model=AuthOutput)
 def login(
     payload: LoginRequest,
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
