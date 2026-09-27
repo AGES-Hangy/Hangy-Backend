@@ -10,6 +10,7 @@ from app.presentation.routes import (
     invites_router,
     notifications_router,
     tags_router,
+    terms_router,
 )
 
 app = FastAPI(
@@ -33,3 +34,4 @@ app.include_router(invites_router)
 app.include_router(notifications_router)
 app.include_router(tags_router)
 app.include_router(feed_router)
+app.include_router(terms_router)
