@@ -65,8 +65,8 @@ A aplicação ficará disponível em:
 
 - API: <http://localhost:8000>
 - Health check: <http://localhost:8000/health>
-- Cadastro: `POST http://localhost:8000/register`
-- Login: `POST http://localhost:8000/login`
+- Cadastro: `POST http://localhost:8000/auth/register`
+- Login: `POST http://localhost:8000/auth/login`
 - Usuário autenticado: `GET http://localhost:8000/users/me`
 - Feed da Home: `GET http://localhost:8000/feed`
 - Swagger UI: <http://localhost:8000/docs>
@@ -83,6 +83,10 @@ de autorização sejam adicionadas:
 | `maria@hangy.com` | `maria-password` | PERSONAL | Samba                  |
 | `joao@hangy.com`  | `joao-password`  | PERSONAL | nenhum                 |
 | `admin@hangy.com` | `admin-password` | BUSINESS | nenhum                 |
+
+O seed também cria o evento `Rachão fechado` como `INVITE_ONLY`. Para testar o
+aceite por link com `user@hangy.com`, use o token
+`seed-invite-racha-fechado`.
 
 As tags de exemplo seguem a hierarquia macro → micro usada pelo feed:
 `Esportes` (Futebol, Corrida), `Música` (Rock, Samba, Sertanejo),
@@ -122,42 +126,85 @@ os novos exemplos.
 
 ## Autenticação
 
-Cadastre um usuário enviando JSON:
+`POST /auth/register` é um único endpoint que decide o tipo de conta pelo campo
+`user_type` do próprio corpo (`PERSONAL` ou `BUSINESS`), uma união
+discriminada validada pelo Pydantic. Os dois formatos aparecem no Swagger UI.
+
+Cadastro de pessoa física:
 
 ```bash
-curl -X POST http://localhost:8000/register \
+curl -X POST http://localhost:8000/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"email":"felipe@hangy.com","password":"strong-password"}'
+  -d '{
+        "user_type": "PERSONAL",
+        "email": "felipe@hangy.com",
+        "password": "strong-password",
+        "name": "Felipe Souza",
+        "cpf": "52998224725",
+        "phone": "51999990000",
+        "date_of_birth": "2000-04-12",
+        "country": "BR",
+        "state": "RS",
+        "city": "Porto Alegre",
+        "accepted_terms_version": "2026-08-01"
+      }'
 ```
 
-O campo `user_type` é opcional e aceita `PERSONAL` (padrão) ou `BUSINESS`.
-
-O login segue o fluxo OAuth2 Password e, por isso, recebe os campos como
-`application/x-www-form-urlencoded`. O padrão OAuth2 fixa o nome do campo como
-`username`, mas o valor esperado é o e-mail:
+Cadastro de pessoa jurídica:
 
 ```bash
-curl -X POST http://localhost:8000/login \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=felipe@hangy.com&password=strong-password"
+curl -X POST http://localhost:8000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+        "user_type": "BUSINESS",
+        "email": "contato@bar.com",
+        "password": "strong-password",
+        "business_name": "Bar do Zé",
+        "cnpj": "11222333000181",
+        "phone": "5133330000",
+        "description": "Bar e petiscaria",
+        "location": {"latitude": -30.0331, "longitude": -51.23},
+        "address": "Av. Independência, 100 — Porto Alegre",
+        "accepted_terms_version": "2026-08-01"
+      }'
 ```
 
-A resposta contém um JWT no campo `access_token`. Envie-o como Bearer token
-para acessar uma rota protegida:
+CPF e CNPJ são validados por dígito verificador (400 se inválidos); cadastro
+`PERSONAL` exige 18 anos completos na data de nascimento (403 caso contrário).
+E-mail, CPF e CNPJ são únicos entre contas ativas (409 em caso de duplicidade;
+o e-mail é único por conta, não por tipo). O sucesso devolve `201` já com o
+`access_token`, no mesmo formato de resposta do login.
+
+`POST /auth/login` recebe e-mail e senha como JSON:
+
+```bash
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "felipe@hangy.com", "password": "strong-password"}'
+```
+
+Credenciais inválidas (e-mail inexistente ou senha errada) sempre devolvem o
+mesmo `401` com `{"detail": "Incorrect email or password"}`, para não indicar
+qual dos dois estava errado. Uma conta excluída (`deleted_at` preenchido)
+devolve `403` mesmo com a senha correta.
+
+A resposta, igual à de `/auth/register`, contém um JWT no campo `access_token` e o
+usuário autenticado. Envie o token como Bearer para acessar uma rota
+protegida:
 
 ```bash
 curl http://localhost:8000/users/me \
   -H "Authorization: Bearer SEU_ACCESS_TOKEN"
 ```
 
-No Swagger UI, o botão **Authorize** oferece duas opções: `OAuth2Password`
-recebe o e-mail (no campo `username`) e a senha e chama `/login`;
-`BearerToken` permite colar diretamente um JWT existente. As duas opções
-enviam o mesmo header `Authorization: Bearer`.
+No Swagger UI, o botão **Authorize** oferece `BearerToken`: cole ali um JWT
+obtido em `/auth/login` ou `/auth/register`.
 
 As senhas são protegidas com Argon2 por meio do `pwdlib`; somente o hash é
-persistido. Os tokens são criados e verificados com PyJWT e expiram conforme
-`ACCESS_TOKEN_EXPIRE_MINUTES`.
+persistido. Os tokens são criados e verificados com PyJWT, carregam a data de
+emissão (`iat`) e expiram conforme `ACCESS_TOKEN_EXPIRE_MINUTES`. Trocar a
+senha atualiza `password_changed_at` e invalida tokens emitidos antes dessa
+troca, mesmo que ainda não tenham expirado.
 
 ## Migrações
 

@@ -34,7 +34,6 @@ class RegisterPersonalRequest(BaseModel):
     cpf: str = Field(pattern=CPF_PATTERN)
     phone: str | None = Field(default=None, max_length=20, pattern=PHONE_PATTERN)
     date_of_birth: date
-    country: str = Field(min_length=1, max_length=100)
     state: str = Field(min_length=1, max_length=100)
     city: str = Field(min_length=1, max_length=100)
     accepted_terms_version: str = Field(min_length=1, max_length=50)
