@@ -29,7 +29,6 @@ def _personal_payload(email: str) -> dict:
         "name": "Test User",
         "cpf": cpf_by_email.get(email, "52998224725"),
         "date_of_birth": "2000-01-01",
-        "country": "BR",
         "state": "RS",
         "city": "Porto Alegre",
         "accepted_terms_version": TERMS_VERSION,
@@ -59,8 +58,8 @@ def client() -> Iterator[TestClient]:
 
 
 def register_and_login(client: TestClient, email: str = USER_EMAIL) -> str:
-    client.post("/register", json=_personal_payload(email))
-    resp = client.post("/login", json={"email": email, "password": USER_PASSWORD})
+    client.post("/auth/register", json=_personal_payload(email))
+    resp = client.post("/auth/login", json={"email": email, "password": USER_PASSWORD})
     return resp.json()["access_token"]
 
 
