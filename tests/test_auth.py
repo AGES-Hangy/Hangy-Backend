@@ -49,7 +49,6 @@ def register_user(client: TestClient) -> str:
             "cpf": "52998224725",
             "phone": "51999990000",
             "date_of_birth": "2000-04-12",
-            "country": "BR",
             "state": "RS",
             "city": "Porto Alegre",
             "accepted_terms_version": "2026-08-01",
