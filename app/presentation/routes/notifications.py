@@ -1,22 +1,37 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import BeforeValidator
 from sqlalchemy.orm import Session
 
 from app.domain.assemblers import NotificationAssembler
 from app.domain.entities import User
 from app.domain.services import (
+    InvalidPaginationError,
     NotificationNotFoundError,
     NotificationNotOwnedError,
     NotificationService,
 )
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.notification import SqlAlchemyNotificationRepository
-from app.presentation.dtos import UnreadNotificationCountOutput
+from app.presentation.dtos import (
+    NotificationsPaginatedResponse,
+    UnreadNotificationCountOutput,
+)
 from app.presentation.routes.auth import get_current_user
 
 router = APIRouter(tags=["Notifications"])
+
+
+def _parse_limit(value: str | int) -> int:
+    try:
+        return int(value)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters",
+        ) from error
 
 
 def get_notification_service(
@@ -108,3 +123,39 @@ def mark_notification_as_read(
             detail="Not your notification",
         ) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/notifications",
+    response_model=NotificationsPaginatedResponse,
+    status_code=status.HTTP_200_OK,
+    summary="List notifications for the authenticated user",
+)
+def list_notifications(
+    current_user: Annotated[User, Depends(get_current_user)],
+    notification_service: Annotated[
+        NotificationService, Depends(get_notification_service)
+    ],
+    unread_only: Annotated[
+        bool, Query(description="Return only unread notifications")
+    ] = False,
+    limit: Annotated[
+        int, BeforeValidator(_parse_limit), Query(description="Page size (1–100)")
+    ] = 20,
+    cursor: Annotated[str | None, Query(description="Opaque pagination cursor")] = None,
+) -> NotificationsPaginatedResponse:
+    assert current_user.user_id is not None
+    try:
+        items, next_cursor, unread_count = notification_service.list_notifications(
+            current_user.user_id,
+            limit=limit,
+            cursor=cursor,
+            unread_only=unread_only,
+        )
+    except InvalidPaginationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters",
+        ) from exc
+
+    return NotificationAssembler.to_paginated_dto(items, next_cursor, unread_count)
