@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
-from app.domain.entities import Notification
+from app.domain.entities import Notification, UnreadNotificationCount
 
 """NotificationService — list, count and mark notifications for a user."""
 
@@ -89,6 +89,9 @@ _MAX_LIMIT = 100
 class NotificationService:
     def __init__(self, repository: NotificationRepository) -> None:
         self.repository = repository
+
+    def get_unread_count(self, user_id: UUID) -> UnreadNotificationCount:
+        return UnreadNotificationCount(count=self.repository.count_unread(user_id))
 
     def list_notifications(
         self,

@@ -1,4 +1,8 @@
-__all__ = ["NotificationItemResponse", "NotificationsPaginatedResponse"]
+__all__ = [
+    "NotificationItemResponse",
+    "NotificationsPaginatedResponse",
+    "UnreadNotificationCountOutput",
+]
 
 
 from datetime import datetime
@@ -23,4 +27,8 @@ class NotificationItemResponse(BaseModel):
 class NotificationsPaginatedResponse(BaseModel):
     items: list[NotificationItemResponse]
     next_cursor: str | None
+    unread_count: int
+
+
+class UnreadNotificationCountOutput(BaseModel):
     unread_count: int

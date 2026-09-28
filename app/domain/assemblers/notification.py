@@ -2,14 +2,21 @@
 
 __all__ = ["NotificationAssembler"]
 
-from app.domain.entities import Notification
+from app.domain.entities import Notification, UnreadNotificationCount
 from app.presentation.dtos.notification import (
     NotificationItemResponse,
     NotificationsPaginatedResponse,
+    UnreadNotificationCountOutput,
 )
 
 
 class NotificationAssembler:
+    @staticmethod
+    def to_unread_count_dto(
+        unread_count: UnreadNotificationCount,
+    ) -> UnreadNotificationCountOutput:
+        return UnreadNotificationCountOutput(unread_count=unread_count.count)
+
     @staticmethod
     def to_item_dto(notification: Notification) -> NotificationItemResponse:
         assert notification.notification_id is not None

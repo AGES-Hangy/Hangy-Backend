@@ -8,7 +8,6 @@ class PersonProfile:
     user_id: UUID
     cpf: str
     date_of_birth: date
-    country: str
     state: str
     city: str
     updated_at: datetime

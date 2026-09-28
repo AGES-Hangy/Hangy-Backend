@@ -9,6 +9,7 @@ from app.domain.assemblers import (
     EventAssembler,
     EventDetailsAssembler,
     EventParticipantsAssembler,
+    EventParticipationAssembler,
 )
 from app.domain.services import (
     AuthService,
@@ -53,6 +54,22 @@ from app.domain.services.event_share import (
     InviteLinkExpiredError,
     ShareableEventNotFoundError,
 )
+from app.domain.services.participation import (
+    AlreadyParticipatingError,
+    InviteOnlyEventError,
+    OrganizerCannotJoinError,
+    ParticipationService,
+    RequestAlreadyPendingError,
+)
+from app.domain.services.participation import (
+    EventAlreadyFinishedError as ParticipationAlreadyFinishedError,
+)
+from app.domain.services.participation import (
+    EventIsFullError as ParticipationIsFullError,
+)
+from app.domain.services.participation import (
+    EventNotFoundError as ParticipationEventNotFoundError,
+)
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
 from app.infrastructure.repository.event_details import SqlAlchemyEventDetailsRepository
@@ -63,6 +80,9 @@ from app.infrastructure.repository.event_participant import (
     SqlAlchemyEventParticipantsRepository,
 )
 from app.infrastructure.repository.notification import SqlAlchemyNotificationRepository
+from app.infrastructure.repository.participation import (
+    SqlAlchemyParticipationRepository,
+)
 from app.presentation.dtos import (
     CancelEventInput,
     CancelEventOutput,
@@ -71,6 +91,7 @@ from app.presentation.dtos import (
     CreateInviteLinkOutput,
     EventDetailsOutput,
     EventParticipantsOutput,
+    EventParticipationOutput,
     EventShareOutput,
     UpdateEventInput,
     UpdateEventOutput,
@@ -143,6 +164,16 @@ def get_event_participants_service(
 ) -> EventParticipantsService:
     return EventParticipantsService(
         repository=SqlAlchemyEventParticipantsRepository(db)
+    )
+
+
+def get_participation_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> ParticipationService:
+    return ParticipationService(
+        repository=SqlAlchemyParticipationRepository(
+            db, SqlAlchemyNotificationRepository(db)
+        )
     )
 
 
@@ -368,6 +399,119 @@ def create_invite_link(
             detail="Event is not invite only",
         ) from error
     return EventAssembler.to_invite_link_dto(invite_link, settings.invite_link_base_url)
+
+
+@router.post(
+    "/{event_id}/participation",
+    response_model=EventParticipationOutput,
+    status_code=status.HTTP_201_CREATED,
+    summary="Confirmar presenca ou solicitar entrada em um evento",
+    description=(
+        "Cria ou atualiza a participacao do usuario autenticado no evento. A "
+        "decisao entre confirmacao direta e solicitacao pendente e 100% do "
+        "backend, com base em `event.event_privacy` - o cliente sempre chama "
+        "este mesmo endpoint e le o campo `status` da resposta para saber o "
+        "que aconteceu. Eventos `INVITE_ONLY` nao sao atendidos aqui (usam "
+        "`POST /invites/{token}/accept`)."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token de acesso ausente, expirado ou invalido.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Evento e INVITE_ONLY; este endpoint nao o atende.",
+            "content": {
+                "application/json": {"example": {"detail": "Event is invite-only"}}
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Evento inexistente ou nao visivel.",
+            "content": {"application/json": {"example": {"detail": "Event not found"}}},
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": (
+                "Evento lotado, ja encerrado, ou ja existe uma solicitacao em "
+                "aberto para este evento."
+            ),
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "full": {
+                            "summary": "Lotacao atingida",
+                            "value": {"detail": "Event is full"},
+                        },
+                        "finished": {
+                            "summary": "Evento encerrado",
+                            "value": {"detail": "Event already finished"},
+                        },
+                        "pending": {
+                            "summary": "Solicitacao ja em aberto",
+                            "value": {"detail": "Request already pending"},
+                        },
+                    }
+                }
+            },
+        },
+    },
+)
+def create_event_participation(
+    event_id: UUID,
+    token: Annotated[str, Depends(get_access_token)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    participation_service: Annotated[
+        ParticipationService, Depends(get_participation_service)
+    ],
+) -> EventParticipationOutput:
+    try:
+        user = auth_service.get_user_from_token(token)
+    except InvalidAccessTokenError as error:
+        raise credentials_exception from error
+    if user.user_id is None:
+        raise credentials_exception
+
+    try:
+        participant = participation_service.request_or_join(event_id, user.user_id)
+    except ParticipationEventNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found",
+        ) from error
+    except InviteOnlyEventError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Event is invite-only",
+        ) from error
+    except ParticipationAlreadyFinishedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Event already finished",
+        ) from error
+    except ParticipationIsFullError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Event is full",
+        ) from error
+    except RequestAlreadyPendingError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Request already pending",
+        ) from error
+    except AlreadyParticipatingError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Already participating in this event",
+        ) from error
+    except OrganizerCannotJoinError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Event creator cannot join their own event",
+        ) from error
+    return EventParticipationAssembler.to_dto(participant)
 
 
 @router.get(

@@ -23,7 +23,6 @@ PERSONAL_PAYLOAD = {
     "cpf": "52998224725",
     "phone": "51999990000",
     "date_of_birth": "2000-04-12",
-    "country": "BR",
     "state": "RS",
     "city": "Porto Alegre",
     "accepted_terms_version": TERMS_VERSION,
@@ -67,7 +66,7 @@ def client() -> Iterator[TestClient]:
 
 
 def register(client: TestClient, payload: dict) -> dict:
-    response = client.post("/register", json=payload)
+    response = client.post("/auth/register", json=payload)
     assert response.status_code == 201
     return response.json()
 
@@ -78,7 +77,7 @@ def test_valid_login_returns_200_with_a_token_whose_sub_is_the_user_id(
     registered = register(client, PERSONAL_PAYLOAD)
 
     response = client.post(
-        "/login",
+        "/auth/login",
         json={
             "email": PERSONAL_PAYLOAD["email"],
             "password": PERSONAL_PAYLOAD["password"],
@@ -105,11 +104,11 @@ def test_wrong_password_and_unknown_email_return_the_same_401(
     register(client, PERSONAL_PAYLOAD)
 
     wrong_password = client.post(
-        "/login",
+        "/auth/login",
         json={"email": PERSONAL_PAYLOAD["email"], "password": "senha-errada-999"},
     )
     unknown_email = client.post(
-        "/login",
+        "/auth/login",
         json={"email": "ninguem@exemplo.com", "password": "qualquer-senha-123"},
     )
 
@@ -134,7 +133,7 @@ def test_deleted_account_returns_403(client: TestClient) -> None:
     db.commit()
 
     response = client.post(
-        "/login",
+        "/auth/login",
         json={
             "email": PERSONAL_PAYLOAD["email"],
             "password": PERSONAL_PAYLOAD["password"],
@@ -148,7 +147,7 @@ def test_deleted_account_returns_403(client: TestClient) -> None:
 
 def test_invalid_email_format_returns_422(client: TestClient) -> None:
     response = client.post(
-        "/login",
+        "/auth/login",
         json={"email": "not-an-email", "password": "senha-forte-123"},
     )
 
@@ -162,14 +161,14 @@ def test_users_me_returns_the_right_user_type_for_personal_and_business(
     register(client, BUSINESS_PAYLOAD)
 
     personal_login = client.post(
-        "/login",
+        "/auth/login",
         json={
             "email": PERSONAL_PAYLOAD["email"],
             "password": PERSONAL_PAYLOAD["password"],
         },
     )
     business_login = client.post(
-        "/login",
+        "/auth/login",
         json={
             "email": BUSINESS_PAYLOAD["email"],
             "password": BUSINESS_PAYLOAD["password"],
@@ -199,7 +198,7 @@ def test_token_issued_before_a_password_change_is_rejected_with_401(
 ) -> None:
     registered = register(client, PERSONAL_PAYLOAD)
     login_response = client.post(
-        "/login",
+        "/auth/login",
         json={
             "email": PERSONAL_PAYLOAD["email"],
             "password": PERSONAL_PAYLOAD["password"],

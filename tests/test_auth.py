@@ -40,7 +40,7 @@ def client() -> Iterator[TestClient]:
 
 def register_user(client: TestClient) -> str:
     response = client.post(
-        "/register",
+        "/auth/register",
         json={
             "user_type": "PERSONAL",
             "email": USER_EMAIL,
@@ -49,7 +49,6 @@ def register_user(client: TestClient) -> str:
             "cpf": "52998224725",
             "phone": "51999990000",
             "date_of_birth": "2000-04-12",
-            "country": "BR",
             "state": "RS",
             "city": "Porto Alegre",
             "accepted_terms_version": "2026-08-01",
@@ -82,7 +81,7 @@ def test_login_returns_a_jwt_and_token_authenticates_user(
     user_id = register_user(client)
 
     login_response = client.post(
-        "/login",
+        "/auth/login",
         json={"email": USER_EMAIL, "password": USER_PASSWORD},
     )
 
@@ -111,7 +110,7 @@ def test_login_rejects_an_invalid_password(client: TestClient) -> None:
     register_user(client)
 
     response = client.post(
-        "/login",
+        "/auth/login",
         json={"email": USER_EMAIL, "password": "wrong-password"},
     )
 

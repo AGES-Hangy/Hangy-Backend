@@ -15,7 +15,6 @@ class UserMapper:
                 cpf=dto.cpf,
                 phone=dto.phone,
                 date_of_birth=dto.date_of_birth,
-                country=dto.country,
                 state=dto.state,
                 city=dto.city,
                 accepted_terms_version=dto.accepted_terms_version,

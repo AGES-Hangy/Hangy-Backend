@@ -30,14 +30,10 @@ class SqlAlchemyNotificationRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-<<<<<<< HEAD
-    
-=======
     # ------------------------------------------------------------------
     # Write helpers (called by other services — US6.2+)
     # ------------------------------------------------------------------
 
->>>>>>> a0671a677797d084c2314bfbdf9c5eb7c834f6cb
     def notify_connection(
         self,
         recipient_id: UUID,
@@ -96,13 +92,10 @@ class SqlAlchemyNotificationRepository:
             )
         )
 
-<<<<<<< HEAD
-=======
     # ------------------------------------------------------------------
     # Read side
     # ------------------------------------------------------------------
 
->>>>>>> a0671a677797d084c2314bfbdf9c5eb7c834f6cb
     def list_for_user(
         self,
         user_id: UUID,
@@ -180,14 +173,10 @@ class SqlAlchemyNotificationRepository:
         )
         self.db.commit()
 
-<<<<<<< HEAD
-   
-=======
     # ------------------------------------------------------------------
     # Private
     # ------------------------------------------------------------------
 
->>>>>>> a0671a677797d084c2314bfbdf9c5eb7c834f6cb
     @staticmethod
     def _to_entity(model: NotificationModel) -> Notification:
         payload = _build_payload(model)
@@ -211,7 +200,7 @@ def _build_payload(model: NotificationModel) -> dict:
     ):
         if model.connection_detail and model.connection_detail.connection:
             conn: UserConnectionModel = model.connection_detail.connection
-           
+
             sender: UserModel = (
                 conn.requester
                 if t == NotificationTypeEnum.CONNECTION_REQUEST
@@ -226,10 +215,7 @@ def _build_payload(model: NotificationModel) -> dict:
             }
         return {}
 
-<<<<<<< HEAD
-=======
     # Event-participant notifications (request, approved, rejected, etc.)
->>>>>>> a0671a677797d084c2314bfbdf9c5eb7c834f6cb
     _PARTICIPANT_TYPES = {
         NotificationTypeEnum.EVENT_PARTICIPATION_REQUEST,
         NotificationTypeEnum.EVENT_REQUEST_APPROVED,
@@ -254,10 +240,7 @@ def _build_payload(model: NotificationModel) -> dict:
             }
         return {}
 
-<<<<<<< HEAD
-=======
     # Event-cancelled / event-updated notifications
->>>>>>> a0671a677797d084c2314bfbdf9c5eb7c834f6cb
     if t in (
         NotificationTypeEnum.EVENT_CANCELLED,
         NotificationTypeEnum.EVENT_UPDATED,
