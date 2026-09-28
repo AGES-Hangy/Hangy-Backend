@@ -398,8 +398,10 @@ def test_pagination_cursor(
     assert len(all_ids) == 5
 
 
+@pytest.mark.parametrize("limit", ["0", "-1", "101", "abc", "1.5", ""])
 def test_invalid_limit_returns_400(
     notif_client: tuple[TestClient, sessionmaker[Session]],
+    limit: str,
 ) -> None:
     client, session_factory = notif_client
     with session_factory() as db:
@@ -407,8 +409,25 @@ def test_invalid_limit_returns_400(
         db.commit()
         headers = make_token(user.user_id)
 
-    resp = client.get("/notifications?limit=0", headers=headers)
-    assert resp.status_code == 422  # FastAPI validates ge=1 before service
+    resp = client.get("/notifications", params={"limit": limit}, headers=headers)
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": "Invalid pagination parameters"}
+
+
+@pytest.mark.parametrize("limit", [1, 100])
+def test_valid_limit_boundaries(
+    notif_client: tuple[TestClient, sessionmaker[Session]],
+    limit: int,
+) -> None:
+    client, session_factory = notif_client
+    with session_factory() as db:
+        user = create_user(db)
+        db.commit()
+        headers = make_token(user.user_id)
+
+    resp = client.get("/notifications", params={"limit": limit}, headers=headers)
+    assert resp.status_code == 200
+    assert resp.json() == {"items": [], "next_cursor": None, "unread_count": 0}
 
 
 def test_invalid_cursor_returns_400(

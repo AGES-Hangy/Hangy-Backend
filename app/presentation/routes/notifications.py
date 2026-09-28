@@ -2,6 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import BeforeValidator
 from sqlalchemy.orm import Session
 
 from app.domain.assemblers import NotificationAssembler
@@ -21,6 +22,16 @@ from app.presentation.dtos import (
 from app.presentation.routes.auth import get_current_user
 
 router = APIRouter(tags=["Notifications"])
+
+
+def _parse_limit(value: str | int) -> int:
+    try:
+        return int(value)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters",
+        ) from error
 
 
 def get_notification_service(
@@ -128,7 +139,9 @@ def list_notifications(
     unread_only: Annotated[
         bool, Query(description="Return only unread notifications")
     ] = False,
-    limit: Annotated[int, Query(ge=1, le=100, description="Page size (1–100)")] = 20,
+    limit: Annotated[
+        int, BeforeValidator(_parse_limit), Query(description="Page size (1–100)")
+    ] = 20,
     cursor: Annotated[str | None, Query(description="Opaque pagination cursor")] = None,
 ) -> NotificationsPaginatedResponse:
     assert current_user.user_id is not None
