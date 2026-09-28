@@ -10,6 +10,7 @@ from app.domain.services import (
     OnlyMicroTagsSelectableError,
     TagNotFoundError,
     TagsService,
+    UserNotFoundError,
     UserTagNotFoundError,
     UserTagsService,
 )
@@ -126,7 +127,10 @@ def list_tags(
             },
         },
         status.HTTP_404_NOT_FOUND: {
-            "description": "Uma das tags selecionadas nao existe.",
+            "description": (
+                "Uma das tags selecionadas nao existe, ou o usuario autenticado "
+                "nao existe mais."
+            ),
             "content": {"application/json": {"example": {"detail": "Tag not found"}}},
         },
     },
@@ -136,9 +140,6 @@ def replace_user_tags(
     current_user: Annotated[User, Depends(get_current_user)],
     user_tags_service: Annotated[UserTagsService, Depends(get_user_tags_service)],
 ) -> UserTagsOutput:
-    if current_user.user_id is None:
-        raise ValueError("An authenticated user must have an id")
-
     tag_ids = UserTagsMapper.to_tag_ids(payload)
     try:
         tags = user_tags_service.replace_tags(current_user.user_id, tag_ids)
@@ -151,5 +152,10 @@ def replace_user_tags(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only micro tags can be selected",
+        ) from error
+    except UserNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
         ) from error
     return TagAssembler.to_user_tags_dto(tags)

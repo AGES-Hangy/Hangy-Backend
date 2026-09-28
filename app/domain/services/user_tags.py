@@ -14,6 +14,10 @@ class UserTagsRepository(Protocol):
     ) -> list[Tag]: ...
 
 
+class UserNotFoundError(Exception):
+    """Raised when the authenticated user's account no longer exists (e.g. deleted)."""
+
+
 class UserTagNotFoundError(Exception):
     """Raised when a selected tag_id does not exist."""
 
@@ -30,9 +34,9 @@ class UserTagsService:
 
     def replace_tags(self, user_id: UUID, tag_ids: Collection[UUID]) -> list[Tag]:
         if tag_ids:
+            # Existence is the repository's job: it re-queries the same ids for
+            # the write anyway, so this only needs to pre-check tag_type.
             tags = self.repository.find_by_ids(tag_ids)
-            if len(tags) != len(tag_ids):
-                raise UserTagNotFoundError
             if any(tag.tag_type is TagTypeEnum.MACRO for tag in tags):
                 raise OnlyMicroTagsSelectableError
 

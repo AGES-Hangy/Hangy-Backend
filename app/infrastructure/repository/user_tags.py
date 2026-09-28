@@ -5,8 +5,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
 from app.domain.entities import Tag
-from app.domain.services import UserTagNotFoundError
+from app.domain.services import UserNotFoundError, UserTagNotFoundError
 from app.infrastructure.repository.models import TagModel, UserModel
+from app.infrastructure.repository.tag import SqlAlchemyTagRepository
 
 
 class SqlAlchemyUserTagsRepository:
@@ -30,40 +31,47 @@ class SqlAlchemyUserTagsRepository:
         ]
 
     def replace_user_tags(self, user_id: UUID, tag_ids: Collection[UUID]) -> list[Tag]:
-        user_model = self.db.get(UserModel, user_id)
-        if user_model is None:
-            raise ValueError("An authenticated user must exist")
+        user_model = self._get_active_user(user_id)
 
         if not tag_ids:
             user_model.tags = []
-        else:
-            models = list(
-                self.db.scalars(
-                    select(TagModel)
-                    .where(TagModel.tag_id.in_(tag_ids))
-                    .options(joinedload(TagModel.parent))
-                    .order_by(TagModel.tag_name)
-                ).all()
-            )
-            # A tag validated by the service may have been deleted since; catching
-            # that here keeps the check and the write from racing against it.
-            if len(models) != len(tag_ids):
-                raise UserTagNotFoundError
-            user_model.tags = models
+            self.db.commit()
+            return []
 
+        models = list(
+            self.db.scalars(
+                select(TagModel)
+                .where(TagModel.tag_id.in_(tag_ids))
+                .options(joinedload(TagModel.parent))
+                .order_by(TagModel.tag_name)
+            ).all()
+        )
+        # The sole existence check: any id not found here means an unknown or
+        # since-deleted tag, since the service only pre-checks tag_type.
+        if len(models) != len(tag_ids):
+            raise UserTagNotFoundError
+        user_model.tags = models
+
+        # Built from `models` before commit: the session expires all
+        # attributes on commit (expire_on_commit=True), so building this
+        # afterwards — from `models` or from `user_model.tags` alike — would
+        # re-fetch every tag one by one instead of reusing the ordered,
+        # eager-loaded query above.
+        entities = [self._to_entity(model) for model in models]
         self.db.commit()
-        return [self._to_entity(model) for model in user_model.tags]
+        return entities
+
+    def _get_active_user(self, user_id: UUID) -> UserModel:
+        user_model = self.db.scalar(
+            select(UserModel).where(
+                UserModel.user_id == user_id,
+                UserModel.deleted_at.is_(None),
+            )
+        )
+        if user_model is None:
+            raise UserNotFoundError
+        return user_model
 
     @staticmethod
     def _to_entity(model: TagModel) -> Tag:
-        parent = (
-            Tag(tag_id=model.parent.tag_id, tag_name=model.parent.tag_name)
-            if model.parent is not None
-            else None
-        )
-        return Tag(
-            tag_id=model.tag_id,
-            tag_name=model.tag_name,
-            tag_parent_id=model.tag_parent_id,
-            parent=parent,
-        )
+        return SqlAlchemyTagRepository._to_entity(model, include_parent=True)

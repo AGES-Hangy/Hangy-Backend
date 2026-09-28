@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
@@ -7,9 +8,9 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.domain.services import UserTagNotFoundError
+from app.domain.services import UserNotFoundError, UserTagNotFoundError
 from app.infrastructure.repository import Base, get_db
-from app.infrastructure.repository.models import TagModel
+from app.infrastructure.repository.models import TagModel, UserModel
 from app.infrastructure.repository.models.user_model import user_tag
 from app.infrastructure.repository.user_tags import SqlAlchemyUserTagsRepository
 from app.main import app
@@ -19,6 +20,10 @@ WELLBEING_ID = UUID("3d100002-0000-4000-8000-000000000002")
 RUNNING_ID = UUID("00000003-0000-4000-8000-000000000003")
 FOOTBALL_ID = UUID("00000004-0000-4000-8000-000000000004")
 YOGA_ID = UUID("00000005-0000-4000-8000-000000000005")
+# Deliberately inverted: ZEBRA_ID sorts before ABACATE_ID lexicographically,
+# but "Abacate" sorts before "Zebra" alphabetically by name.
+ZEBRA_ID = UUID("00000006-0000-4000-8000-000000000006")
+ABACATE_ID = UUID("00000007-0000-4000-8000-000000000007")
 
 USER_EMAIL = "felipe@hangy.com"
 
@@ -45,6 +50,10 @@ def client() -> Iterator[TestClient]:
                     tag_id=FOOTBALL_ID, tag_name="Futebol", tag_parent_id=SPORTS_ID
                 ),
                 TagModel(tag_id=YOGA_ID, tag_name="Yoga", tag_parent_id=WELLBEING_ID),
+                TagModel(tag_id=ZEBRA_ID, tag_name="Zebra", tag_parent_id=SPORTS_ID),
+                TagModel(
+                    tag_id=ABACATE_ID, tag_name="Abacate", tag_parent_id=SPORTS_ID
+                ),
             ]
         )
         db.commit()
@@ -231,3 +240,70 @@ def test_a_tag_deleted_after_validation_fails_the_write_instead_of_dropping_it(
     finally:
         db_generator.close()
     assert rows == []
+
+
+def test_replacing_tags_returns_them_ordered_by_name_not_by_id(
+    client: TestClient,
+) -> None:
+    # ZEBRA_ID sorts before ABACATE_ID by id, but "Abacate" sorts before
+    # "Zebra" by name: a response ordered by id (a stale post-commit reload)
+    # would come back as [Zebra, Abacate] instead.
+    _, token = register_and_authenticate(client)
+
+    response = client.put(
+        "/users/me/tags",
+        json={"tag_ids": [str(ZEBRA_ID), str(ABACATE_ID)]},
+        headers=auth_headers(token),
+    )
+
+    assert response.status_code == 200
+    assert [tag["name"] for tag in response.json()["tags"]] == ["Abacate", "Zebra"]
+
+
+def test_replacing_tags_for_an_account_deleted_mid_request_fails_the_write(
+    client: TestClient,
+) -> None:
+    # A soft-deleted user is already rejected at auth time (get_current_user
+    # filters deleted_at), so this exercises the repository directly: the
+    # only way to reach this path is the account being deleted after auth
+    # but before the write (a race in production).
+    user_id, _ = register_and_authenticate(client)
+
+    db_generator = app.dependency_overrides[get_db]()
+    db = next(db_generator)
+    try:
+        db.query(UserModel).filter(UserModel.user_id == UUID(user_id)).update(
+            {"deleted_at": datetime.now(UTC)}
+        )
+        db.commit()
+
+        repository = SqlAlchemyUserTagsRepository(db)
+        with pytest.raises(UserNotFoundError):
+            repository.replace_user_tags(UUID(user_id), (FOOTBALL_ID,))
+    finally:
+        db_generator.close()
+
+    db_generator = app.dependency_overrides[get_db]()
+    db = next(db_generator)
+    try:
+        rows = db.execute(
+            select(user_tag.c.tag_id).where(user_tag.c.user_id == UUID(user_id))
+        ).all()
+    finally:
+        db_generator.close()
+    assert rows == []
+
+
+def test_sending_more_than_the_max_allowed_tags_returns_422(
+    client: TestClient,
+) -> None:
+    _, token = register_and_authenticate(client)
+    too_many_ids = [str(uuid4()) for _ in range(21)]
+
+    response = client.put(
+        "/users/me/tags",
+        json={"tag_ids": too_many_ids},
+        headers=auth_headers(token),
+    )
+
+    assert response.status_code == 422
