@@ -53,13 +53,11 @@ class CancelParticipationService:
             EventParticipantStatusEnum.CONFIRMED,
         ):
             raise RequestAlreadyAnsweredError
-        if participant.status is EventParticipantStatusEnum.CONFIRMED:
-            ends_at = event.ends_at
-            if ends_at.tzinfo is None:
-                ends_at = ends_at.replace(tzinfo=UTC)
-            if (
-                event.event_status is EventStatusEnum.FINISHED
-                or ends_at <= datetime.now(UTC)
-            ):
-                raise EventAlreadyFinishedError
+        ends_at = event.ends_at
+        if ends_at.tzinfo is None:
+            ends_at = ends_at.replace(tzinfo=UTC)
+        if event.event_status is EventStatusEnum.FINISHED or ends_at <= datetime.now(
+            UTC
+        ):
+            raise EventAlreadyFinishedError
         self.repository.cancel(event_id, user_id)

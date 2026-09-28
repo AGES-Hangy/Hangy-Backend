@@ -11,8 +11,8 @@ Branch: `tid215/delete-events-participation`, baseada em `develop` (`800a025`).
 | Estado atual | Resultado |
 | --- | --- |
 | CONFIRMED, evento não encerrado | CANCELLED, 204 sem corpo |
-| PENDING | CANCELLED, 204 sem corpo |
-| CONFIRMED, evento FINISHED ou ends_at já atingido | 409, `Event already finished` |
+| PENDING, evento não encerrado | CANCELLED, 204 sem corpo |
+| CONFIRMED ou PENDING, evento FINISHED ou ends_at já atingido | 409, `Event already finished` |
 | REJECTED ou REMOVED | 409, `Request already answered` |
 | Participação ausente ou CANCELLED; evento ausente ou excluído | 404, `Participant not found` |
 | Token ausente ou inválido | 401 |
@@ -26,9 +26,11 @@ na ordem utilizada pelas alterações do organizador e pela task 105.
 A decisão usa o status atual, conforme o objetivo da task. Uma solicitação já
 aprovada está CONFIRMED e pode cancelar sua presença, inclusive em evento privado.
 REJECTED e REMOVED retornam `Request already answered`. CANCELLED é tratado como
-participação já ausente (404). O bloqueio por encerramento aplica-se à presença
-CONFIRMED; uma solicitação PENDING pode ser retirada. Essas escolhas estão
-explicitadas em testes, pois a descrição mistura termos das duas tasks antigas.
+participação já ausente (404). Conforme a regra confirmada na review, o bloqueio
+por encerramento aplica-se tanto a CONFIRMED quanto a PENDING: evento FINISHED
+ou ends_at já atingido retorna 409 `Event already finished`, sem alterar a
+participação. Os dois critérios de encerramento estão cobertos em testes para
+ambos os estados.
 O detalhe 404 segue o contrato existente de participantes (`Participant not found`).
 
 ## Organização
@@ -56,6 +58,16 @@ existente `load_child_exports`, que gera `__all__` ordenado. Router registrado e
 - Inclui regressões para liberação da vaga, exclusão das listas, ausência de
   notificações, autorização, falha de persistência, cancelamentos simultâneos e
   decisão concorrente do organizador.
+
+## Ajuste da review em 28/09/2026
+
+- PENDING também retorna 409 `Event already finished` quando o evento está FINISHED
+  ou ends_at já foi atingido, preservando o status e sem criar notificações.
+- Os dois novos cenários falharam com 204 antes da correção e passaram após o ajuste.
+- Suíte local com SQLite: **182 passed, 5 skipped**, cobertura **94,67%**.
+  Ruff check, format e diff check aprovados. Os skips continuam sendo um
+  preexistente, dois exclusivos de PostgreSQL e dois dependentes do POST da task 105.
+- Os testes de concorrência em PostgreSQL não foram repetidos neste ajuste da regra.
 
 ## Reproduzir
 

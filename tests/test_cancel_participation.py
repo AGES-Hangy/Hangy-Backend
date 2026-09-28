@@ -338,18 +338,30 @@ def test_cancel_frees_capacity_for_organizer_approval(client):
     )
 
 
-def test_pending_request_can_be_withdrawn_after_event_ends(client):
+@pytest.mark.parametrize("finished_status,past_end", [(True, False), (False, True)])
+def test_pending_request_cannot_be_withdrawn_after_event_ends(
+    client, finished_status, past_end
+):
     http, sessions = client
     with sessions() as db:
-        db.get(EventModel, EVENT_ID).event_status = EventStatusEnum.FINISHED
+        event = db.get(EventModel, EVENT_ID)
+        if finished_status:
+            event.event_status = EventStatusEnum.FINISHED
+        if past_end:
+            event.ends_at = datetime.now(UTC) - timedelta(seconds=1)
         db.commit()
-    assert (
-        http.delete(
-            f"/events/{EVENT_ID}/participation",
-            headers=auth_header(PARTICIPANT_USER_ID),
-        ).status_code
-        == 204
+    response = http.delete(
+        f"/events/{EVENT_ID}/participation",
+        headers=auth_header(PARTICIPANT_USER_ID),
     )
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Event already finished"}
+    with sessions() as db:
+        assert (
+            db.get(EventParticipantModel, PENDING_PARTICIPANT_ID).status
+            == EventParticipantStatusEnum.PENDING
+        )
+        assert list(db.scalars(select(NotificationModel))) == []
 
 
 def test_openapi_has_no_request_or_response_body(client):
