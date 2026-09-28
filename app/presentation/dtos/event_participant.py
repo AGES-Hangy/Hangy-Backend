@@ -22,3 +22,9 @@ class EventParticipantsOutput(BaseModel):
     items: list[EventParticipantItemOutput]
     counts: dict[str, int]
     next_cursor: str | None
+
+
+class EventParticipationOutput(BaseModel):
+    participant_id: UUID
+    status: EventParticipantStatusEnum
+    joined_at: datetime

@@ -5,11 +5,12 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.domain.assemblers import AuthAssembler
+from app.domain.assemblers import AuthAssembler, DeviceAssembler
 from app.domain.entities import User
 from app.domain.services import (
     AccountDeletedError,
     AuthService,
+    DeviceService,
     DuplicateCnpjError,
     DuplicateCpfError,
     DuplicateEmailError,
@@ -18,6 +19,7 @@ from app.domain.services import (
     InvalidCoordinatesError,
     InvalidCpfError,
     InvalidCredentialsError,
+    InvalidDeviceTokenError,
     MinimumAgeError,
     PasswordResetService,
     RegisterBusinessService,
@@ -32,6 +34,7 @@ from app.infrastructure.repository.business_profile import (
 from app.infrastructure.repository.password_reset_token import (
     SqlAlchemyPasswordResetTokenRepository,
 )
+from app.infrastructure.repository.device import SqlAlchemyUserDeviceRepository
 from app.infrastructure.repository.person_profile import (
     SqlAlchemyPersonRegistrationRepository,
 )
@@ -44,6 +47,12 @@ from app.presentation.dtos import (
     UserOutput,
 )
 from app.presentation.mappers import PasswordResetMapper, UserMapper
+    RegisterDeviceInput,
+    RegisterDeviceOutput,
+    RegisterRequest,
+    UserOutput,
+)
+from app.presentation.mappers import DeviceMapper, UserMapper
 
 router = APIRouter(tags=["Authentication"])
 bearer_scheme = HTTPBearer(
@@ -212,3 +221,29 @@ def read_current_user(
     current_user: Annotated[User, Depends(get_current_user)],
 ) -> UserOutput:
     return AuthAssembler.to_user_dto(current_user)
+
+
+def get_device_service(db: Annotated[Session, Depends(get_db)]) -> DeviceService:
+    return DeviceService(repository=SqlAlchemyUserDeviceRepository(db))
+
+
+@router.post(
+    "/users/me/devices",
+    response_model=RegisterDeviceOutput,
+    status_code=status.HTTP_201_CREATED,
+    tags=["Devices"],
+)
+def register_device(
+    payload: RegisterDeviceInput,
+    current_user: Annotated[User, Depends(get_current_user)],
+    device_service: Annotated[DeviceService, Depends(get_device_service)],
+) -> RegisterDeviceOutput:
+    device = DeviceMapper.to_entity(payload, current_user.user_id)
+    try:
+        result = device_service.register(device)
+    except InvalidDeviceTokenError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid device token format",
+        ) from error
+    return DeviceAssembler.to_dto(result)
