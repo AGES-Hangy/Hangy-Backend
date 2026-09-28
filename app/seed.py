@@ -41,7 +41,6 @@ SEED_USERS: tuple[PersonRegistration | BusinessRegistration, ...] = (
         name="Usuário Hangy",
         cpf="52998224725",
         date_of_birth=date(1995, 4, 12),
-        country="BR",
         state="RS",
         city="Porto Alegre",
         accepted_terms_version=SEED_TERMS_VERSION,
@@ -62,7 +61,6 @@ SEED_USERS: tuple[PersonRegistration | BusinessRegistration, ...] = (
         name="Maria Silva",
         cpf="11144477735",
         date_of_birth=date(1998, 8, 3),
-        country="BR",
         state="RS",
         city="Porto Alegre",
         accepted_terms_version=SEED_TERMS_VERSION,
@@ -73,7 +71,6 @@ SEED_USERS: tuple[PersonRegistration | BusinessRegistration, ...] = (
         name="João Souza",
         cpf="46713890296",
         date_of_birth=date(2000, 1, 20),
-        country="BR",
         state="RS",
         city="Porto Alegre",
         accepted_terms_version=SEED_TERMS_VERSION,
@@ -222,10 +219,19 @@ class SeedNotification:
     key: str
     type: NotificationTypeEnum
     read: bool = False
+    # Put back as unread on every run, so a demo that marks it as read can be
+    # repeated after a restart.
+    reset_on_seed: bool = False
+
+
+def seed_notification_id(user_email: str, key: str) -> UUID:
+    return uuid5(NAMESPACE_URL, f"hangy:seed:notification:{user_email}:{key}")
 
 
 # user@hangy.com has 3 unread and 2 read notifications, so the bell badge shows
-# 3. maria@hangy.com's unread one must never leak into that count.
+# 3. maria@hangy.com's unread one must never leak into that count, and is the
+# one to try PATCH /notifications/{id}/read with as another user (403).
+# joao@hangy.com's single notification is the one to mark as read (204).
 SEED_NOTIFICATIONS = (
     SeedNotification(
         "user@hangy.com",
@@ -254,6 +260,12 @@ SEED_NOTIFICATIONS = (
         "maria@hangy.com",
         "connection-accepted",
         NotificationTypeEnum.CONNECTION_ACCEPTED,
+    ),
+    SeedNotification(
+        "joao@hangy.com",
+        "mark-as-read",
+        NotificationTypeEnum.EVENT_REQUEST_APPROVED,
+        reset_on_seed=True,
     ),
 )
 
@@ -377,11 +389,9 @@ def seed_notifications(db: Session) -> None:
         if user is None:
             continue
 
-        notification_id = uuid5(
-            NAMESPACE_URL, f"hangy:seed:notification:{seed.user_email}:{seed.key}"
-        )
-        # An existing one is left alone: the user may have read it since.
-        if db.get(NotificationModel, notification_id) is None:
+        notification_id = seed_notification_id(seed.user_email, seed.key)
+        notification = db.get(NotificationModel, notification_id)
+        if notification is None:
             db.add(
                 NotificationModel(
                     notification_id=notification_id,
@@ -390,6 +400,9 @@ def seed_notifications(db: Session) -> None:
                     read=seed.read,
                 )
             )
+        elif seed.reset_on_seed:
+            notification.read = seed.read
+        # Any other existing one is left alone: the user may have read it since.
     db.commit()
 
 

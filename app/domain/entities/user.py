@@ -12,7 +12,6 @@ class PersonRegistration:
     name: str
     cpf: str
     date_of_birth: date
-    country: str
     state: str
     city: str
     accepted_terms_version: str

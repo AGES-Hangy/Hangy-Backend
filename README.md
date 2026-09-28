@@ -65,8 +65,8 @@ A aplicação ficará disponível em:
 
 - API: <http://localhost:8000>
 - Health check: <http://localhost:8000/health>
-- Cadastro: `POST http://localhost:8000/register`
-- Login: `POST http://localhost:8000/login`
+- Cadastro: `POST http://localhost:8000/auth/register`
+- Login: `POST http://localhost:8000/auth/login`
 - Usuário autenticado: `GET http://localhost:8000/users/me`
 - Feed da Home: `GET http://localhost:8000/feed`
 - Swagger UI: <http://localhost:8000/docs>
@@ -87,6 +87,13 @@ de autorização sejam adicionadas:
 O seed também cria o evento `Rachão fechado` como `INVITE_ONLY`. Para testar o
 aceite por link com `user@hangy.com`, use o token
 `seed-invite-racha-fechado`.
+
+Para testar `PATCH /notifications/{notification_id}/read`, use
+`joao@hangy.com`: a notificação `76331ed0-0a64-55c8-819a-35958e434add` é dele e
+volta a ficar não lida a cada execução do seed. A
+`d3bcd888-24d8-5fe0-a022-e0e5aae5920d` é da `maria@hangy.com` e serve para o
+caso `403`. A collection `postman/tid219_patch_notifications_read.postman_collection.json`
+percorre todos os cenários.
 
 As tags de exemplo seguem a hierarquia macro → micro usada pelo feed:
 `Esportes` (Futebol, Corrida), `Música` (Rock, Samba, Sertanejo),
@@ -126,14 +133,14 @@ os novos exemplos.
 
 ## Autenticação
 
-`POST /register` é um único endpoint que decide o tipo de conta pelo campo
+`POST /auth/register` é um único endpoint que decide o tipo de conta pelo campo
 `user_type` do próprio corpo (`PERSONAL` ou `BUSINESS`), uma união
 discriminada validada pelo Pydantic. Os dois formatos aparecem no Swagger UI.
 
 Cadastro de pessoa física:
 
 ```bash
-curl -X POST http://localhost:8000/register \
+curl -X POST http://localhost:8000/auth/register \
   -H "Content-Type: application/json" \
   -d '{
         "user_type": "PERSONAL",
@@ -153,7 +160,7 @@ curl -X POST http://localhost:8000/register \
 Cadastro de pessoa jurídica:
 
 ```bash
-curl -X POST http://localhost:8000/register \
+curl -X POST http://localhost:8000/auth/register \
   -H "Content-Type: application/json" \
   -d '{
         "user_type": "BUSINESS",
@@ -175,10 +182,10 @@ E-mail, CPF e CNPJ são únicos entre contas ativas (409 em caso de duplicidade;
 o e-mail é único por conta, não por tipo). O sucesso devolve `201` já com o
 `access_token`, no mesmo formato de resposta do login.
 
-`POST /login` recebe e-mail e senha como JSON:
+`POST /auth/login` recebe e-mail e senha como JSON:
 
 ```bash
-curl -X POST http://localhost:8000/login \
+curl -X POST http://localhost:8000/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email": "felipe@hangy.com", "password": "strong-password"}'
 ```
@@ -188,7 +195,7 @@ mesmo `401` com `{"detail": "Incorrect email or password"}`, para não indicar
 qual dos dois estava errado. Uma conta excluída (`deleted_at` preenchido)
 devolve `403` mesmo com a senha correta.
 
-A resposta, igual à de `/register`, contém um JWT no campo `access_token` e o
+A resposta, igual à de `/auth/register`, contém um JWT no campo `access_token` e o
 usuário autenticado. Envie o token como Bearer para acessar uma rota
 protegida:
 
@@ -198,7 +205,7 @@ curl http://localhost:8000/users/me \
 ```
 
 No Swagger UI, o botão **Authorize** oferece `BearerToken`: cole ali um JWT
-obtido em `/login` ou `/register`.
+obtido em `/auth/login` ou `/auth/register`.
 
 As senhas são protegidas com Argon2 por meio do `pwdlib`; somente o hash é
 persistido. Os tokens são criados e verificados com PyJWT, carregam a data de

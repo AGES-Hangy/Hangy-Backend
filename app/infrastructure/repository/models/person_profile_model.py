@@ -22,7 +22,6 @@ class PersonProfileModel(Base):
     # Digits only, no punctuation.
     cpf: Mapped[str] = mapped_column(String(11), unique=True)
     date_of_birth: Mapped[date] = mapped_column(Date)
-    country: Mapped[str] = mapped_column(String(100))
     state: Mapped[str] = mapped_column(String(100))
     city: Mapped[str] = mapped_column(String(100))
     updated_at: Mapped[datetime] = mapped_column(

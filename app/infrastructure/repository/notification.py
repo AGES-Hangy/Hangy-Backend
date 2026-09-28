@@ -3,6 +3,7 @@ from uuid import UUID
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from app.domain.entities import Notification
 from app.domain.enums import NotificationTypeEnum
 from app.infrastructure.repository.models import (
     ConnectionNotificationModel,
@@ -27,6 +28,28 @@ class SqlAlchemyNotificationRepository:
                 )
             )
             or 0
+        )
+
+    def get_by_id(self, notification_id: UUID) -> Notification | None:
+        model = self.db.get(NotificationModel, notification_id)
+        return self._to_entity(model) if model is not None else None
+
+    def mark_as_read(self, notification_id: UUID) -> None:
+        self.db.execute(
+            update(NotificationModel)
+            .where(NotificationModel.notification_id == notification_id)
+            .values(read=True)
+        )
+        self.db.commit()
+
+    @staticmethod
+    def _to_entity(model: NotificationModel) -> Notification:
+        return Notification(
+            notification_id=model.notification_id,
+            user_id=model.user_id,
+            type=model.type,
+            created_at=model.created_at,
+            read=model.read,
         )
 
     def notify_connection(

@@ -24,6 +24,7 @@ from app.seed import (
     SEED_TAGS,
     SEED_USERS,
     seed_events,
+    seed_notification_id,
     seed_notifications,
     seed_tags,
     seed_user_interests,
@@ -199,7 +200,7 @@ def test_seeded_feed_matches_the_documented_sample(
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as client:
         login = client.post(
-            "/login",
+            "/auth/login",
             json={"email": "user@hangy.com", "password": "user-password"},
         )
         assert login.status_code == 200
@@ -242,7 +243,7 @@ def test_seeded_business_user_has_an_empty_feed(
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as client:
         login = client.post(
-            "/login",
+            "/auth/login",
             json={"email": "admin@hangy.com", "password": "admin-password"},
         )
         response = client.get(
@@ -268,7 +269,7 @@ def test_seeded_notifications_feed_the_unread_count(
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as client:
         login = client.post(
-            "/login",
+            "/auth/login",
             json={"email": "user@hangy.com", "password": "user-password"},
         )
         assert login.status_code == 200
@@ -280,3 +281,22 @@ def test_seeded_notifications_feed_the_unread_count(
 
     assert response.status_code == 200
     assert response.json() == {"unread_count": 3}
+
+
+def test_seed_resets_only_the_demo_notification_to_unread(
+    session_factory: sessionmaker[Session],
+) -> None:
+    demo_id = seed_notification_id("joao@hangy.com", "mark-as-read")
+    user_notification_id = seed_notification_id(
+        "user@hangy.com", "participation-request"
+    )
+    with session_factory() as db:
+        seed_everything(db)
+        db.get(NotificationModel, demo_id).read = True
+        db.get(NotificationModel, user_notification_id).read = True
+        db.commit()
+
+        seed_everything(db)
+
+        assert db.get(NotificationModel, demo_id).read is False
+        assert db.get(NotificationModel, user_notification_id).read is True
