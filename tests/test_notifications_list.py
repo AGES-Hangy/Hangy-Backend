@@ -262,30 +262,46 @@ def test_connection_notification_payload(
     assert item["payload"]["sender"]["name"] == "Ana Sender"
 
 
+@pytest.mark.parametrize(
+    "notification_type,organizer_is_sender",
+    [
+        (NotificationTypeEnum.EVENT_PARTICIPATION_REQUEST, False),
+        (NotificationTypeEnum.EVENT_PARTICIPANT_JOINED, False),
+        (NotificationTypeEnum.EVENT_PARTICIPANT_CANCELLED, False),
+        (NotificationTypeEnum.EVENT_REQUEST_APPROVED, True),
+        (NotificationTypeEnum.EVENT_REQUEST_REJECTED, True),
+        (NotificationTypeEnum.EVENT_PARTICIPANT_REMOVED, True),
+    ],
+)
 def test_participant_notification_payload(
     notif_client: tuple[TestClient, sessionmaker[Session]],
+    notification_type: NotificationTypeEnum,
+    organizer_is_sender: bool,
 ) -> None:
     client, session_factory = notif_client
     with session_factory() as db:
-        owner = create_user(db)
+        owner = create_user(db, name="Event Organizer")
         requester = create_user(db, name="Bob Requester")
         event = create_event(db, owner.user_id)
+        recipient = requester if organizer_is_sender else owner
+        sender = owner if organizer_is_sender else requester
+        expected_sender = {"id": str(sender.user_id), "name": sender.name}
         add_participant_notification(
             db,
-            owner,
+            recipient,
             requester,
             event,
-            NotificationTypeEnum.EVENT_PARTICIPATION_REQUEST,
+            notification_type,
         )
         db.commit()
-        headers = make_token(owner.user_id)
+        headers = make_token(recipient.user_id)
 
     resp = client.get("/notifications", headers=headers)
     assert resp.status_code == 200
     item = resp.json()["items"][0]
-    assert item["type"] == "EVENT_PARTICIPATION_REQUEST"
+    assert item["type"] == notification_type.value
     assert item["payload"]["event_title"] == "Test Event"
-    assert item["payload"]["sender"]["name"] == "Bob Requester"
+    assert item["payload"]["sender"] == expected_sender
 
 
 def test_cancelled_notification_payload(

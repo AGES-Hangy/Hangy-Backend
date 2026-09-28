@@ -222,7 +222,16 @@ def _build_payload(model: NotificationModel) -> dict:
         if model.participant_detail and model.participant_detail.participant:
             ep: EventParticipantModel = model.participant_detail.participant
             event: EventModel = ep.event
-            sender_user: UserModel = ep.user
+            sender_user: UserModel = (
+                event.creator
+                if t
+                in (
+                    NotificationTypeEnum.EVENT_REQUEST_APPROVED,
+                    NotificationTypeEnum.EVENT_REQUEST_REJECTED,
+                    NotificationTypeEnum.EVENT_PARTICIPANT_REMOVED,
+                )
+                else ep.user
+            )
             return {
                 "event_id": str(event.event_id),
                 "event_title": event.event_title,
