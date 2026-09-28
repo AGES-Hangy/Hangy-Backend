@@ -30,9 +30,43 @@ class SqlAlchemyNotificationRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    # ------------------------------------------------------------------
-    # Write helpers (called by other services — US6.2+)
-    # ------------------------------------------------------------------
+    def count_unread(self, user_id: UUID) -> int:
+        return (
+            self.db.scalar(
+                select(func.count())
+                .select_from(NotificationModel)
+                .where(
+                    NotificationModel.user_id == user_id,
+                    NotificationModel.read.is_(False),
+                )
+            )
+            or 0
+        )
+
+    def get_by_id(self, notification_id: UUID) -> Notification | None:
+        model = self.db.get(NotificationModel, notification_id)
+        return self._to_entity(model) if model is not None else None
+
+    def mark_as_read(self, notification_id: UUID) -> None:
+        self.db.execute(
+            update(NotificationModel)
+            .where(NotificationModel.notification_id == notification_id)
+            .values(read=True)
+        )
+        self.db.commit()
+
+    @staticmethod
+    def _to_entity(
+        model: NotificationModel, *, include_payload: bool = False
+    ) -> Notification:
+        return Notification(
+            notification_id=model.notification_id,
+            user_id=model.user_id,
+            type=model.type,
+            created_at=model.created_at,
+            read=model.read,
+            payload=_build_payload(model) if include_payload else {},
+        )
 
     def notify_connection(
         self,
@@ -92,9 +126,16 @@ class SqlAlchemyNotificationRepository:
             )
         )
 
-    # ------------------------------------------------------------------
-    # Read side
-    # ------------------------------------------------------------------
+    def mark_all_as_read(self, user_id: UUID) -> None:
+        self.db.execute(
+            update(NotificationModel)
+            .where(
+                NotificationModel.user_id == user_id,
+                NotificationModel.read.is_(False),
+            )
+            .values(read=True)
+        )
+        self.db.commit()
 
     def list_for_user(
         self,
@@ -139,55 +180,7 @@ class SqlAlchemyNotificationRepository:
             )
 
         rows = self.db.scalars(stmt).unique().all()
-        return [self._to_entity(row) for row in rows]
-
-    def count_unread(self, user_id: UUID) -> int:
-        result = self.db.scalar(
-            select(func.count()).where(
-                NotificationModel.user_id == user_id,
-                NotificationModel.read.is_(False),
-            )
-        )
-        return result or 0
-
-    def mark_as_read(self, notification_id: UUID, user_id: UUID) -> bool:
-        result = self.db.execute(
-            update(NotificationModel)
-            .where(
-                NotificationModel.notification_id == notification_id,
-                NotificationModel.user_id == user_id,
-            )
-            .values(read=True)
-        )
-        self.db.commit()
-        return result.rowcount > 0
-
-    def mark_all_as_read(self, user_id: UUID) -> None:
-        self.db.execute(
-            update(NotificationModel)
-            .where(
-                NotificationModel.user_id == user_id,
-                NotificationModel.read.is_(False),
-            )
-            .values(read=True)
-        )
-        self.db.commit()
-
-    # ------------------------------------------------------------------
-    # Private
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _to_entity(model: NotificationModel) -> Notification:
-        payload = _build_payload(model)
-        return Notification(
-            notification_id=model.notification_id,
-            user_id=model.user_id,
-            type=model.type,
-            read=model.read,
-            created_at=model.created_at,
-            payload=payload,
-        )
+        return [self._to_entity(row, include_payload=True) for row in rows]
 
 
 def _build_payload(model: NotificationModel) -> dict:
