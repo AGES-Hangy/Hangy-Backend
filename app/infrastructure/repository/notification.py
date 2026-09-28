@@ -30,10 +30,7 @@ class SqlAlchemyNotificationRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    # ------------------------------------------------------------------
-    # Write helpers (called by other services — US6.2+)
-    # ------------------------------------------------------------------
-
+    
     def notify_connection(
         self,
         recipient_id: UUID,
@@ -91,10 +88,6 @@ class SqlAlchemyNotificationRepository:
                 event_id=event_id,
             )
         )
-
-    # ------------------------------------------------------------------
-    # Read side
-    # ------------------------------------------------------------------
 
     def list_for_user(
         self,
@@ -173,10 +166,7 @@ class SqlAlchemyNotificationRepository:
         )
         self.db.commit()
 
-    # ------------------------------------------------------------------
-    # Private
-    # ------------------------------------------------------------------
-
+   
     @staticmethod
     def _to_entity(model: NotificationModel) -> Notification:
         payload = _build_payload(model)
@@ -194,15 +184,13 @@ def _build_payload(model: NotificationModel) -> dict:
     """Build a flat payload dict regardless of which subtable holds the data."""
     t = model.type
 
-    # Connection notifications
     if t in (
         NotificationTypeEnum.CONNECTION_REQUEST,
         NotificationTypeEnum.CONNECTION_ACCEPTED,
     ):
         if model.connection_detail and model.connection_detail.connection:
             conn: UserConnectionModel = model.connection_detail.connection
-            # The sender is the other party: requester for REQUEST, receiver
-            # for ACCEPTED (seen from the notification recipient's perspective).
+           
             sender: UserModel = (
                 conn.requester
                 if t == NotificationTypeEnum.CONNECTION_REQUEST
@@ -217,7 +205,6 @@ def _build_payload(model: NotificationModel) -> dict:
             }
         return {}
 
-    # Event-participant notifications (request, approved, rejected, etc.)
     _PARTICIPANT_TYPES = {
         NotificationTypeEnum.EVENT_PARTICIPATION_REQUEST,
         NotificationTypeEnum.EVENT_REQUEST_APPROVED,
@@ -242,7 +229,6 @@ def _build_payload(model: NotificationModel) -> dict:
             }
         return {}
 
-    # Event-cancelled / event-updated notifications
     if t in (
         NotificationTypeEnum.EVENT_CANCELLED,
         NotificationTypeEnum.EVENT_UPDATED,
