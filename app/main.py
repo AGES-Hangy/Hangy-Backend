@@ -8,6 +8,7 @@ from app.presentation.routes import (
     feed_router,
     health_router,
     invites_router,
+    notifications_router,
     tags_router,
 )
 
@@ -29,5 +30,6 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(events_router)
 app.include_router(invites_router)
+app.include_router(notifications_router)
 app.include_router(tags_router)
 app.include_router(feed_router)
