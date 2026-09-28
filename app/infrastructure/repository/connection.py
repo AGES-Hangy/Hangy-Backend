@@ -5,16 +5,14 @@ from sqlalchemy.orm import Session
 
 from app.domain.entities import UserConnection
 from app.domain.enums import NotificationTypeEnum, UserConnectionStatusEnum
+from app.domain.services.notification_dispatcher import NotificationDispatcher
 from app.infrastructure.repository.models import UserConnectionModel
-from app.infrastructure.repository.notification import SqlAlchemyNotificationRepository
 
 
 class SqlAlchemyConnectionRepository:
-    def __init__(
-        self, db: Session, notification_repo: SqlAlchemyNotificationRepository
-    ) -> None:
+    def __init__(self, db: Session, dispatcher: NotificationDispatcher) -> None:
         self.db = db
-        self.notification_repo = notification_repo
+        self.dispatcher = dispatcher
 
     def get_by_id_for_update(self, connection_id: UUID) -> UserConnection | None:
         model = self.db.scalar(
@@ -32,10 +30,11 @@ class SqlAlchemyConnectionRepository:
         )
         self.db.add(model)
         self.db.flush()
-        self.notification_repo.notify_connection(
+        self.dispatcher.dispatch(
+            NotificationTypeEnum.CONNECTION_REQUEST,
             recipient_id=receiver_id,
+            actor_id=requester_id,
             connection_id=model.connection_id,
-            type=NotificationTypeEnum.CONNECTION_REQUEST,
         )
         self.db.commit()
         self.db.refresh(model)
@@ -50,10 +49,11 @@ class SqlAlchemyConnectionRepository:
         if model is None:
             raise ValueError("A connection validated by the service must exist")
         model.status = UserConnectionStatusEnum.CONFIRMED
-        self.notification_repo.notify_connection(
+        self.dispatcher.dispatch(
+            NotificationTypeEnum.CONNECTION_ACCEPTED,
             recipient_id=model.requester_id,
+            actor_id=model.receiver_id,
             connection_id=connection_id,
-            type=NotificationTypeEnum.CONNECTION_ACCEPTED,
         )
         self.db.commit()
         self.db.refresh(model)

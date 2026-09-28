@@ -26,6 +26,7 @@ class Settings:
     )
     invite_link_base_url: str = os.getenv("INVITE_LINK_BASE_URL", "hangy://invite/")
     frontend_base_url: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:8081")
+    expo_access_token: str | None = os.getenv("EXPO_ACCESS_TOKEN")
 
 
 settings = Settings()

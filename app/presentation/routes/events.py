@@ -30,6 +30,7 @@ from app.domain.services import (
     InvalidEventCoordinatesError,
     InvalidParticipantStatusTransitionError,
     NotEventOrganizerError,
+    NotificationDispatcher,
     TooManyEventTagsError,
 )
 from app.domain.services.event_participant import (
@@ -70,7 +71,9 @@ from app.domain.services.participation import (
 from app.domain.services.participation import (
     EventNotFoundError as ParticipationEventNotFoundError,
 )
+from app.infrastructure.push.expo_push_sender import expo_push_sender
 from app.infrastructure.repository import get_db
+from app.infrastructure.repository.device import SqlAlchemyUserDeviceRepository
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
 from app.infrastructure.repository.event_details import SqlAlchemyEventDetailsRepository
 from app.infrastructure.repository.event_invite_link import (
@@ -132,10 +135,21 @@ INVITE_LINK_NOT_FOUND_EXAMPLE = {"detail": "Event not found"}
 INVITE_LINK_CONFLICT_EXAMPLE = {"detail": "Event is not invite only"}
 
 
-def get_events_service(db: Annotated[Session, Depends(get_db)]) -> EventsService:
-    return EventsService(
-        repository=SqlAlchemyEventRepository(db, SqlAlchemyNotificationRepository(db))
+def get_notification_dispatcher(
+    db: Annotated[Session, Depends(get_db)],
+) -> NotificationDispatcher:
+    return NotificationDispatcher(
+        repository=SqlAlchemyNotificationRepository(db),
+        device_repository=SqlAlchemyUserDeviceRepository(db),
+        push_sender=expo_push_sender,
     )
+
+
+def get_events_service(
+    dispatcher: Annotated[NotificationDispatcher, Depends(get_notification_dispatcher)],
+    db: Annotated[Session, Depends(get_db)],
+) -> EventsService:
+    return EventsService(repository=SqlAlchemyEventRepository(db, dispatcher))
 
 
 def get_event_details_service(
@@ -145,10 +159,11 @@ def get_event_details_service(
 
 
 def get_event_share_service(
+    dispatcher: Annotated[NotificationDispatcher, Depends(get_notification_dispatcher)],
     db: Annotated[Session, Depends(get_db)],
 ) -> EventShareService:
     return EventShareService(
-        repository=SqlAlchemyEventRepository(db, SqlAlchemyNotificationRepository(db)),
+        repository=SqlAlchemyEventRepository(db, dispatcher),
         frontend_base_url=settings.frontend_base_url,
     )
 
@@ -168,12 +183,11 @@ def get_event_participants_service(
 
 
 def get_participation_service(
+    dispatcher: Annotated[NotificationDispatcher, Depends(get_notification_dispatcher)],
     db: Annotated[Session, Depends(get_db)],
 ) -> ParticipationService:
     return ParticipationService(
-        repository=SqlAlchemyParticipationRepository(
-            db, SqlAlchemyNotificationRepository(db)
-        )
+        repository=SqlAlchemyParticipationRepository(db, dispatcher)
     )
 
 
