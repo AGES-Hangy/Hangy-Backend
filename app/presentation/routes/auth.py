@@ -31,10 +31,10 @@ from app.infrastructure.repository import get_db
 from app.infrastructure.repository.business_profile import (
     SqlAlchemyBusinessRegistrationRepository,
 )
+from app.infrastructure.repository.device import SqlAlchemyUserDeviceRepository
 from app.infrastructure.repository.password_reset_token import (
     SqlAlchemyPasswordResetTokenRepository,
 )
-from app.infrastructure.repository.device import SqlAlchemyUserDeviceRepository
 from app.infrastructure.repository.person_profile import (
     SqlAlchemyPersonRegistrationRepository,
 )
@@ -43,16 +43,16 @@ from app.presentation.dtos import (
     AuthOutput,
     LoginRequest,
     PasswordResetRequestInput,
-    RegisterRequest,
-    UserOutput,
-)
-from app.presentation.mappers import PasswordResetMapper, UserMapper
     RegisterDeviceInput,
     RegisterDeviceOutput,
     RegisterRequest,
     UserOutput,
 )
-from app.presentation.mappers import DeviceMapper, UserMapper
+from app.presentation.mappers import (
+    DeviceMapper,
+    PasswordResetMapper,
+    UserMapper,
+)
 
 router = APIRouter(tags=["Authentication"])
 bearer_scheme = HTTPBearer(
