@@ -52,7 +52,7 @@ def context() -> Iterator[NotificationContext]:
     app.dependency_overrides[get_db] = override_get_db
     with testing_session() as db, TestClient(app) as client:
         register = client.post(
-            "/register",
+            "/auth/register",
             json={
                 "user_type": "PERSONAL",
                 "email": USER_EMAIL,
@@ -60,7 +60,6 @@ def context() -> Iterator[NotificationContext]:
                 "name": "Felipe",
                 "cpf": "52998224725",
                 "date_of_birth": "2000-04-12",
-                "country": "BR",
                 "state": "RS",
                 "city": "Porto Alegre",
                 "accepted_terms_version": "2026-08-01",
@@ -68,7 +67,7 @@ def context() -> Iterator[NotificationContext]:
         )
         assert register.status_code == 201
         login = client.post(
-            "/login",
+            "/auth/login",
             json={"email": USER_EMAIL, "password": USER_PASSWORD},
         )
         assert login.status_code == 200
