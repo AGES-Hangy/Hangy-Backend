@@ -4,7 +4,11 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
+<<<<<<< HEAD
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, func, text
+=======
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, func
+>>>>>>> a0671a677797d084c2314bfbdf9c5eb7c834f6cb
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.enums import NotificationTypeEnum
@@ -25,7 +29,11 @@ if TYPE_CHECKING:
 class NotificationModel(Base):
     __tablename__ = "notification"
     __table_args__ = (
+<<<<<<< HEAD
         Index("idx_notification_user_id_created_at_desc", "user_id", text("created_at DESC")),
+=======
+        Index("idx_notification_user_id_created_at_desc", "user_id", "created_at"),
+>>>>>>> a0671a677797d084c2314bfbdf9c5eb7c834f6cb
     )
 
     notification_id: Mapped[uuid.UUID] = mapped_column(
