@@ -31,16 +31,18 @@ class SqlAlchemyUserDeviceRepository:
         self.db.refresh(model)
         return self._to_entity(model)
 
-    def delete_by_user_and_token(self, user_id: UUID, device_token: str) -> None:
+    def delete_by_user_and_token(self, user_id: UUID, device_token: str) -> bool:
         model = self.db.scalar(
             select(UserDeviceModel).where(
                 UserDeviceModel.user_id == user_id,
                 UserDeviceModel.device_token == device_token,
             )
         )
-        if model is not None:
-            self.db.delete(model)
-            self.db.commit()
+        if model is None:
+            return False
+        self.db.delete(model)
+        self.db.commit()
+        return True
 
     @staticmethod
     def _to_entity(model: UserDeviceModel) -> UserDevice:
