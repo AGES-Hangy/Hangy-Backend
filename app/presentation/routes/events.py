@@ -60,7 +60,9 @@ from app.domain.services.participation import (
     InviteOnlyEventError,
     OrganizerCannotJoinError,
     ParticipationService,
+    RemovedFromEventError,
     RequestAlreadyPendingError,
+    RequestRejectedError,
 )
 from app.domain.services.participation import (
     EventAlreadyFinishedError as ParticipationAlreadyFinishedError,
@@ -438,9 +440,27 @@ def create_invite_link(
             },
         },
         status.HTTP_403_FORBIDDEN: {
-            "description": "Evento e INVITE_ONLY; este endpoint nao o atende.",
+            "description": (
+                "Evento e INVITE_ONLY, ou o usuario foi rejeitado/removido "
+                "deste evento e nao pode solicitar novamente."
+            ),
             "content": {
-                "application/json": {"example": {"detail": "Event is invite-only"}}
+                "application/json": {
+                    "examples": {
+                        "invite_only": {
+                            "summary": "Evento por convite",
+                            "value": {"detail": "Event is invite-only"},
+                        },
+                        "rejected": {
+                            "summary": "Solicitacao ja rejeitada",
+                            "value": {"detail": "Request was rejected"},
+                        },
+                        "removed": {
+                            "summary": "Removido do evento",
+                            "value": {"detail": "Removed from this event"},
+                        },
+                    }
+                }
             },
         },
         status.HTTP_404_NOT_FOUND: {
@@ -524,6 +544,16 @@ def create_event_participation(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Event creator cannot join their own event",
+        ) from error
+    except RequestRejectedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Request was rejected",
+        ) from error
+    except RemovedFromEventError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Removed from this event",
         ) from error
     return EventParticipationAssembler.to_dto(participant)
 
