@@ -10,18 +10,18 @@ from app.domain.enums import (
     NotificationTypeEnum,
 )
 from app.domain.services.invite import InviteAcceptance, InviteAcceptanceOutcome
+from app.domain.services.notification_dispatcher import NotificationDispatcher
 from app.infrastructure.repository.models import (
     EventInviteLinkModel,
     EventModel,
     EventParticipantModel,
-    EventParticipantNotificationModel,
-    NotificationModel,
 )
 
 
 class SqlAlchemyInviteRepository:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, dispatcher: NotificationDispatcher) -> None:
         self.db = db
+        self.dispatcher = dispatcher
 
     def get_by_token(self, token: str) -> EventInviteLink | None:
         model = self.db.scalar(
@@ -72,15 +72,12 @@ class SqlAlchemyInviteRepository:
         )
         self.db.add(participant)
         self.db.flush()
-        notification = NotificationModel(
-            user_id=event.event_creator_id,
-            type=NotificationTypeEnum.EVENT_PARTICIPANT_JOINED,
-            read=False,
+        self.dispatcher.dispatch(
+            NotificationTypeEnum.EVENT_PARTICIPANT_JOINED,
+            recipient_id=event.event_creator_id,
+            actor_id=user_id,
+            participant_id=participant.participant_id,
         )
-        notification.participant_detail = EventParticipantNotificationModel(
-            participant_id=participant.participant_id
-        )
-        self.db.add(notification)
         self.db.commit()
         self.db.refresh(participant)
         return InviteAcceptance(

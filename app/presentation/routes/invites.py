@@ -20,6 +20,7 @@ from app.domain.services.invite import (
     InviteLinkNotFoundError,
     InviteService,
 )
+from app.domain.services.notification_dispatcher import NotificationDispatcher
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.invite import SqlAlchemyInviteRepository
 from app.presentation.dtos import AcceptInviteOutput, EventInvitePreviewOutput
@@ -28,13 +29,19 @@ from app.presentation.routes.auth import (
     get_access_token,
     get_auth_service,
 )
-from app.presentation.routes.events import get_event_share_service
+from app.presentation.routes.events import (
+    get_event_share_service,
+    get_notification_dispatcher,
+)
 
 router = APIRouter(prefix="/invites", tags=["Invites"])
 
 
-def get_invite_service(db: Annotated[Session, Depends(get_db)]) -> InviteService:
-    return InviteService(repository=SqlAlchemyInviteRepository(db))
+def get_invite_service(
+    dispatcher: Annotated[NotificationDispatcher, Depends(get_notification_dispatcher)],
+    db: Annotated[Session, Depends(get_db)],
+) -> InviteService:
+    return InviteService(repository=SqlAlchemyInviteRepository(db, dispatcher))
 
 
 @router.post(
