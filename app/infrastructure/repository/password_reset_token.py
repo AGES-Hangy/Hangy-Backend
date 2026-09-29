@@ -49,6 +49,32 @@ class SqlAlchemyPasswordResetTokenRepository:
         self.db.refresh(model)
         return self._to_entity(model)
 
+    def get_latest_by_email(self, email: str) -> PasswordResetToken | None:
+        model = self.db.scalar(
+            select(PasswordResetTokenModel)
+            .join(UserModel, UserModel.user_id == PasswordResetTokenModel.user_id)
+            .where(UserModel.email == email, UserModel.deleted_at.is_(None))
+            .order_by(PasswordResetTokenModel.created_at.desc())
+            .limit(1)
+        )
+        return None if model is None else self._to_entity(model)
+
+    def increment_attempts(self, token_id: UUID) -> None:
+        self.db.execute(
+            update(PasswordResetTokenModel)
+            .where(PasswordResetTokenModel.token_id == token_id)
+            .values(attempts=PasswordResetTokenModel.attempts + 1)
+        )
+        self.db.commit()
+
+    def mark_verified(self, token_id: UUID, verified_at: datetime) -> None:
+        self.db.execute(
+            update(PasswordResetTokenModel)
+            .where(PasswordResetTokenModel.token_id == token_id)
+            .values(verified_at=verified_at)
+        )
+        self.db.commit()
+
     @staticmethod
     def _to_entity(model: PasswordResetTokenModel) -> PasswordResetToken:
         return PasswordResetToken(

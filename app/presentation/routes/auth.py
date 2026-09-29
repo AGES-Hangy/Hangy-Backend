@@ -5,7 +5,11 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.domain.assemblers import AuthAssembler, DeviceAssembler
+from app.domain.assemblers import (
+    AuthAssembler,
+    DeviceAssembler,
+    PasswordResetAssembler,
+)
 from app.domain.entities import User
 from app.domain.services import (
     AccountDeletedError,
@@ -20,12 +24,14 @@ from app.domain.services import (
     InvalidCpfError,
     InvalidCredentialsError,
     InvalidDeviceTokenError,
+    InvalidResetCodeError,
     MinimumAgeError,
     PasswordResetService,
     RegisterBusinessService,
     RegisterPersonalService,
     RegisterService,
     TooManyPasswordResetRequestsError,
+    TooManyResetCodeAttemptsError,
 )
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.business_profile import (
@@ -47,6 +53,8 @@ from app.presentation.dtos import (
     RegisterDeviceOutput,
     RegisterRequest,
     UserOutput,
+    VerifyResetCodeRequest,
+    VerifyResetCodeResponse,
 )
 from app.presentation.mappers import (
     DeviceMapper,
@@ -68,6 +76,9 @@ def get_auth_service(db: Annotated[Session, Depends(get_db)]) -> AuthService:
         jwt_secret_key=settings.jwt_secret_key,
         jwt_algorithm=settings.jwt_algorithm,
         access_token_expire_minutes=settings.access_token_expire_minutes,
+        password_reset_token_expire_minutes=(
+            settings.password_reset_token_expire_minutes
+        ),
     )
 
 
@@ -203,6 +214,36 @@ def request_password_reset(
             detail="Too many reset requests",
         ) from error
     return Response(status_code=status.HTTP_202_ACCEPTED)
+
+
+@router.post(
+    "/auth/password-reset/verify",
+    response_model=VerifyResetCodeResponse,
+    status_code=status.HTTP_200_OK,
+)
+def verify_password_reset_code(
+    payload: VerifyResetCodeRequest,
+    password_reset_service: Annotated[
+        PasswordResetService, Depends(get_password_reset_service)
+    ],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+) -> VerifyResetCodeResponse:
+    verification = PasswordResetMapper.to_verification(payload)
+    try:
+        token = password_reset_service.verify_code(verification)
+    except TooManyResetCodeAttemptsError as error:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many attempts",
+        ) from error
+    except InvalidResetCodeError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired code",
+        ) from error
+
+    reset_token = auth_service.create_reset_token(token)
+    return PasswordResetAssembler.to_verify_dto(reset_token)
 
 
 def get_current_user(

@@ -2,7 +2,12 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-__all__ = ["PasswordResetRequest", "PasswordResetToken"]
+__all__ = [
+    "PasswordResetRequest",
+    "PasswordResetToken",
+    "ResetToken",
+    "VerifyResetCode",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,3 +25,15 @@ class PasswordResetToken:
     expires_at: datetime
     used_at: datetime | None
     created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class VerifyResetCode:
+    email: str
+    code: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResetToken:
+    value: str
+    expires_in: int
