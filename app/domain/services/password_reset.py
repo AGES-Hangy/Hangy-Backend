@@ -9,9 +9,11 @@ from threading import Lock
 from typing import Protocol
 from uuid import UUID, uuid4
 
+import jwt
 from pwdlib import PasswordHash
 
 from app.domain.entities import (
+    PasswordResetConfirmation,
     PasswordResetRequest,
     PasswordResetToken,
     VerifyResetCode,
@@ -19,6 +21,7 @@ from app.domain.entities import (
 
 __all__ = [
     "InvalidResetCodeError",
+    "InvalidResetTokenError",
     "PasswordResetService",
     "PasswordResetTokenRepository",
     "TooManyPasswordResetRequestsError",
@@ -32,6 +35,7 @@ request_timestamps_lock = Lock()
 request_limit = 3
 request_window_seconds = 15 * 60
 max_code_attempts = 5
+RESET_TOKEN_SCOPE = "password_reset"
 
 
 class PasswordResetTokenRepository(Protocol):
@@ -47,6 +51,16 @@ class PasswordResetTokenRepository(Protocol):
 
     def mark_verified(self, token_id: UUID, verified_at: datetime) -> None: ...
 
+    def get_by_id(self, token_id: UUID) -> PasswordResetToken | None: ...
+
+    def consume_token_and_update_password(
+        self,
+        token_id: UUID,
+        user_id: UUID,
+        new_password_hash: str,
+        changed_at: datetime,
+    ) -> bool: ...
+
 
 class TooManyPasswordResetRequestsError(Exception):
     """Raised when an email exceeds the password reset request limit."""
@@ -60,9 +74,20 @@ class TooManyResetCodeAttemptsError(Exception):
     """Raised when a token exceeded the wrong-code attempt limit."""
 
 
+class InvalidResetTokenError(Exception):
+    """Raised when a reset token is forged, expired, already used or unverified."""
+
+
 class PasswordResetService:
-    def __init__(self, repository: PasswordResetTokenRepository) -> None:
+    def __init__(
+        self,
+        repository: PasswordResetTokenRepository,
+        jwt_secret_key: str,
+        jwt_algorithm: str,
+    ) -> None:
         self.repository = repository
+        self.jwt_secret_key = jwt_secret_key
+        self.jwt_algorithm = jwt_algorithm
 
     def request_password_reset(self, request: PasswordResetRequest) -> None:
         _enforce_request_limit(request.email)
@@ -103,6 +128,36 @@ class PasswordResetService:
 
         self.repository.mark_verified(token.token_id, now)
         return replace(token, verified_at=now)
+
+    def confirm_password_reset(self, confirmation: PasswordResetConfirmation) -> None:
+        token_id = self._decode_reset_token(confirmation.reset_token)
+        token = self.repository.get_by_id(token_id)
+        if token is None or token.verified_at is None or token.used_at is not None:
+            raise InvalidResetTokenError
+        changed_at = datetime.now(UTC)
+        updated = self.repository.consume_token_and_update_password(
+            token.token_id,
+            token.user_id,
+            password_hash.hash(confirmation.new_password),
+            changed_at,
+        )
+        if not updated:
+            raise InvalidResetTokenError
+
+    def _decode_reset_token(self, value: str) -> UUID:
+        try:
+            payload = jwt.decode(
+                value,
+                self.jwt_secret_key,
+                algorithms=[self.jwt_algorithm],
+                options={"require": ["exp", "scope", "token_id"]},
+            )
+            token_id = payload["token_id"]
+            if payload["scope"] != RESET_TOKEN_SCOPE or not isinstance(token_id, str):
+                raise InvalidResetTokenError
+            return UUID(token_id)
+        except (jwt.InvalidTokenError, ValueError) as error:
+            raise InvalidResetTokenError from error
 
 
 def _as_utc(value: datetime) -> datetime:

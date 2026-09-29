@@ -3,11 +3,18 @@ from datetime import datetime
 from uuid import UUID
 
 __all__ = [
+    "PasswordResetConfirmation",
     "PasswordResetRequest",
     "PasswordResetToken",
     "ResetToken",
     "VerifyResetCode",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class PasswordResetConfirmation:
+    reset_token: str
+    new_password: str
 
 
 @dataclass(frozen=True, slots=True)

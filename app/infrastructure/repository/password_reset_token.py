@@ -75,6 +75,40 @@ class SqlAlchemyPasswordResetTokenRepository:
         )
         self.db.commit()
 
+    def get_by_id(self, token_id: UUID) -> PasswordResetToken | None:
+        model = self.db.get(PasswordResetTokenModel, token_id)
+        return self._to_entity(model) if model is not None else None
+
+    def consume_token_and_update_password(
+        self,
+        token_id: UUID,
+        user_id: UUID,
+        new_password_hash: str,
+        changed_at: datetime,
+    ) -> bool:
+        consumed = self.db.execute(
+            update(PasswordResetTokenModel)
+            .where(
+                PasswordResetTokenModel.token_id == token_id,
+                PasswordResetTokenModel.verified_at.is_not(None),
+                PasswordResetTokenModel.used_at.is_(None),
+            )
+            .values(used_at=changed_at)
+        )
+        updated = self.db.execute(
+            update(UserModel)
+            .where(UserModel.user_id == user_id, UserModel.deleted_at.is_(None))
+            .values(
+                password_hash=new_password_hash,
+                password_changed_at=changed_at,
+            )
+        )
+        if consumed.rowcount != 1 or updated.rowcount != 1:
+            self.db.rollback()
+            return False
+        self.db.commit()
+        return True
+
     @staticmethod
     def _to_entity(model: PasswordResetTokenModel) -> PasswordResetToken:
         return PasswordResetToken(
