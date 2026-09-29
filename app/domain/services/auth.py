@@ -1,13 +1,14 @@
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import jwt
 from pwdlib import PasswordHash
 
-from app.domain.entities import AccessToken, User
+from app.domain.entities import AccessToken, PasswordResetToken, ResetToken, User
 
 password_hash = PasswordHash.recommended()
+PASSWORD_RESET_SCOPE = "password_reset"
 
 
 class UserRepository(Protocol):
@@ -39,11 +40,13 @@ class AuthService:
         jwt_secret_key: str,
         jwt_algorithm: str,
         access_token_expire_minutes: int,
+        password_reset_token_expire_minutes: int = 10,
     ) -> None:
         self.repository = repository
         self.jwt_secret_key = jwt_secret_key
         self.jwt_algorithm = jwt_algorithm
         self.access_token_expire_minutes = access_token_expire_minutes
+        self.password_reset_token_expire_minutes = password_reset_token_expire_minutes
 
     def authenticate(self, email: str, password: str) -> User:
         user = self.repository.get_by_email(email)
@@ -68,6 +71,26 @@ class AuthService:
         )
         return AccessToken(value=encoded_jwt)
 
+    def create_reset_token(self, token: PasswordResetToken) -> ResetToken:
+        issued_at = datetime.now(UTC)
+        expires_in = timedelta(minutes=self.password_reset_token_expire_minutes)
+        # No "sub": this token must never resolve to a session user.
+        encoded_jwt = jwt.encode(
+            {
+                "scope": PASSWORD_RESET_SCOPE,
+                "token_id": str(token.token_id),
+                "jti": str(uuid4()),
+                "iat": issued_at,
+                "exp": issued_at + expires_in,
+            },
+            self.jwt_secret_key,
+            algorithm=self.jwt_algorithm,
+        )
+        return ResetToken(
+            value=encoded_jwt,
+            expires_in=int(expires_in.total_seconds()),
+        )
+
     def get_user_from_token(self, token: str) -> User:
         try:
             payload = jwt.decode(
@@ -75,6 +98,8 @@ class AuthService:
                 self.jwt_secret_key,
                 algorithms=[self.jwt_algorithm],
             )
+            if payload.get("scope") is not None:
+                raise InvalidAccessTokenError
             subject = payload.get("sub")
             if not isinstance(subject, str):
                 raise InvalidAccessTokenError
