@@ -1,4 +1,5 @@
 import logging
+from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
@@ -8,24 +9,41 @@ from app.domain.services.push import NullPushSender, PushSender
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, slots=True)
+class PushContext:
+    """Ids the push needs that the caller of dispatch() does not always have."""
+
+    event_id: UUID | None = None
+    sender_id: UUID | None = None
+
+
 class NotificationRepository(Protocol):
     def notify_connection(
         self,
         recipient_id: UUID,
         connection_id: UUID,
         type: NotificationTypeEnum,
-    ) -> None: ...
+    ) -> UUID: ...
 
     def notify_participant(
         self,
         recipient_id: UUID,
         participant_id: UUID,
         type: NotificationTypeEnum,
-    ) -> None: ...
+    ) -> UUID: ...
 
-    def notify_event_cancelled(self, recipient_id: UUID, event_id: UUID) -> None: ...
+    def notify_event_cancelled(self, recipient_id: UUID, event_id: UUID) -> UUID: ...
 
-    def notify_event_updated(self, recipient_id: UUID, event_id: UUID) -> None: ...
+    def notify_event_updated(self, recipient_id: UUID, event_id: UUID) -> UUID: ...
+
+    def get_push_context(
+        self,
+        type: NotificationTypeEnum,
+        *,
+        connection_id: UUID | None = None,
+        participant_id: UUID | None = None,
+        event_id: UUID | None = None,
+    ) -> PushContext: ...
 
 
 class DeviceTokenRepository(Protocol):
@@ -85,6 +103,10 @@ PUSH_COPY: dict[NotificationTypeEnum, tuple[str, str]] = {
         "Evento cancelado",
         "Um evento que você participa foi cancelado",
     ),
+    NotificationTypeEnum.EVENT_STARTING_SOON: (
+        "Evento começando",
+        "Um evento que você participa começa em breve",
+    ),
 }
 
 
@@ -121,8 +143,12 @@ class NotificationDispatcher:
                     raise ValueError(
                         "connection_id required for connection notifications"
                     )
-                self.repository.notify_connection(recipient_id, connection_id, type)
-                self._send_push(recipient_id, type, connection_id=connection_id)
+                notification_id = self.repository.notify_connection(
+                    recipient_id, connection_id, type
+                )
+                self._send_push(
+                    recipient_id, type, notification_id, connection_id=connection_id
+                )
 
             elif type in (
                 NotificationTypeEnum.EVENT_PARTICIPATION_REQUEST,
@@ -131,29 +157,38 @@ class NotificationDispatcher:
                 NotificationTypeEnum.EVENT_PARTICIPANT_REMOVED,
                 NotificationTypeEnum.EVENT_PARTICIPANT_CANCELLED,
                 NotificationTypeEnum.EVENT_PARTICIPANT_JOINED,
+                NotificationTypeEnum.EVENT_STARTING_SOON,
             ):
                 if participant_id is None:
                     raise ValueError(
                         "participant_id required for participant notifications"
                     )
-                self.repository.notify_participant(recipient_id, participant_id, type)
-                self._send_push(recipient_id, type, participant_id=participant_id)
+                notification_id = self.repository.notify_participant(
+                    recipient_id, participant_id, type
+                )
+                self._send_push(
+                    recipient_id, type, notification_id, participant_id=participant_id
+                )
 
             elif type is NotificationTypeEnum.EVENT_CANCELLED:
                 if event_id is None:
                     raise ValueError(
                         "event_id required for event_cancelled notifications"
                     )
-                self.repository.notify_event_cancelled(recipient_id, event_id)
-                self._send_push(recipient_id, type, event_id=event_id)
+                notification_id = self.repository.notify_event_cancelled(
+                    recipient_id, event_id
+                )
+                self._send_push(recipient_id, type, notification_id, event_id=event_id)
 
             elif type is NotificationTypeEnum.EVENT_UPDATED:
                 if event_id is None:
                     raise ValueError(
                         "event_id required for event_updated notifications"
                     )
-                self.repository.notify_event_updated(recipient_id, event_id)
-                self._send_push(recipient_id, type, event_id=event_id)
+                notification_id = self.repository.notify_event_updated(
+                    recipient_id, event_id
+                )
+                self._send_push(recipient_id, type, notification_id, event_id=event_id)
 
             else:
                 logger.warning("Unhandled notification type: %s", type)
@@ -165,6 +200,7 @@ class NotificationDispatcher:
         self,
         recipient_id: UUID,
         type: NotificationTypeEnum,
+        notification_id: UUID,
         *,
         connection_id: UUID | None = None,
         participant_id: UUID | None = None,
@@ -174,14 +210,24 @@ class NotificationDispatcher:
         if not tokens:
             return
 
+        context = self.repository.get_push_context(
+            type,
+            connection_id=connection_id,
+            participant_id=participant_id,
+            event_id=event_id,
+        )
+        event_id = event_id or context.event_id
+
         title, body = PUSH_COPY[type]
-        data = {"type": type.value}
+        data = {"type": type.value, "notification_id": str(notification_id)}
         if connection_id is not None:
             data["connection_id"] = str(connection_id)
         if participant_id is not None:
             data["participant_id"] = str(participant_id)
         if event_id is not None:
             data["event_id"] = str(event_id)
+        if context.sender_id is not None:
+            data["user_id"] = str(context.sender_id)
 
         rejected_tokens = self.push_sender.send(tokens, title, body, data)
         if rejected_tokens:

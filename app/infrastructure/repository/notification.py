@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.domain.entities import Notification
 from app.domain.enums import NotificationTypeEnum
+from app.domain.services.notification_dispatcher import PushContext
 from app.infrastructure.repository.models import (
     ConnectionNotificationModel,
     EventCancelledNotificationModel,
@@ -24,6 +25,14 @@ from app.infrastructure.repository.models.user_connection_model import (
     UserConnectionModel,
 )
 from app.infrastructure.repository.models.user_model import UserModel
+
+_ORGANIZER_SENDER_TYPES = frozenset(
+    {
+        NotificationTypeEnum.EVENT_REQUEST_APPROVED,
+        NotificationTypeEnum.EVENT_REQUEST_REJECTED,
+        NotificationTypeEnum.EVENT_PARTICIPANT_REMOVED,
+    }
+)
 
 
 class SqlAlchemyNotificationRepository:
@@ -73,7 +82,7 @@ class SqlAlchemyNotificationRepository:
         recipient_id: UUID,
         connection_id: UUID,
         type: NotificationTypeEnum,
-    ) -> None:
+    ) -> UUID:
         notification = NotificationModel(user_id=recipient_id, type=type)
         self.db.add(notification)
         self.db.flush()
@@ -83,13 +92,14 @@ class SqlAlchemyNotificationRepository:
                 connection_id=connection_id,
             )
         )
+        return notification.notification_id
 
     def notify_participant(
         self,
         recipient_id: UUID,
         participant_id: UUID,
         type: NotificationTypeEnum,
-    ) -> None:
+    ) -> UUID:
         notification = NotificationModel(user_id=recipient_id, type=type)
         self.db.add(notification)
         self.db.flush()
@@ -99,8 +109,9 @@ class SqlAlchemyNotificationRepository:
                 participant_id=participant_id,
             )
         )
+        return notification.notification_id
 
-    def notify_event_cancelled(self, recipient_id: UUID, event_id: UUID) -> None:
+    def notify_event_cancelled(self, recipient_id: UUID, event_id: UUID) -> UUID:
         notification = NotificationModel(
             user_id=recipient_id, type=NotificationTypeEnum.EVENT_CANCELLED
         )
@@ -112,8 +123,9 @@ class SqlAlchemyNotificationRepository:
                 event_id=event_id,
             )
         )
+        return notification.notification_id
 
-    def notify_event_updated(self, recipient_id: UUID, event_id: UUID) -> None:
+    def notify_event_updated(self, recipient_id: UUID, event_id: UUID) -> UUID:
         notification = NotificationModel(
             user_id=recipient_id, type=NotificationTypeEnum.EVENT_UPDATED
         )
@@ -125,6 +137,49 @@ class SqlAlchemyNotificationRepository:
                 event_id=event_id,
             )
         )
+        return notification.notification_id
+
+    def get_push_context(
+        self,
+        type: NotificationTypeEnum,
+        *,
+        connection_id: UUID | None = None,
+        participant_id: UUID | None = None,
+        event_id: UUID | None = None,
+    ) -> PushContext:
+        """Resolve the event and the user who triggered the notification."""
+        if connection_id is not None:
+            connection = self.db.get(UserConnectionModel, connection_id)
+            if connection is None:
+                return PushContext()
+            sender_id = (
+                connection.requester_id
+                if type is NotificationTypeEnum.CONNECTION_REQUEST
+                else connection.receiver_id
+            )
+            return PushContext(sender_id=sender_id)
+
+        if participant_id is not None:
+            participant = self.db.get(EventParticipantModel, participant_id)
+            if participant is None:
+                return PushContext()
+            if type is NotificationTypeEnum.EVENT_STARTING_SOON:
+                return PushContext(event_id=participant.event_id)
+            if type in _ORGANIZER_SENDER_TYPES:
+                event = self.db.get(EventModel, participant.event_id)
+                sender_id = event.event_creator_id if event is not None else None
+            else:
+                sender_id = participant.user_id
+            return PushContext(event_id=participant.event_id, sender_id=sender_id)
+
+        if event_id is not None:
+            event = self.db.get(EventModel, event_id)
+            return PushContext(
+                event_id=event_id,
+                sender_id=event.event_creator_id if event is not None else None,
+            )
+
+        return PushContext()
 
     def mark_all_as_read(self, user_id: UUID) -> None:
         self.db.execute(
