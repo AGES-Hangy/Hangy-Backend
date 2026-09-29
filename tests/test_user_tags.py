@@ -26,6 +26,8 @@ ZEBRA_ID = UUID("00000006-0000-4000-8000-000000000006")
 ABACATE_ID = UUID("00000007-0000-4000-8000-000000000007")
 
 USER_EMAIL = "felipe@hangy.com"
+USER_PASSWORD = "strong-password"
+TERMS_VERSION = "2026-08-01"
 
 
 @pytest.fixture
@@ -72,15 +74,25 @@ def client() -> Iterator[TestClient]:
 
 def register_and_authenticate(client: TestClient) -> tuple[str, str]:
     register_response = client.post(
-        "/register",
-        json={"email": USER_EMAIL, "password": "strong-password"},
+        "/auth/register",
+        json={
+            "user_type": "PERSONAL",
+            "email": USER_EMAIL,
+            "password": USER_PASSWORD,
+            "name": "Felipe",
+            "cpf": "52998224725",
+            "date_of_birth": "2000-01-01",
+            "state": "RS",
+            "city": "Porto Alegre",
+            "accepted_terms_version": TERMS_VERSION,
+        },
     )
     assert register_response.status_code == 201
-    user_id = register_response.json()["user_id"]
+    user_id = register_response.json()["user"]["id"]
 
     login_response = client.post(
-        "/login",
-        data={"username": USER_EMAIL, "password": "strong-password"},
+        "/auth/login",
+        json={"email": USER_EMAIL, "password": USER_PASSWORD},
     )
     assert login_response.status_code == 200
     token = login_response.json()["access_token"]
