@@ -30,6 +30,7 @@ from app.domain.services import (
     InvalidEventCoordinatesError,
     InvalidParticipantStatusTransitionError,
     NotEventOrganizerError,
+    NotificationDispatcher,
     TooManyEventTagsError,
 )
 from app.domain.services.event_participant import (
@@ -59,7 +60,9 @@ from app.domain.services.participation import (
     InviteOnlyEventError,
     OrganizerCannotJoinError,
     ParticipationService,
+    RemovedFromEventError,
     RequestAlreadyPendingError,
+    RequestRejectedError,
 )
 from app.domain.services.participation import (
     EventAlreadyFinishedError as ParticipationAlreadyFinishedError,
@@ -70,7 +73,9 @@ from app.domain.services.participation import (
 from app.domain.services.participation import (
     EventNotFoundError as ParticipationEventNotFoundError,
 )
+from app.infrastructure.push.expo_push_sender import expo_push_sender
 from app.infrastructure.repository import get_db
+from app.infrastructure.repository.device import SqlAlchemyUserDeviceRepository
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
 from app.infrastructure.repository.event_details import SqlAlchemyEventDetailsRepository
 from app.infrastructure.repository.event_invite_link import (
@@ -132,10 +137,21 @@ INVITE_LINK_NOT_FOUND_EXAMPLE = {"detail": "Event not found"}
 INVITE_LINK_CONFLICT_EXAMPLE = {"detail": "Event is not invite only"}
 
 
-def get_events_service(db: Annotated[Session, Depends(get_db)]) -> EventsService:
-    return EventsService(
-        repository=SqlAlchemyEventRepository(db, SqlAlchemyNotificationRepository(db))
+def get_notification_dispatcher(
+    db: Annotated[Session, Depends(get_db)],
+) -> NotificationDispatcher:
+    return NotificationDispatcher(
+        repository=SqlAlchemyNotificationRepository(db),
+        device_repository=SqlAlchemyUserDeviceRepository(db),
+        push_sender=expo_push_sender,
     )
+
+
+def get_events_service(
+    dispatcher: Annotated[NotificationDispatcher, Depends(get_notification_dispatcher)],
+    db: Annotated[Session, Depends(get_db)],
+) -> EventsService:
+    return EventsService(repository=SqlAlchemyEventRepository(db, dispatcher))
 
 
 def get_event_details_service(
@@ -145,10 +161,11 @@ def get_event_details_service(
 
 
 def get_event_share_service(
+    dispatcher: Annotated[NotificationDispatcher, Depends(get_notification_dispatcher)],
     db: Annotated[Session, Depends(get_db)],
 ) -> EventShareService:
     return EventShareService(
-        repository=SqlAlchemyEventRepository(db, SqlAlchemyNotificationRepository(db)),
+        repository=SqlAlchemyEventRepository(db, dispatcher),
         frontend_base_url=settings.frontend_base_url,
     )
 
@@ -168,12 +185,11 @@ def get_event_participants_service(
 
 
 def get_participation_service(
+    dispatcher: Annotated[NotificationDispatcher, Depends(get_notification_dispatcher)],
     db: Annotated[Session, Depends(get_db)],
 ) -> ParticipationService:
     return ParticipationService(
-        repository=SqlAlchemyParticipationRepository(
-            db, SqlAlchemyNotificationRepository(db)
-        )
+        repository=SqlAlchemyParticipationRepository(db, dispatcher)
     )
 
 
@@ -424,9 +440,27 @@ def create_invite_link(
             },
         },
         status.HTTP_403_FORBIDDEN: {
-            "description": "Evento e INVITE_ONLY; este endpoint nao o atende.",
+            "description": (
+                "Evento e INVITE_ONLY, ou o usuario foi rejeitado/removido "
+                "deste evento e nao pode solicitar novamente."
+            ),
             "content": {
-                "application/json": {"example": {"detail": "Event is invite-only"}}
+                "application/json": {
+                    "examples": {
+                        "invite_only": {
+                            "summary": "Evento por convite",
+                            "value": {"detail": "Event is invite-only"},
+                        },
+                        "rejected": {
+                            "summary": "Solicitacao ja rejeitada",
+                            "value": {"detail": "Request was rejected"},
+                        },
+                        "removed": {
+                            "summary": "Removido do evento",
+                            "value": {"detail": "Removed from this event"},
+                        },
+                    }
+                }
             },
         },
         status.HTTP_404_NOT_FOUND: {
@@ -510,6 +544,16 @@ def create_event_participation(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Event creator cannot join their own event",
+        ) from error
+    except RequestRejectedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Request was rejected",
+        ) from error
+    except RemovedFromEventError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Removed from this event",
         ) from error
     return EventParticipationAssembler.to_dto(participant)
 

@@ -1,5 +1,12 @@
 from app.domain.entities import Tag
-from app.presentation.dtos import TagLeafOutput, TagNodeOutput, TagOutput
+from app.presentation.dtos import (
+    TagLeafOutput,
+    TagNodeOutput,
+    TagOutput,
+    TagParentOutput,
+    UserTagOutput,
+    UserTagsOutput,
+)
 
 
 class TagAssembler:
@@ -35,3 +42,16 @@ class TagAssembler:
                 for child in tag.children
             ],
         )
+
+    @staticmethod
+    def to_user_tags_dto(tags: list[Tag]) -> UserTagsOutput:
+        return UserTagsOutput(tags=[TagAssembler._to_user_tag_dto(tag) for tag in tags])
+
+    @staticmethod
+    def _to_user_tag_dto(tag: Tag) -> UserTagOutput:
+        parent = (
+            TagParentOutput(id=tag.parent.tag_id, name=tag.parent.tag_name)
+            if tag.parent is not None
+            else None
+        )
+        return UserTagOutput(id=tag.tag_id, name=tag.tag_name, parent=parent)
