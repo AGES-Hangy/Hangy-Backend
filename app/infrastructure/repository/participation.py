@@ -6,8 +6,8 @@ from sqlalchemy.orm import Session
 
 from app.domain.entities import Event, EventParticipant
 from app.domain.enums import EventParticipantStatusEnum, NotificationTypeEnum
+from app.domain.services.notification_dispatcher import NotificationDispatcher
 from app.infrastructure.repository.models import EventModel, EventParticipantModel
-from app.infrastructure.repository.notification import SqlAlchemyNotificationRepository
 
 NOTIFICATION_TYPE_BY_STATUS: dict[EventParticipantStatusEnum, NotificationTypeEnum] = {
     EventParticipantStatusEnum.CONFIRMED: (
@@ -20,11 +20,9 @@ NOTIFICATION_TYPE_BY_STATUS: dict[EventParticipantStatusEnum, NotificationTypeEn
 
 
 class SqlAlchemyParticipationRepository:
-    def __init__(
-        self, db: Session, notification_repo: SqlAlchemyNotificationRepository
-    ) -> None:
+    def __init__(self, db: Session, dispatcher: NotificationDispatcher) -> None:
         self.db = db
-        self.notification_repo = notification_repo
+        self.dispatcher = dispatcher
 
     def get_event_for_update(self, event_id: UUID) -> Event | None:
         from app.infrastructure.repository.event import SqlAlchemyEventRepository
@@ -91,12 +89,12 @@ class SqlAlchemyParticipationRepository:
             self.db.add(model)
             self.db.flush()
 
-        if organizer_id != user_id:
-            self.notification_repo.notify_participant(
-                recipient_id=organizer_id,
-                participant_id=model.participant_id,
-                type=NOTIFICATION_TYPE_BY_STATUS[status],
-            )
+        self.dispatcher.dispatch(
+            NOTIFICATION_TYPE_BY_STATUS[status],
+            recipient_id=organizer_id,
+            actor_id=user_id,
+            participant_id=model.participant_id,
+        )
 
         self.db.commit()
         self.db.refresh(model)

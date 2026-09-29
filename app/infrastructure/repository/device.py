@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.domain.entities import NewUserDevice, UserDevice
@@ -41,6 +41,23 @@ class SqlAlchemyUserDeviceRepository:
         if model is not None:
             self.db.delete(model)
             self.db.commit()
+
+    def list_tokens_by_user(self, user_id: UUID) -> list[str]:
+        return list(
+            self.db.scalars(
+                select(UserDeviceModel.device_token).where(
+                    UserDeviceModel.user_id == user_id
+                )
+            ).all()
+        )
+
+    def delete_by_tokens(self, tokens: list[str]) -> None:
+        if not tokens:
+            return
+        self.db.execute(
+            delete(UserDeviceModel).where(UserDeviceModel.device_token.in_(tokens))
+        )
+        self.db.commit()
 
     @staticmethod
     def _to_entity(model: UserDeviceModel) -> UserDevice:
