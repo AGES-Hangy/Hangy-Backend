@@ -15,6 +15,7 @@ from app.domain.enums import (
     EventParticipantStatusEnum,
     EventPrivacyEnum,
     EventStatusEnum,
+    NotificationTypeEnum,
     UserRoleEnum,
     UserTypeEnum,
 )
@@ -22,6 +23,7 @@ from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import (
     EventModel,
     EventParticipantModel,
+    EventParticipantNotificationModel,
     NotificationModel,
     UserModel,
 )
@@ -221,6 +223,52 @@ def test_cancel_persists_same_row_without_notifications(
     )
     assert page.status_code == 200
     assert str(PENDING_PARTICIPANT_ID) not in page.text
+
+
+def test_cancelling_a_pending_request_deletes_the_organizers_notification(client):
+    http, sessions = client
+    with sessions() as db:
+        db.get(EventModel, EVENT_ID).event_privacy = EventPrivacyEnum.PRIVATE
+        db.get(
+            EventParticipantModel, PENDING_PARTICIPANT_ID
+        ).status = EventParticipantStatusEnum.PENDING
+        request_ids = {}
+        for participant_id in (PENDING_PARTICIPANT_ID, CONFIRMED_PARTICIPANT_ID):
+            notification = NotificationModel(
+                user_id=ORGANIZER_ID,
+                type=NotificationTypeEnum.EVENT_PARTICIPATION_REQUEST,
+            )
+            db.add(notification)
+            db.flush()
+            db.add(
+                EventParticipantNotificationModel(
+                    notification_id=notification.notification_id,
+                    participant_id=participant_id,
+                )
+            )
+            request_ids[participant_id] = notification.notification_id
+        db.commit()
+
+    response = http.delete(
+        f"/events/{EVENT_ID}/participation", headers=auth_header(PARTICIPANT_USER_ID)
+    )
+
+    assert response.status_code == 204
+    with sessions() as db:
+        assert db.get(NotificationModel, request_ids[PENDING_PARTICIPANT_ID]) is None
+        assert (
+            db.get(
+                EventParticipantNotificationModel, request_ids[PENDING_PARTICIPANT_ID]
+            )
+            is None
+        )
+        assert (
+            db.get(NotificationModel, request_ids[CONFIRMED_PARTICIPANT_ID]) is not None
+        )
+    listing = http.get("/notifications", headers=auth_header(ORGANIZER_ID))
+    ids = {item["notification_id"] for item in listing.json()["items"]}
+    assert str(request_ids[PENDING_PARTICIPANT_ID]) not in ids
+    assert str(request_ids[CONFIRMED_PARTICIPANT_ID]) in ids
 
 
 @pytest.mark.parametrize("finished_status,past_end", [(True, False), (False, True)])

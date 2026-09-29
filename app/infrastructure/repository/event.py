@@ -19,6 +19,9 @@ from app.infrastructure.repository.models import (
     EventParticipantModel,
     TagModel,
 )
+from app.infrastructure.repository.notification import (
+    delete_participation_request_notifications,
+)
 
 
 class SqlAlchemyEventRepository:
@@ -179,6 +182,12 @@ class SqlAlchemyEventRepository:
                     raise EventIsFullError
 
         participant_model.status = new_status
+
+        if new_status in (
+            EventParticipantStatusEnum.CONFIRMED,
+            EventParticipantStatusEnum.REJECTED,
+        ):
+            delete_participation_request_notifications(self.db, participant_id)
 
         self.dispatcher.dispatch(
             notification_type,

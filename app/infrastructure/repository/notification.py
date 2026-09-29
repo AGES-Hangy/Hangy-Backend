@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.domain.entities import Notification
@@ -181,6 +181,46 @@ class SqlAlchemyNotificationRepository:
 
         rows = self.db.scalars(stmt).unique().all()
         return [self._to_entity(row, include_payload=True) for row in rows]
+
+
+def delete_participation_request_notifications(
+    db: Session, participant_id: UUID
+) -> None:
+    """Drop the organizer's "wants to join" notification once it is settled.
+
+    The notification list is what shows pending requests, so leaving it behind
+    would keep offering a request that no longer exists. Runs in the caller's
+    transaction, which is the one that commits.
+    """
+    request_ids = list(
+        db.scalars(
+            select(NotificationModel.notification_id)
+            .join(
+                EventParticipantNotificationModel,
+                EventParticipantNotificationModel.notification_id
+                == NotificationModel.notification_id,
+            )
+            .where(
+                EventParticipantNotificationModel.participant_id == participant_id,
+                NotificationModel.type
+                == NotificationTypeEnum.EVENT_PARTICIPATION_REQUEST,
+            )
+        )
+    )
+    if not request_ids:
+        return
+    # The detail rows go first: they cascade in Postgres, but not every backend
+    # enforces foreign keys.
+    db.execute(
+        delete(EventParticipantNotificationModel).where(
+            EventParticipantNotificationModel.notification_id.in_(request_ids)
+        )
+    )
+    db.execute(
+        delete(NotificationModel).where(
+            NotificationModel.notification_id.in_(request_ids)
+        )
+    )
 
 
 def _build_payload(model: NotificationModel) -> dict:
