@@ -47,11 +47,15 @@ class SqlAlchemyTagRepository:
         return [self._to_entity(model) for model in models]
 
     @staticmethod
-    def _to_entity(model: TagModel) -> Tag:
+    def _to_entity(model: TagModel, *, include_parent: bool = False) -> Tag:
+        parent = None
+        if include_parent and model.parent is not None:
+            parent = Tag(tag_id=model.parent.tag_id, tag_name=model.parent.tag_name)
         return Tag(
             tag_id=model.tag_id,
             tag_name=model.tag_name,
             tag_parent_id=model.tag_parent_id,
+            parent=parent,
         )
 
     @staticmethod
