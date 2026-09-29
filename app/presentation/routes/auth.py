@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Security, status
+from fastapi import APIRouter, Depends, HTTPException, Response, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -21,15 +21,20 @@ from app.domain.services import (
     InvalidCredentialsError,
     InvalidDeviceTokenError,
     MinimumAgeError,
+    PasswordResetService,
     RegisterBusinessService,
     RegisterPersonalService,
     RegisterService,
+    TooManyPasswordResetRequestsError,
 )
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.business_profile import (
     SqlAlchemyBusinessRegistrationRepository,
 )
 from app.infrastructure.repository.device import SqlAlchemyUserDeviceRepository
+from app.infrastructure.repository.password_reset_token import (
+    SqlAlchemyPasswordResetTokenRepository,
+)
 from app.infrastructure.repository.person_profile import (
     SqlAlchemyPersonRegistrationRepository,
 )
@@ -37,12 +42,17 @@ from app.infrastructure.repository.user import SqlAlchemyUserRepository
 from app.presentation.dtos import (
     AuthOutput,
     LoginRequest,
+    PasswordResetRequestInput,
     RegisterDeviceInput,
     RegisterDeviceOutput,
     RegisterRequest,
     UserOutput,
 )
-from app.presentation.mappers import DeviceMapper, UserMapper
+from app.presentation.mappers import (
+    DeviceMapper,
+    PasswordResetMapper,
+    UserMapper,
+)
 
 router = APIRouter(tags=["Authentication"])
 bearer_scheme = HTTPBearer(
@@ -70,6 +80,12 @@ def get_register_service(db: Annotated[Session, Depends(get_db)]) -> RegisterSer
             SqlAlchemyBusinessRegistrationRepository(db)
         ),
     )
+
+
+def get_password_reset_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> PasswordResetService:
+    return PasswordResetService(SqlAlchemyPasswordResetTokenRepository(db))
 
 
 credentials_exception = HTTPException(
@@ -165,6 +181,28 @@ def login(
 
     token = auth_service.create_access_token(user)
     return AuthAssembler.to_auth_dto(user, token)
+
+
+@router.post(
+    "/auth/password-reset/request",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_class=Response,
+)
+def request_password_reset(
+    payload: PasswordResetRequestInput,
+    password_reset_service: Annotated[
+        PasswordResetService, Depends(get_password_reset_service)
+    ],
+) -> Response:
+    request = PasswordResetMapper.to_request(payload)
+    try:
+        password_reset_service.request_password_reset(request)
+    except TooManyPasswordResetRequestsError as error:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many reset requests",
+        ) from error
+    return Response(status_code=status.HTTP_202_ACCEPTED)
 
 
 def get_current_user(
