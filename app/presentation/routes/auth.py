@@ -25,6 +25,7 @@ from app.domain.services import (
     InvalidCredentialsError,
     InvalidDeviceTokenError,
     InvalidResetCodeError,
+    InvalidResetTokenError,
     MinimumAgeError,
     PasswordResetService,
     RegisterBusinessService,
@@ -48,6 +49,7 @@ from app.infrastructure.repository.user import SqlAlchemyUserRepository
 from app.presentation.dtos import (
     AuthOutput,
     LoginRequest,
+    PasswordResetConfirmInput,
     PasswordResetRequestInput,
     RegisterDeviceInput,
     RegisterDeviceOutput,
@@ -96,7 +98,11 @@ def get_register_service(db: Annotated[Session, Depends(get_db)]) -> RegisterSer
 def get_password_reset_service(
     db: Annotated[Session, Depends(get_db)],
 ) -> PasswordResetService:
-    return PasswordResetService(SqlAlchemyPasswordResetTokenRepository(db))
+    return PasswordResetService(
+        repository=SqlAlchemyPasswordResetTokenRepository(db),
+        jwt_secret_key=settings.jwt_secret_key,
+        jwt_algorithm=settings.jwt_algorithm,
+    )
 
 
 credentials_exception = HTTPException(
@@ -244,6 +250,31 @@ def verify_password_reset_code(
 
     reset_token = auth_service.create_reset_token(token)
     return PasswordResetAssembler.to_verify_dto(reset_token)
+
+
+@router.post(
+    "/auth/password-reset/confirm",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    responses={
+        status.HTTP_400_BAD_REQUEST: {"description": "Invalid or expired reset token"}
+    },
+)
+def confirm_password_reset(
+    payload: PasswordResetConfirmInput,
+    password_reset_service: Annotated[
+        PasswordResetService, Depends(get_password_reset_service)
+    ],
+) -> Response:
+    confirmation = PasswordResetMapper.to_confirmation(payload)
+    try:
+        password_reset_service.confirm_password_reset(confirmation)
+    except InvalidResetTokenError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid or expired reset token",
+        ) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 def get_current_user(
