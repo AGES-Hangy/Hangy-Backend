@@ -1,7 +1,7 @@
 """create_password_reset_token
 
 Revision ID: 20260928_02
-Revises: 20260928_01
+Revises: 20260927_03
 Create Date: 2026-09-28 00:00:00.000000
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "20260928_02"
-down_revision: str | Sequence[str] | None = "20260928_01"
+down_revision: str | Sequence[str] | None = "20260927_03"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
