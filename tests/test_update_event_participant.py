@@ -230,6 +230,87 @@ def test_reject_pending_participant_returns_rejected_and_creates_notification(
         assert notification is not None
 
 
+def add_notification_for_participant(
+    db: Session,
+    type: NotificationTypeEnum,
+    participant_id: UUID,
+    user_id: UUID = ORGANIZER_ID,
+) -> UUID:
+    notification = NotificationModel(user_id=user_id, type=type)
+    db.add(notification)
+    db.flush()
+    db.add(
+        EventParticipantNotificationModel(
+            notification_id=notification.notification_id,
+            participant_id=participant_id,
+        )
+    )
+    db.commit()
+    return notification.notification_id
+
+
+@pytest.mark.parametrize("new_status", ["CONFIRMED", "REJECTED"])
+def test_answering_a_request_deletes_its_notification_for_the_organizer(
+    client: tuple[TestClient, sessionmaker[Session]],
+    new_status: str,
+) -> None:
+    test_client, session_factory = client
+    with session_factory() as db:
+        request_id = add_notification_for_participant(
+            db,
+            NotificationTypeEnum.EVENT_PARTICIPATION_REQUEST,
+            PENDING_PARTICIPANT_ID,
+        )
+        # Another participant's request, and another notification about the
+        # same participant, must survive.
+        other_request_id = add_notification_for_participant(
+            db,
+            NotificationTypeEnum.EVENT_PARTICIPATION_REQUEST,
+            CONFIRMED_PARTICIPANT_ID,
+        )
+        joined_id = add_notification_for_participant(
+            db, NotificationTypeEnum.EVENT_PARTICIPANT_JOINED, PENDING_PARTICIPANT_ID
+        )
+
+    response = test_client.patch(
+        f"/events/{EVENT_ID}/participants/{PENDING_PARTICIPANT_ID}",
+        json={"status": new_status},
+        headers=auth_header(ORGANIZER_ID),
+    )
+
+    assert response.status_code == 200
+    with session_factory() as db:
+        assert db.get(NotificationModel, request_id) is None
+        assert db.get(EventParticipantNotificationModel, request_id) is None
+        assert db.get(NotificationModel, other_request_id) is not None
+        assert db.get(NotificationModel, joined_id) is not None
+
+    listing = test_client.get("/notifications", headers=auth_header(ORGANIZER_ID))
+    ids = {item["notification_id"] for item in listing.json()["items"]}
+    assert str(request_id) not in ids
+    assert str(other_request_id) in ids
+
+
+def test_removing_a_participant_keeps_the_organizers_notifications(
+    client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    test_client, session_factory = client
+    with session_factory() as db:
+        joined_id = add_notification_for_participant(
+            db, NotificationTypeEnum.EVENT_PARTICIPANT_JOINED, CONFIRMED_PARTICIPANT_ID
+        )
+
+    response = test_client.patch(
+        f"/events/{EVENT_ID}/participants/{CONFIRMED_PARTICIPANT_ID}",
+        json={"status": "REMOVED"},
+        headers=auth_header(ORGANIZER_ID),
+    )
+
+    assert response.status_code == 200
+    with session_factory() as db:
+        assert db.get(NotificationModel, joined_id) is not None
+
+
 def test_remove_confirmed_participant_returns_removed_and_creates_notification(
     client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:

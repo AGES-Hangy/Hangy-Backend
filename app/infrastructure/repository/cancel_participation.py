@@ -8,6 +8,9 @@ from app.domain.entities import Event, EventParticipant
 from app.domain.enums import EventParticipantStatusEnum
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
 from app.infrastructure.repository.models import EventModel, EventParticipantModel
+from app.infrastructure.repository.notification import (
+    delete_participation_request_notifications,
+)
 
 __all__ = ["SqlAlchemyCancelParticipationRepository"]
 
@@ -50,6 +53,9 @@ class SqlAlchemyCancelParticipationRepository:
             raise ValueError("A participant validated by the service must exist")
         model.status = EventParticipantStatusEnum.CANCELLED
         model.updated_at = datetime.now(UTC)
+        # A request cancelled before the organizer answered is gone from their
+        # notification list too.
+        delete_participation_request_notifications(self.db, model.participant_id)
         # Keep the row and joined_at for history/rejoining; no notification.
         self.db.commit()
 
