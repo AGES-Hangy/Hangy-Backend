@@ -37,8 +37,8 @@ mock_provider "random" {
 
 variables {
   gitlab_project_path = "2026-2/2jk-4jk/hangy/hangy-backend"
-  frontend_base_url = "https://hangy.example"
-  api_allowed_cidrs = ["203.0.113.0/24"]
+  frontend_base_url   = "https://hangy.example"
+  api_allowed_cidrs   = ["203.0.113.0/24"]
 }
 
 run "secure_arm_stack" {
