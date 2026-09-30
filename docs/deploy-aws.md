@@ -117,11 +117,6 @@ do aplicativo `hangy://event/<id>` ou `hangy://invite/<token>`.
 O endereço público da API é separado e aparece no log do deploy; é esse
 endereço que o frontend usa para fazer requisições ao backend.
 
-Também não é necessário instalar ferramentas localmente, preencher um
-`terraform.tfvars`, executar Terraform no computador ou configurar manualmente
-`EC2_INSTANCE_ID`, `ECR_REPOSITORY` e ARNs. Esses identificadores passam diretamente
-dos outputs do Terraform para as etapas seguintes do mesmo job.
-
 ## 3. Executar o deploy
 
 Após configurar o runner e as variáveis, faça merge na `main` do GitHub.
