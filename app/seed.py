@@ -219,6 +219,17 @@ SEED_EVENTS = (
         confirmed_emails=("user@hangy.com",),
         pending_emails=("joao@hangy.com",),
     ),
+    # admin@hangy.com's own event, PRIVATE and with no participant at all: the
+    # empty ManageEvent state. Under "Esportes", so it also shows up (masked, as
+    # any PRIVATE event) in user@hangy.com's feed, with zero participants.
+    SeedEvent(
+        title="Confraternização da equipe",
+        location_name="Sede do Hangy",
+        tag_name="Futebol",
+        creator_email="admin@hangy.com",
+        starts_in_days=10,
+        privacy=EventPrivacyEnum.PRIVATE,
+    ),
     # Never visible: reachable only through its invite link.
     SeedEvent(
         title="Rachão fechado",

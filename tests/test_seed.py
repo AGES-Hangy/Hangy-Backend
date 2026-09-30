@@ -234,6 +234,8 @@ def test_seeded_feed_matches_the_documented_sample(
         ("Aniversário da Maria", 1, True),
         # Only the confirmed one counts: Ana cancelled and João is still pending.
         ("Corrida da Redenção", 1, True),
+        # admin@hangy.com's own PRIVATE event, with nobody in it.
+        ("Confraternização da equipe", 0, True),
     ]
     assert [item["title"] for item in sections[1]["items"]] == [
         "Show de rock no Opinião"
