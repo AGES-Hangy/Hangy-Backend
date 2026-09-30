@@ -56,6 +56,14 @@ class OrganizerCannotJoinError(Exception):
     """Raised when the event organizer tries to join their own event."""
 
 
+class RequestRejectedError(Exception):
+    """Raised when the user's previous request for this event was rejected."""
+
+
+class RemovedFromEventError(Exception):
+    """Raised when the user was removed from this event by the organizer."""
+
+
 class ParticipationService:
     def __init__(self, repository: ParticipationRepository) -> None:
         self.repository = repository
@@ -85,10 +93,14 @@ class ParticipationService:
                 raise RequestAlreadyPendingError
             if existing.status is EventParticipantStatusEnum.CONFIRMED:
                 raise AlreadyParticipatingError
-            # CANCELLED, REJECTED or REMOVED: falls through and reuses the
-            # same row via upsert_participation, per the UNIQUE(user_id,
-            # event_id) constraint - a brand new confirmation/request just
-            # updates it instead of inserting a new line.
+            if existing.status is EventParticipantStatusEnum.REJECTED:
+                raise RequestRejectedError
+            if existing.status is EventParticipantStatusEnum.REMOVED:
+                raise RemovedFromEventError
+            # CANCELLED: falls through and reuses the same row via
+            # upsert_participation, per the UNIQUE(user_id, event_id)
+            # constraint - a brand new confirmation/request just updates it
+            # instead of inserting a new line.
 
         # Capacity is checked the same way for a direct confirmation and for
         # a request: if there's no room left to eventually approve someone,

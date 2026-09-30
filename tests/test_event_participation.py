@@ -285,6 +285,46 @@ def test_confirm_after_cancel_reuses_same_row(
         assert str(rows[0].participant_id) == body["participant_id"]
 
 
+def test_rejected_request_cannot_be_retried(
+    participation_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = participation_client
+    organizer_id, user_id, event_id = uuid4(), uuid4(), uuid4()
+    with session_factory() as db:
+        _add_user(db, organizer_id, "Organizador")
+        _add_user(db, user_id, "Participante")
+        _add_event(db, event_id, organizer_id, EventPrivacyEnum.PRIVATE)
+        _add_participant(db, event_id, user_id, EventParticipantStatusEnum.REJECTED)
+        db.commit()
+
+    response = client.post(
+        f"/events/{event_id}/participation", headers=_authorization(user_id)
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Request was rejected"
+
+
+def test_removed_participant_cannot_rejoin(
+    participation_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = participation_client
+    organizer_id, user_id, event_id = uuid4(), uuid4(), uuid4()
+    with session_factory() as db:
+        _add_user(db, organizer_id, "Organizador")
+        _add_user(db, user_id, "Participante")
+        _add_event(db, event_id, organizer_id, EventPrivacyEnum.PUBLIC)
+        _add_participant(db, event_id, user_id, EventParticipantStatusEnum.REMOVED)
+        db.commit()
+
+    response = client.post(
+        f"/events/{event_id}/participation", headers=_authorization(user_id)
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Removed from this event"
+
+
 def test_finished_public_event_is_blocked(
     participation_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:

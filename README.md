@@ -82,11 +82,37 @@ de autorização sejam adicionadas:
 | `user@hangy.com`  | `user-password`  | PERSONAL | Futebol, Corrida, Rock |
 | `maria@hangy.com` | `maria-password` | PERSONAL | Samba                  |
 | `joao@hangy.com`  | `joao-password`  | PERSONAL | nenhum                 |
+| `ana@hangy.com`   | `ana-password`   | PERSONAL | nenhum                 |
+| `pedro@hangy.com` | `pedro-password` | PERSONAL | nenhum                 |
+| `carla@hangy.com` | `carla-password` | PERSONAL | nenhum                 |
+| `lucas@hangy.com` | `lucas-password` | PERSONAL | nenhum                 |
+| `bia@hangy.com`   | `bia-password`   | PERSONAL | nenhum                 |
 | `admin@hangy.com` | `admin-password` | BUSINESS | nenhum                 |
 
 O seed também cria o evento `Rachão fechado` como `INVITE_ONLY`. Para testar o
 aceite por link com `user@hangy.com`, use o token
 `seed-invite-racha-fechado`.
+
+Há também o evento `Confraternização da equipe`, `PRIVATE`, criado por
+`admin@hangy.com` e sem nenhum participante.
+
+O `user@hangy.com` recebe notificações dos 11 tipos, com cinco solicitações
+(Maria, João, Ana, Pedro e Carla) e duas aceitações de conexão (Lucas e Bia):
+10 não lidas, 6 lidas, já com o `payload` preenchido. O banco reflete o que cada
+uma diz: quem pediu para participar está `PENDING`, quem cancelou está
+`CANCELLED` (fora da lista de participantes), quem foi removido está `REMOVED`
+(e não consegue pedir de novo), e assim por diante. Cada par de usuários tem
+uma única conexão. O `created_at` é recalculado a partir
+do horário atual a cada execução do seed, de alguns minutos a 4 dias atrás. O
+estado de leitura só volta ao original para a notificação do `joao@hangy.com`
+descrita abaixo.
+
+Para testar `PATCH /notifications/{notification_id}/read`, use
+`joao@hangy.com`: a notificação `76331ed0-0a64-55c8-819a-35958e434add` é dele e
+volta a ficar não lida a cada execução do seed. A
+`d3bcd888-24d8-5fe0-a022-e0e5aae5920d` é da `maria@hangy.com` e serve para o
+caso `403`. A collection `postman/tid219_patch_notifications_read.postman_collection.json`
+percorre todos os cenários.
 
 As tags de exemplo seguem a hierarquia macro → micro usada pelo feed:
 `Esportes` (Futebol, Corrida), `Música` (Rock, Samba, Sertanejo),

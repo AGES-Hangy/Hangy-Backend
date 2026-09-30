@@ -117,7 +117,7 @@ class SqlAlchemyEventParticipantsRepository:
             raw = base64.urlsafe_b64decode(cursor.encode()).decode()
             joined_at_raw, participant_id_raw = raw.split("|", 1)
             return datetime.fromisoformat(joined_at_raw), UUID(participant_id_raw)
-        except ValueError, UnicodeDecodeError:
+        except (ValueError, UnicodeDecodeError):
             # A malformed cursor just restarts the listing from the beginning
             # instead of failing the request.
             return None, None

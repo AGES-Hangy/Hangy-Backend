@@ -203,6 +203,26 @@ def test_private_event_hides_participants_from_a_non_participant(
     }
 
 
+def test_private_event_allows_cancelling_a_pending_request(
+    details_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = details_client
+    with session_factory() as db:
+        scenario = _create_scenario(
+            db,
+            privacy=EventPrivacyEnum.PRIVATE,
+            viewer_status=EventParticipantStatusEnum.PENDING,
+        )
+
+    response = client.get(
+        f"/events/{scenario.event_id}",
+        headers=_authorization(scenario.viewer_id),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["viewer"]["available_action"] == "CANCEL_PRESENCE"
+
+
 def test_invite_only_event_is_hidden_until_the_viewer_has_joined(
     details_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
@@ -286,6 +306,9 @@ def test_event_is_hidden_when_organizer_blocked_the_viewer(
     [
         (True, None, "MANAGE"),
         (False, EventParticipantStatusEnum.CONFIRMED, "CANCEL_PRESENCE"),
+        (False, EventParticipantStatusEnum.CANCELLED, "CONFIRM"),
+        (False, EventParticipantStatusEnum.REJECTED, "NONE"),
+        (False, EventParticipantStatusEnum.REMOVED, "NONE"),
     ],
 )
 def test_available_action_is_resolved_by_the_backend(
