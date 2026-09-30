@@ -179,6 +179,16 @@ backend com o mesmo bucket, região e chave usados pelo pipeline. Versione
 `.terraform.lock.hcl`; não versione states, planos, `.tfvars` ou credenciais.
 
 
+Ao atualizar providers, gere também os checksums para o Linux AMD64 usado no CI:
+
+```sh
+terraform -chdir=infra/terraform providers lock -platform=linux_amd64 -platform=windows_amd64
+```
+
+Versione o `.terraform.lock.hcl` atualizado. O CI usa `-lockfile=readonly`, então
+os checksums da plataforma do runner precisam estar registrados antes da execução.
+Se usar um runner Linux ARM64, inclua também `-platform=linux_arm64` no comando.
+
 ## Atualizações e recuperação
 
 - Mude `FRONTEND_BASE_URL` ou `CORS_ORIGINS` nas variáveis CI/CD do GitLab e repita o deploy
