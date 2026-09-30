@@ -14,6 +14,7 @@ from app.domain.entities import User
 from app.domain.services import (
     AccountDeletedError,
     AuthService,
+    DeviceNotFoundError,
     DeviceService,
     DuplicateCnpjError,
     DuplicateCpfError,
@@ -319,3 +320,22 @@ def register_device(
             detail="Invalid device token format",
         ) from error
     return DeviceAssembler.to_dto(result)
+
+
+@router.delete(
+    "/users/me/devices/{device_token}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Devices"],
+)
+def remove_device(
+    device_token: str,
+    current_user: Annotated[User, Depends(get_current_user)],
+    device_service: Annotated[DeviceService, Depends(get_device_service)],
+) -> None:
+    try:
+        device_service.remove_token(current_user.user_id, device_token)
+    except DeviceNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Device not found",
+        ) from error
