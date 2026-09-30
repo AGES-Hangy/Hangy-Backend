@@ -129,6 +129,21 @@ O PostgreSQL é armazenado no volume Docker `hangy_postgres_data`. Para também
 remover os dados locais, execute
 `docker compose -f .devcontainer/docker-compose.yml down -v`.
 
+## Deploy na AWS
+
+O desenvolvimento e os merges acontecem no GitHub. O espelhamento sobrescreve
+`main`, `develop` e tags no GitLab com force push. Quando a `main` protegida de
+`2026-2/2jk-4jk/hangy/hangy-backend` na AGES é atualizada, o
+[pipeline do GitLab](.gitlab-ci.yml) publica o backend.
+O [Terraform](infra/terraform/) cria a infraestrutura do zero:
+EC2 `t4g.medium` ARM64, RDS PostgreSQL com 50 GB gp2, S3 Standard, rede, ECR,
+Secrets Manager e permissões AWS em Ohio (`us-east-2`), conforme a estimativa.
+O pipeline cria/atualiza a infraestrutura e publica a API automaticamente.
+Configure as variáveis CI/CD `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` e
+`FRONTEND_BASE_URL` no GitLab e um runner com Docker-in-Docker, conforme o
+[guia de deploy](docs/deploy-aws.md). A `main` do GitLab deve permitir force push
+à identidade do espelhamento e continuar protegida para autorizar o deploy.
+
 ## Feed da Home
 
 `GET /feed?limit=10` exige um Bearer token e retorna `sections`, agrupadas
