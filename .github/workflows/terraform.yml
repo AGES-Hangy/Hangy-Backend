@@ -1,0 +1,43 @@
+name: Validate Terraform
+
+on:
+  pull_request:
+    paths:
+      - infra/terraform/**
+      - .github/workflows/terraform.yml
+      - scripts/**
+      - .gitlab-ci.yml
+  push:
+    branches: [main]
+    paths:
+      - infra/terraform/**
+      - .github/workflows/terraform.yml
+      - scripts/**
+      - .gitlab-ci.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: infra/terraform
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.14.7
+      - run: terraform fmt -check -recursive
+      - run: terraform init -backend=false -input=false -lockfile=readonly
+      - run: terraform validate
+      # Mocked providers: no AWS credentials, API calls or billable resources.
+      - run: terraform test
+      - run: bash -n bootstrap-ec2.sh
+      - run: bash ../../scripts/tests/bootstrap-terraform-state.sh
+      - run: bash ../../scripts/tests/deploy-gitlab.sh
