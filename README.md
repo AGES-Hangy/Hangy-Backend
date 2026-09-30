@@ -93,6 +93,9 @@ O seed também cria o evento `Rachão fechado` como `INVITE_ONLY`. Para testar o
 aceite por link com `user@hangy.com`, use o token
 `seed-invite-racha-fechado`.
 
+Há também o evento `Confraternização da equipe`, `PRIVATE`, criado por
+`admin@hangy.com` e sem nenhum participante.
+
 O `user@hangy.com` recebe notificações dos 11 tipos, com cinco solicitações
 (Maria, João, Ana, Pedro e Carla) e duas aceitações de conexão (Lucas e Bia):
 10 não lidas, 6 lidas, já com o `payload` preenchido. O banco reflete o que cada
