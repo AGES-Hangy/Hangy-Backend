@@ -51,13 +51,13 @@ from app.infrastructure.repository.user import SqlAlchemyUserRepository
 from app.infrastructure.repository.user_profile import SqlAlchemyUserProfileRepository
 from app.presentation.dtos import (
     AuthOutput,
+    CurrentUserOutput,
     LoginRequest,
     PasswordResetConfirmInput,
     PasswordResetRequestInput,
     RegisterDeviceInput,
     RegisterDeviceOutput,
     RegisterRequest,
-    CurrentUserOutput,
     VerifyResetCodeRequest,
     VerifyResetCodeResponse,
 )
@@ -293,6 +293,11 @@ def get_current_user(
     """Resolve the bearer token into the user every protected route needs."""
     try:
         return auth_service.get_user_from_token(token)
+    except AccountDeletedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account has been deleted",
+        ) from error
     except InvalidAccessTokenError as error:
         raise credentials_exception from error
 
