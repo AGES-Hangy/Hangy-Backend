@@ -9,6 +9,7 @@ from app.domain.assemblers import (
     AuthAssembler,
     DeviceAssembler,
     PasswordResetAssembler,
+    UserProfileAssembler,
 )
 from app.domain.entities import User
 from app.domain.services import (
@@ -34,6 +35,8 @@ from app.domain.services import (
     RegisterService,
     TooManyPasswordResetRequestsError,
     TooManyResetCodeAttemptsError,
+    UserNotFoundError,
+    UserProfileService,
 )
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.business_profile import (
@@ -47,6 +50,7 @@ from app.infrastructure.repository.person_profile import (
     SqlAlchemyPersonRegistrationRepository,
 )
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
+from app.infrastructure.repository.user_profile import SqlAlchemyUserProfileRepository
 from app.presentation.dtos import (
     AuthOutput,
     LoginRequest,
@@ -56,6 +60,7 @@ from app.presentation.dtos import (
     RegisterDeviceOutput,
     RegisterRequest,
     UserOutput,
+    UserProfileOutput,
     VerifyResetCodeRequest,
     VerifyResetCodeResponse,
 )
@@ -300,6 +305,12 @@ def get_device_service(db: Annotated[Session, Depends(get_db)]) -> DeviceService
     return DeviceService(repository=SqlAlchemyUserDeviceRepository(db))
 
 
+def get_user_profile_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> UserProfileService:
+    return UserProfileService(repository=SqlAlchemyUserProfileRepository(db))
+
+
 @router.post(
     "/users/me/devices",
     response_model=RegisterDeviceOutput,
@@ -339,3 +350,22 @@ def remove_device(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Device not found",
         ) from error
+
+
+@router.get(
+    "/users/me/profile",
+    response_model=UserProfileOutput,
+    tags=["Profile"],
+)
+def read_current_user_profile(
+    current_user: Annotated[User, Depends(get_current_user)],
+    profile_service: Annotated[UserProfileService, Depends(get_user_profile_service)],
+) -> UserProfileOutput:
+    try:
+        profile = profile_service.get_profile(current_user.user_id)
+    except UserNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        ) from error
+    return UserProfileAssembler.to_dto(profile)
