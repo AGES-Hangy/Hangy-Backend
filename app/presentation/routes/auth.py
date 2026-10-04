@@ -355,6 +355,7 @@ def remove_device(
 @router.get(
     "/users/me/profile",
     response_model=UserProfileOutput,
+    status_code=status.HTTP_200_OK,
     tags=["Profile"],
 )
 def read_current_user_profile(
