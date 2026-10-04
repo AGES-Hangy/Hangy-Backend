@@ -6,9 +6,10 @@ locals {
 }
 
 resource "aws_iam_openid_connect_provider" "gitlab" {
-  count          = var.gitlab_oidc_provider_arn == null ? 1 : 0
-  url            = var.gitlab_url
-  client_id_list = ["sts.amazonaws.com"]
+  count = var.gitlab_oidc_provider_arn == null ? 1 : 0
+  url   = var.gitlab_url
+  # CI_JOB_JWT_V2 has a fixed audience equal to the GitLab instance URL.
+  client_id_list = [var.gitlab_url]
 }
 
 resource "aws_iam_role" "ec2" {
@@ -72,7 +73,7 @@ resource "aws_iam_role" "gitlab" {
       Action    = "sts:AssumeRoleWithWebIdentity"
       Condition = {
         StringEquals = {
-          "${local.gitlab_host}:aud" = "sts.amazonaws.com"
+          "${local.gitlab_host}:aud" = var.gitlab_url
           "${local.gitlab_host}:sub" = "project_path:${var.gitlab_project_path}:ref_type:branch:ref:main"
         }
       }
