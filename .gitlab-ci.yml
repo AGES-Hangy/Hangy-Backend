@@ -1,0 +1,86 @@
+stages:
+  - validate
+  - deploy
+
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main"'
+    - when: never
+
+default:
+  tags:
+    - hangy-docker
+  interruptible: true
+
+variables:
+  AWS_REGION: us-east-2
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+  TF_VERSION: "1.14.7"
+  AWS_PAGER: ""
+
+test:
+  stage: validate
+  image: python:3.14-slim
+  timeout: 15m
+  services:
+    - name: postgres:17-alpine
+      alias: postgres
+  variables:
+    POSTGRES_DB: hangy
+    POSTGRES_USER: hangy
+    POSTGRES_PASSWORD: ci-password
+    DATABASE_URL: sqlite://
+    JWT_SECRET_KEY: test-secret-key
+  script:
+    - pip install -r requirements-dev.txt
+    - ruff check .
+    - ruff format --check .
+    - pytest --cov=app --cov-report=term-missing --cov-fail-under=90
+    - DATABASE_URL='postgresql+psycopg://hangy:ci-password@postgres:5432/hangy' alembic upgrade head
+
+validate-infra:
+  stage: validate
+  image:
+    name: hashicorp/terraform:1.14.7
+    entrypoint: [""]
+  timeout: 15m
+  before_script:
+    - apk add --no-cache bash jq
+  script:
+    - terraform -chdir=infra/terraform fmt -check -recursive
+    - terraform -chdir=infra/terraform init -backend=false -input=false -lockfile=readonly
+    - terraform -chdir=infra/terraform validate
+    - terraform -chdir=infra/terraform test
+    - for script in infra/terraform/bootstrap-ec2.sh scripts/*.sh scripts/tests/*.sh; do bash -n "$script" || exit 1; done
+    - bash scripts/tests/bootstrap-terraform-state.sh
+    - bash scripts/tests/deploy-gitlab.sh
+
+deploy:
+  stage: deploy
+  image: docker:29-cli
+  services:
+    - name: docker:29-dind
+      alias: docker
+      command: ["--tls=false"]
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    HEALTHCHECK_TCP_PORT: "2375"
+  timeout: 90m
+  interruptible: false
+  resource_group: aws-production
+  environment:
+    name: production
+  id_tokens:
+    GITLAB_OIDC_TOKEN:
+      aud: sts.amazonaws.com
+  rules:
+    - if: '$CI_SERVER_HOST == "tools.ages.pucrs.br" && $CI_PROJECT_PATH == "2026-2/2jk-4jk/hangy/hangy-backend" && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main" && $CI_COMMIT_REF_PROTECTED == "true"'
+    - when: never
+  before_script:
+    - apk add --no-cache bash jq curl unzip aws-cli
+    - bash scripts/install-terraform-ci.sh
+  script:
+    - bash scripts/deploy-gitlab.sh

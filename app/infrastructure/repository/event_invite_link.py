@@ -3,14 +3,23 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.domain.entities import Event, EventInviteLink, NewEventInviteLink
+from app.domain.services.notification_dispatcher import NotificationDispatcher
+from app.infrastructure.push.expo_push_sender import expo_push_sender
+from app.infrastructure.repository.device import SqlAlchemyUserDeviceRepository
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
 from app.infrastructure.repository.models import EventInviteLinkModel
+from app.infrastructure.repository.notification import SqlAlchemyNotificationRepository
 
 
 class SqlAlchemyEventInviteLinkRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
-        self.event_repository = SqlAlchemyEventRepository(db)
+        dispatcher = NotificationDispatcher(
+            repository=SqlAlchemyNotificationRepository(db),
+            device_repository=SqlAlchemyUserDeviceRepository(db),
+            push_sender=expo_push_sender,
+        )
+        self.event_repository = SqlAlchemyEventRepository(db, dispatcher)
 
     def get_by_id(self, event_id: UUID) -> Event | None:
         return self.event_repository.get_by_id(event_id)

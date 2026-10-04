@@ -205,7 +205,7 @@ def test_invalid_status_filter_is_rejected(
 
     response = client.get(
         f"/events/{scenario.event_id}/participants",
-        params={"status": "INVITED"},
+        params={"status": "REJECTED"},
         headers=_authorization(scenario.organizer_id),
     )
 

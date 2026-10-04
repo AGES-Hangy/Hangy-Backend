@@ -1,0 +1,771 @@
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
+
+import pytest
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.domain.enums import (
+    DevicePlatformEnum,
+    EventParticipantStatusEnum,
+    EventPrivacyEnum,
+    EventStatusEnum,
+    NotificationTypeEnum,
+    UserRoleEnum,
+    UserTypeEnum,
+)
+from app.domain.services.connection import (
+    ConnectionService,
+    InvalidConnectionStatusTransitionError,
+)
+from app.domain.services.notification_dispatcher import NotificationDispatcher
+from app.domain.services.participation import (
+    AlreadyParticipatingError,
+    OrganizerCannotJoinError,
+    ParticipationService,
+)
+from app.infrastructure.repository import Base
+from app.infrastructure.repository.connection import SqlAlchemyConnectionRepository
+from app.infrastructure.repository.device import SqlAlchemyUserDeviceRepository
+from app.infrastructure.repository.models import (
+    EventCancelledNotificationModel,
+    EventModel,
+    EventParticipantModel,
+    EventParticipantNotificationModel,
+    NotificationModel,
+    UserDeviceModel,
+    UserModel,
+)
+from app.infrastructure.repository.notification import SqlAlchemyNotificationRepository
+from app.infrastructure.repository.participation import (
+    SqlAlchemyParticipationRepository,
+)
+
+ORGANIZER_ID = UUID("0b2f0010-0000-4000-8000-000000000001")
+USER_A_ID = UUID("0b2f0010-0000-4000-8000-000000000002")
+USER_B_ID = UUID("0b2f0010-0000-4000-8000-000000000003")
+
+EVENT_ID = UUID("0e000010-0000-4000-8000-000000000001")
+PRIVATE_EVENT_ID = UUID("0e000010-0000-4000-8000-000000000002")
+
+
+@pytest.fixture
+def session_factory() -> Iterator[sessionmaker[Session]]:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    factory = sessionmaker(bind=engine)
+    Base.metadata.create_all(engine)
+
+    starts_at = datetime.now(UTC) + timedelta(days=1)
+    ends_at = starts_at + timedelta(hours=3)
+
+    with factory() as db:
+        db.add_all(
+            [
+                UserModel(
+                    user_id=ORGANIZER_ID,
+                    user_type=UserTypeEnum.PERSONAL,
+                    role=UserRoleEnum.USER,
+                    email="organizer@dispatcher.test",
+                    password_hash="hash",
+                    name="Organizer",
+                ),
+                UserModel(
+                    user_id=USER_A_ID,
+                    user_type=UserTypeEnum.PERSONAL,
+                    role=UserRoleEnum.USER,
+                    email="user_a@dispatcher.test",
+                    password_hash="hash",
+                    name="User A",
+                ),
+                UserModel(
+                    user_id=USER_B_ID,
+                    user_type=UserTypeEnum.PERSONAL,
+                    role=UserRoleEnum.USER,
+                    email="user_b@dispatcher.test",
+                    password_hash="hash",
+                    name="User B",
+                ),
+                EventModel(
+                    event_id=EVENT_ID,
+                    event_creator_id=ORGANIZER_ID,
+                    event_title="Public Event",
+                    event_latitude=0.0,
+                    event_longitude=0.0,
+                    starts_at=starts_at,
+                    ends_at=ends_at,
+                    max_participants=None,
+                    event_status=EventStatusEnum.PUBLISHED,
+                    event_privacy=EventPrivacyEnum.PUBLIC,
+                ),
+                EventModel(
+                    event_id=PRIVATE_EVENT_ID,
+                    event_creator_id=ORGANIZER_ID,
+                    event_title="Private Event",
+                    event_latitude=0.0,
+                    event_longitude=0.0,
+                    starts_at=starts_at,
+                    ends_at=ends_at,
+                    max_participants=None,
+                    event_status=EventStatusEnum.PUBLISHED,
+                    event_privacy=EventPrivacyEnum.PRIVATE,
+                ),
+            ]
+        )
+        db.commit()
+
+    yield factory
+    Base.metadata.drop_all(engine)
+    engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Connection tests
+# ---------------------------------------------------------------------------
+
+
+def test_accept_connection_notifies_requester(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        notification_repo = SqlAlchemyNotificationRepository(db)
+        dispatcher = NotificationDispatcher(notification_repo)
+        conn_repo = SqlAlchemyConnectionRepository(db, dispatcher)
+        svc = ConnectionService(conn_repo)
+
+        connection = svc.send_request(requester_id=USER_A_ID, receiver_id=USER_B_ID)
+        assert connection.connection_id is not None
+
+        # Clear the CONNECTION_REQUEST notification before testing accept
+        db.query(NotificationModel).delete()
+        db.commit()
+
+        svc.accept(connection.connection_id, actor_id=USER_B_ID)
+
+    with session_factory() as db:
+        notification = db.scalar(
+            select(NotificationModel).where(
+                NotificationModel.user_id == USER_A_ID,
+                NotificationModel.type == NotificationTypeEnum.CONNECTION_ACCEPTED,
+            )
+        )
+        assert notification is not None
+        detail = db.scalar(
+            select(
+                __import__(
+                    "app.infrastructure.repository.models",
+                    fromlist=["ConnectionNotificationModel"],
+                ).ConnectionNotificationModel
+            ).where(
+                __import__(
+                    "app.infrastructure.repository.models",
+                    fromlist=["ConnectionNotificationModel"],
+                ).ConnectionNotificationModel.notification_id
+                == notification.notification_id
+            )
+        )
+        assert detail is not None
+
+
+def test_send_connection_request_notifies_receiver(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        notification_repo = SqlAlchemyNotificationRepository(db)
+        dispatcher = NotificationDispatcher(notification_repo)
+        conn_repo = SqlAlchemyConnectionRepository(db, dispatcher)
+        svc = ConnectionService(conn_repo)
+
+        svc.send_request(requester_id=USER_A_ID, receiver_id=USER_B_ID)
+
+    with session_factory() as db:
+        notification = db.scalar(
+            select(NotificationModel).where(
+                NotificationModel.user_id == USER_B_ID,
+                NotificationModel.type == NotificationTypeEnum.CONNECTION_REQUEST,
+            )
+        )
+        assert notification is not None
+
+
+def test_reject_connection_does_not_notify(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        notification_repo = SqlAlchemyNotificationRepository(db)
+        dispatcher = NotificationDispatcher(notification_repo)
+        conn_repo = SqlAlchemyConnectionRepository(db, dispatcher)
+        svc = ConnectionService(conn_repo)
+
+        connection = svc.send_request(requester_id=USER_A_ID, receiver_id=USER_B_ID)
+        db.query(NotificationModel).delete()
+        db.commit()
+
+        svc.reject(connection.connection_id, actor_id=USER_B_ID)
+
+    with session_factory() as db:
+        count = db.query(NotificationModel).count()
+        assert count == 0
+
+
+def test_reject_already_accepted_connection_raises(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        notification_repo = SqlAlchemyNotificationRepository(db)
+        dispatcher = NotificationDispatcher(notification_repo)
+        conn_repo = SqlAlchemyConnectionRepository(db, dispatcher)
+        svc = ConnectionService(conn_repo)
+
+        connection = svc.send_request(requester_id=USER_A_ID, receiver_id=USER_B_ID)
+        svc.accept(connection.connection_id, actor_id=USER_B_ID)
+
+        with pytest.raises(InvalidConnectionStatusTransitionError):
+            svc.reject(connection.connection_id, actor_id=USER_B_ID)
+
+
+# ---------------------------------------------------------------------------
+# Participation tests
+# ---------------------------------------------------------------------------
+
+
+def test_join_public_event_notifies_organizer(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        notification_repo = SqlAlchemyNotificationRepository(db)
+        dispatcher = NotificationDispatcher(notification_repo)
+        part_repo = SqlAlchemyParticipationRepository(db, dispatcher)
+        svc = ParticipationService(part_repo)
+
+        participant = svc.request_or_join(event_id=EVENT_ID, user_id=USER_A_ID)
+        assert participant.status is EventParticipantStatusEnum.CONFIRMED
+
+    with session_factory() as db:
+        notification = db.scalar(
+            select(NotificationModel).where(
+                NotificationModel.user_id == ORGANIZER_ID,
+                NotificationModel.type == NotificationTypeEnum.EVENT_PARTICIPANT_JOINED,
+            )
+        )
+        assert notification is not None
+        detail = db.scalar(
+            select(EventParticipantNotificationModel).where(
+                EventParticipantNotificationModel.notification_id
+                == notification.notification_id
+            )
+        )
+        assert detail is not None
+
+
+def test_request_participation_private_event_notifies_organizer(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        notification_repo = SqlAlchemyNotificationRepository(db)
+        dispatcher = NotificationDispatcher(notification_repo)
+        part_repo = SqlAlchemyParticipationRepository(db, dispatcher)
+        svc = ParticipationService(part_repo)
+
+        participant = svc.request_or_join(event_id=PRIVATE_EVENT_ID, user_id=USER_A_ID)
+        assert participant.status is EventParticipantStatusEnum.PENDING
+
+    with session_factory() as db:
+        notification = db.scalar(
+            select(NotificationModel).where(
+                NotificationModel.user_id == ORGANIZER_ID,
+                NotificationModel.type
+                == NotificationTypeEnum.EVENT_PARTICIPATION_REQUEST,
+            )
+        )
+        assert notification is not None
+
+
+def test_organizer_cannot_join_own_event(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        notification_repo = SqlAlchemyNotificationRepository(db)
+        dispatcher = NotificationDispatcher(notification_repo)
+        part_repo = SqlAlchemyParticipationRepository(db, dispatcher)
+        svc = ParticipationService(part_repo)
+
+        with pytest.raises(OrganizerCannotJoinError):
+            svc.request_or_join(event_id=EVENT_ID, user_id=ORGANIZER_ID)
+
+
+def test_already_participating_raises(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        notification_repo = SqlAlchemyNotificationRepository(db)
+        dispatcher = NotificationDispatcher(notification_repo)
+        part_repo = SqlAlchemyParticipationRepository(db, dispatcher)
+        svc = ParticipationService(part_repo)
+
+        svc.request_or_join(event_id=EVENT_ID, user_id=USER_A_ID)
+        with pytest.raises(AlreadyParticipatingError):
+            svc.request_or_join(event_id=EVENT_ID, user_id=USER_A_ID)
+
+
+# ---------------------------------------------------------------------------
+# actor_id guard — dispatcher never notifies the actor themselves
+# ---------------------------------------------------------------------------
+
+
+def test_dispatcher_does_not_notify_actor(
+    session_factory: sessionmaker[Session],
+) -> None:
+    from app.domain.services.notification_dispatcher import NotificationDispatcher
+
+    with session_factory() as db:
+        notification_repo = SqlAlchemyNotificationRepository(db)
+        dispatcher = NotificationDispatcher(notification_repo)
+
+        conn_id = uuid4()
+        dispatcher.dispatch(
+            NotificationTypeEnum.CONNECTION_ACCEPTED,
+            recipient_id=USER_A_ID,
+            actor_id=USER_A_ID,
+            connection_id=conn_id,
+        )
+        db.commit()
+
+    with session_factory() as db:
+        count = db.query(NotificationModel).count()
+        assert count == 0
+
+
+# ---------------------------------------------------------------------------
+# Dispatcher failure does not break the business operation
+# ---------------------------------------------------------------------------
+
+
+def test_dispatcher_failure_does_not_break_operation(
+    session_factory: sessionmaker[Session],
+) -> None:
+    from app.domain.services.notification_dispatcher import (
+        NotificationDispatcher,
+    )
+
+    class BrokenRepo:
+        def notify_connection(self, *args, **kwargs) -> None:
+            raise RuntimeError("DB exploded")
+
+        def notify_participant(self, *args, **kwargs) -> None:
+            raise RuntimeError("DB exploded")
+
+        def notify_event_cancelled(self, *args, **kwargs) -> None:
+            raise RuntimeError("DB exploded")
+
+        def notify_event_updated(self, *args, **kwargs) -> None:
+            raise RuntimeError("DB exploded")
+
+    dispatcher = NotificationDispatcher(BrokenRepo())
+
+    # Should not raise
+    dispatcher.dispatch(
+        NotificationTypeEnum.CONNECTION_ACCEPTED,
+        recipient_id=USER_A_ID,
+        connection_id=uuid4(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# EVENT_UPDATED — only fires when date or location changes
+# ---------------------------------------------------------------------------
+
+
+def test_event_updated_notification_created_for_confirmed_participants(
+    session_factory: sessionmaker[Session],
+) -> None:
+    participant_id = uuid4()
+
+    with session_factory() as db:
+        db.add(
+            EventParticipantModel(
+                participant_id=participant_id,
+                user_id=USER_A_ID,
+                event_id=EVENT_ID,
+                status=EventParticipantStatusEnum.CONFIRMED,
+            )
+        )
+        db.commit()
+
+    with session_factory() as db:
+        notification_repo = SqlAlchemyNotificationRepository(db)
+
+        notification_repo.notify_event_updated(
+            recipient_id=USER_A_ID, event_id=EVENT_ID
+        )
+        db.commit()
+
+    with session_factory() as db:
+        notification = db.scalar(
+            select(NotificationModel).where(
+                NotificationModel.user_id == USER_A_ID,
+                NotificationModel.type == NotificationTypeEnum.EVENT_UPDATED,
+            )
+        )
+        assert notification is not None
+        detail = db.scalar(
+            select(EventCancelledNotificationModel).where(
+                EventCancelledNotificationModel.notification_id
+                == notification.notification_id
+            )
+        )
+        assert detail is not None
+        assert detail.event_id == EVENT_ID
+
+
+# ---------------------------------------------------------------------------
+# EVENT_CANCELLED — only confirmed + pending, never the organizer
+# ---------------------------------------------------------------------------
+
+
+def test_cancel_event_notifies_confirmed_and_pending_not_organizer(
+    session_factory: sessionmaker[Session],
+) -> None:
+    confirmed_id = uuid4()
+    pending_id = uuid4()
+    extra_user = uuid4()
+    extra_user2 = uuid4()
+
+    with session_factory() as db:
+        db.add_all(
+            [
+                UserModel(
+                    user_id=extra_user,
+                    user_type=UserTypeEnum.PERSONAL,
+                    role=UserRoleEnum.USER,
+                    email="extra1@dispatcher.test",
+                    password_hash="h",
+                ),
+                UserModel(
+                    user_id=extra_user2,
+                    user_type=UserTypeEnum.PERSONAL,
+                    role=UserRoleEnum.USER,
+                    email="extra2@dispatcher.test",
+                    password_hash="h",
+                ),
+                EventParticipantModel(
+                    participant_id=confirmed_id,
+                    user_id=extra_user,
+                    event_id=EVENT_ID,
+                    status=EventParticipantStatusEnum.CONFIRMED,
+                ),
+                EventParticipantModel(
+                    participant_id=pending_id,
+                    user_id=extra_user2,
+                    event_id=EVENT_ID,
+                    status=EventParticipantStatusEnum.PENDING,
+                ),
+            ]
+        )
+        db.commit()
+
+    with session_factory() as db:
+        notification_repo = SqlAlchemyNotificationRepository(db)
+        notification_repo.notify_event_cancelled(extra_user, EVENT_ID)
+        notification_repo.notify_event_cancelled(extra_user2, EVENT_ID)
+        db.commit()
+
+    with session_factory() as db:
+        notifications = db.scalars(
+            select(NotificationModel).where(
+                NotificationModel.type == NotificationTypeEnum.EVENT_CANCELLED
+            )
+        ).all()
+        notified_users = {n.user_id for n in notifications}
+
+        assert extra_user in notified_users
+        assert extra_user2 in notified_users
+        assert ORGANIZER_ID not in notified_users
+
+
+# ---------------------------------------------------------------------------
+# Push notifications
+# ---------------------------------------------------------------------------
+
+
+class FakePushSender:
+    def __init__(self, rejected_tokens: list[str] | None = None) -> None:
+        self.rejected_tokens = rejected_tokens or []
+        self.calls: list[tuple[list[str], str, str, dict[str, str]]] = []
+
+    def send(
+        self, tokens: list[str], title: str, body: str, data: dict[str, str]
+    ) -> list[str]:
+        self.calls.append((tokens, title, body, data))
+        return self.rejected_tokens
+
+
+def test_dispatch_sends_push_to_recipient_devices(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        db.add(
+            UserDeviceModel(
+                user_id=USER_A_ID,
+                device_token="ExponentPushToken[user-a]",
+                platform=DevicePlatformEnum.ANDROID,
+            )
+        )
+        db.commit()
+
+    with session_factory() as db:
+        notification_repo = SqlAlchemyNotificationRepository(db)
+        device_repo = SqlAlchemyUserDeviceRepository(db)
+        push_sender = FakePushSender()
+        dispatcher = NotificationDispatcher(notification_repo, device_repo, push_sender)
+
+        connection_id = uuid4()
+        dispatcher.dispatch(
+            NotificationTypeEnum.CONNECTION_ACCEPTED,
+            recipient_id=USER_A_ID,
+            connection_id=connection_id,
+        )
+        db.commit()
+
+        assert len(push_sender.calls) == 1
+        tokens, title, body, data = push_sender.calls[0]
+        assert tokens == ["ExponentPushToken[user-a]"]
+        assert title
+        assert body
+        notification = db.scalar(
+            select(NotificationModel).where(NotificationModel.user_id == USER_A_ID)
+        )
+        assert notification is not None
+        assert data == {
+            "type": "CONNECTION_ACCEPTED",
+            "notification_id": str(notification.notification_id),
+            "connection_id": str(connection_id),
+        }
+
+
+def _add_device(db: Session, user_id: UUID) -> None:
+    db.add(
+        UserDeviceModel(
+            user_id=user_id,
+            device_token=f"ExponentPushToken[{user_id}]",
+            platform=DevicePlatformEnum.ANDROID,
+        )
+    )
+    db.commit()
+
+
+def test_push_for_connection_request_includes_sender_user_id(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        _add_device(db, USER_B_ID)
+        push_sender = FakePushSender()
+        dispatcher = NotificationDispatcher(
+            SqlAlchemyNotificationRepository(db),
+            SqlAlchemyUserDeviceRepository(db),
+            push_sender,
+        )
+        connection = ConnectionService(
+            SqlAlchemyConnectionRepository(db, dispatcher)
+        ).send_request(requester_id=USER_A_ID, receiver_id=USER_B_ID)
+
+        data = push_sender.calls[0][3]
+        assert data["connection_id"] == str(connection.connection_id)
+        assert data["user_id"] == str(USER_A_ID)
+        assert "notification_id" in data
+
+
+def test_push_for_participation_request_includes_event_id_and_sender(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        _add_device(db, ORGANIZER_ID)
+        push_sender = FakePushSender()
+        dispatcher = NotificationDispatcher(
+            SqlAlchemyNotificationRepository(db),
+            SqlAlchemyUserDeviceRepository(db),
+            push_sender,
+        )
+        participant = ParticipationService(
+            SqlAlchemyParticipationRepository(db, dispatcher)
+        ).request_or_join(event_id=PRIVATE_EVENT_ID, user_id=USER_A_ID)
+
+        data = push_sender.calls[0][3]
+        assert data["type"] == "EVENT_PARTICIPATION_REQUEST"
+        assert data["participant_id"] == str(participant.participant_id)
+        assert data["event_id"] == str(PRIVATE_EVENT_ID)
+        assert data["user_id"] == str(USER_A_ID)
+        assert "notification_id" in data
+
+
+def test_push_for_request_approved_is_sent_by_the_organizer(
+    session_factory: sessionmaker[Session],
+) -> None:
+    participant_id = uuid4()
+    with session_factory() as db:
+        db.add(
+            EventParticipantModel(
+                participant_id=participant_id,
+                user_id=USER_A_ID,
+                event_id=PRIVATE_EVENT_ID,
+                status=EventParticipantStatusEnum.PENDING,
+            )
+        )
+        db.commit()
+        _add_device(db, USER_A_ID)
+
+        push_sender = FakePushSender()
+        dispatcher = NotificationDispatcher(
+            SqlAlchemyNotificationRepository(db),
+            SqlAlchemyUserDeviceRepository(db),
+            push_sender,
+        )
+        dispatcher.dispatch(
+            NotificationTypeEnum.EVENT_REQUEST_APPROVED,
+            recipient_id=USER_A_ID,
+            participant_id=participant_id,
+        )
+
+        data = push_sender.calls[0][3]
+        assert data["event_id"] == str(PRIVATE_EVENT_ID)
+        assert data["user_id"] == str(ORGANIZER_ID)
+
+
+def test_push_for_event_cancelled_includes_notification_and_organizer(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        _add_device(db, USER_A_ID)
+        push_sender = FakePushSender()
+        dispatcher = NotificationDispatcher(
+            SqlAlchemyNotificationRepository(db),
+            SqlAlchemyUserDeviceRepository(db),
+            push_sender,
+        )
+        dispatcher.dispatch(
+            NotificationTypeEnum.EVENT_CANCELLED,
+            recipient_id=USER_A_ID,
+            event_id=EVENT_ID,
+        )
+        db.commit()
+
+        notification = db.scalar(
+            select(NotificationModel).where(NotificationModel.user_id == USER_A_ID)
+        )
+        assert notification is not None
+        assert push_sender.calls[0][3] == {
+            "type": "EVENT_CANCELLED",
+            "notification_id": str(notification.notification_id),
+            "event_id": str(EVENT_ID),
+            "user_id": str(ORGANIZER_ID),
+        }
+
+
+def test_dispatch_skips_push_when_recipient_has_no_devices(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        notification_repo = SqlAlchemyNotificationRepository(db)
+        device_repo = SqlAlchemyUserDeviceRepository(db)
+        push_sender = FakePushSender()
+        dispatcher = NotificationDispatcher(notification_repo, device_repo, push_sender)
+
+        dispatcher.dispatch(
+            NotificationTypeEnum.CONNECTION_ACCEPTED,
+            recipient_id=USER_A_ID,
+            connection_id=uuid4(),
+        )
+        db.commit()
+
+    assert push_sender.calls == []
+
+
+def test_dispatch_removes_devices_rejected_by_push_sender(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        db.add_all(
+            [
+                UserDeviceModel(
+                    user_id=USER_A_ID,
+                    device_token="ExponentPushToken[stale]",
+                    platform=DevicePlatformEnum.ANDROID,
+                ),
+                UserDeviceModel(
+                    user_id=USER_A_ID,
+                    device_token="ExponentPushToken[fresh]",
+                    platform=DevicePlatformEnum.IOS,
+                ),
+            ]
+        )
+        db.commit()
+
+    with session_factory() as db:
+        notification_repo = SqlAlchemyNotificationRepository(db)
+        device_repo = SqlAlchemyUserDeviceRepository(db)
+        push_sender = FakePushSender(rejected_tokens=["ExponentPushToken[stale]"])
+        dispatcher = NotificationDispatcher(notification_repo, device_repo, push_sender)
+
+        dispatcher.dispatch(
+            NotificationTypeEnum.CONNECTION_ACCEPTED,
+            recipient_id=USER_A_ID,
+            connection_id=uuid4(),
+        )
+        db.commit()
+
+    with session_factory() as db:
+        remaining_tokens = set(
+            db.scalars(
+                select(UserDeviceModel.device_token).where(
+                    UserDeviceModel.user_id == USER_A_ID
+                )
+            ).all()
+        )
+        assert remaining_tokens == {"ExponentPushToken[fresh]"}
+
+
+def test_dispatch_failure_in_push_sender_does_not_break_operation(
+    session_factory: sessionmaker[Session],
+) -> None:
+    class BrokenPushSender:
+        def send(self, tokens, title, body, data) -> list[str]:
+            raise RuntimeError("Expo is down")
+
+    with session_factory() as db:
+        db.add(
+            UserDeviceModel(
+                user_id=USER_A_ID,
+                device_token="ExponentPushToken[user-a]",
+                platform=DevicePlatformEnum.ANDROID,
+            )
+        )
+        db.commit()
+
+    with session_factory() as db:
+        notification_repo = SqlAlchemyNotificationRepository(db)
+        device_repo = SqlAlchemyUserDeviceRepository(db)
+        dispatcher = NotificationDispatcher(
+            notification_repo, device_repo, BrokenPushSender()
+        )
+
+        # Should not raise, and the notification row must still be created.
+        dispatcher.dispatch(
+            NotificationTypeEnum.CONNECTION_ACCEPTED,
+            recipient_id=USER_A_ID,
+            connection_id=uuid4(),
+        )
+        db.commit()
+
+    with session_factory() as db:
+        notification = db.scalar(
+            select(NotificationModel).where(
+                NotificationModel.user_id == USER_A_ID,
+                NotificationModel.type == NotificationTypeEnum.CONNECTION_ACCEPTED,
+            )
+        )
+        assert notification is not None

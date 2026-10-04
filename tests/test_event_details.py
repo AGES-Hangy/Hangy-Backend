@@ -203,7 +203,27 @@ def test_private_event_hides_participants_from_a_non_participant(
     }
 
 
-def test_invite_only_event_is_hidden_without_an_invite_and_visible_with_one(
+def test_private_event_allows_cancelling_a_pending_request(
+    details_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = details_client
+    with session_factory() as db:
+        scenario = _create_scenario(
+            db,
+            privacy=EventPrivacyEnum.PRIVATE,
+            viewer_status=EventParticipantStatusEnum.PENDING,
+        )
+
+    response = client.get(
+        f"/events/{scenario.event_id}",
+        headers=_authorization(scenario.viewer_id),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["viewer"]["available_action"] == "CANCEL_PRESENCE"
+
+
+def test_invite_only_event_is_hidden_until_the_viewer_has_joined(
     details_client: tuple[TestClient, sessionmaker[Session]],
 ) -> None:
     client, session_factory = details_client
@@ -222,7 +242,7 @@ def test_invite_only_event_is_hidden_without_an_invite_and_visible_with_one(
             EventParticipantModel(
                 user_id=scenario.viewer_id,
                 event_id=scenario.event_id,
-                status=EventParticipantStatusEnum.INVITED,
+                status=EventParticipantStatusEnum.CONFIRMED,
             )
         )
         db.commit()
@@ -232,7 +252,7 @@ def test_invite_only_event_is_hidden_without_an_invite_and_visible_with_one(
         headers=_authorization(scenario.viewer_id),
     )
     assert visible_response.status_code == 200
-    assert visible_response.json()["viewer"]["available_action"] == "ACCEPT_INVITE"
+    assert visible_response.json()["viewer"]["available_action"] == "CANCEL_PRESENCE"
 
 
 def test_cancelled_event_returns_gone(
@@ -286,6 +306,9 @@ def test_event_is_hidden_when_organizer_blocked_the_viewer(
     [
         (True, None, "MANAGE"),
         (False, EventParticipantStatusEnum.CONFIRMED, "CANCEL_PRESENCE"),
+        (False, EventParticipantStatusEnum.CANCELLED, "CONFIRM"),
+        (False, EventParticipantStatusEnum.REJECTED, "NONE"),
+        (False, EventParticipantStatusEnum.REMOVED, "NONE"),
     ],
 )
 def test_available_action_is_resolved_by_the_backend(

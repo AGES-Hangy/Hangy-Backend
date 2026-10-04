@@ -65,8 +65,8 @@ A aplicação ficará disponível em:
 
 - API: <http://localhost:8000>
 - Health check: <http://localhost:8000/health>
-- Cadastro: `POST http://localhost:8000/register`
-- Login: `POST http://localhost:8000/login`
+- Cadastro: `POST http://localhost:8000/auth/register`
+- Login: `POST http://localhost:8000/auth/login`
 - Usuário autenticado: `GET http://localhost:8000/users/me`
 - Feed da Home: `GET http://localhost:8000/feed`
 - Swagger UI: <http://localhost:8000/docs>
@@ -82,7 +82,37 @@ de autorização sejam adicionadas:
 | `user@hangy.com`  | `user-password`  | PERSONAL | Futebol, Corrida, Rock |
 | `maria@hangy.com` | `maria-password` | PERSONAL | Samba                  |
 | `joao@hangy.com`  | `joao-password`  | PERSONAL | nenhum                 |
+| `ana@hangy.com`   | `ana-password`   | PERSONAL | nenhum                 |
+| `pedro@hangy.com` | `pedro-password` | PERSONAL | nenhum                 |
+| `carla@hangy.com` | `carla-password` | PERSONAL | nenhum                 |
+| `lucas@hangy.com` | `lucas-password` | PERSONAL | nenhum                 |
+| `bia@hangy.com`   | `bia-password`   | PERSONAL | nenhum                 |
 | `admin@hangy.com` | `admin-password` | BUSINESS | nenhum                 |
+
+O seed também cria o evento `Rachão fechado` como `INVITE_ONLY`. Para testar o
+aceite por link com `user@hangy.com`, use o token
+`seed-invite-racha-fechado`.
+
+Há também o evento `Confraternização da equipe`, `PRIVATE`, criado por
+`admin@hangy.com` e sem nenhum participante.
+
+O `user@hangy.com` recebe notificações dos 11 tipos, com cinco solicitações
+(Maria, João, Ana, Pedro e Carla) e duas aceitações de conexão (Lucas e Bia):
+10 não lidas, 6 lidas, já com o `payload` preenchido. O banco reflete o que cada
+uma diz: quem pediu para participar está `PENDING`, quem cancelou está
+`CANCELLED` (fora da lista de participantes), quem foi removido está `REMOVED`
+(e não consegue pedir de novo), e assim por diante. Cada par de usuários tem
+uma única conexão. O `created_at` é recalculado a partir
+do horário atual a cada execução do seed, de alguns minutos a 4 dias atrás. O
+estado de leitura só volta ao original para a notificação do `joao@hangy.com`
+descrita abaixo.
+
+Para testar `PATCH /notifications/{notification_id}/read`, use
+`joao@hangy.com`: a notificação `76331ed0-0a64-55c8-819a-35958e434add` é dele e
+volta a ficar não lida a cada execução do seed. A
+`d3bcd888-24d8-5fe0-a022-e0e5aae5920d` é da `maria@hangy.com` e serve para o
+caso `403`. A collection `postman/tid219_patch_notifications_read.postman_collection.json`
+percorre todos os cenários.
 
 As tags de exemplo seguem a hierarquia macro → micro usada pelo feed:
 `Esportes` (Futebol, Corrida), `Música` (Rock, Samba, Sertanejo),
@@ -98,6 +128,21 @@ docker compose -f .devcontainer/docker-compose.yml down
 O PostgreSQL é armazenado no volume Docker `hangy_postgres_data`. Para também
 remover os dados locais, execute
 `docker compose -f .devcontainer/docker-compose.yml down -v`.
+
+## Deploy na AWS
+
+O desenvolvimento e os merges acontecem no GitHub. O espelhamento sobrescreve
+`main`, `develop` e tags no GitLab com force push. Quando a `main` protegida de
+`2026-2/2jk-4jk/hangy/hangy-backend` na AGES é atualizada, o
+[pipeline do GitLab](.gitlab-ci.yml) publica o backend.
+O [Terraform](infra/terraform/) cria a infraestrutura do zero:
+EC2 `t4g.medium` ARM64, RDS PostgreSQL com 50 GB gp2, S3 Standard, rede, ECR,
+Secrets Manager e permissões AWS em Ohio (`us-east-2`), conforme a estimativa.
+O pipeline cria/atualiza a infraestrutura e publica a API automaticamente.
+Configure as variáveis CI/CD `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` e
+`FRONTEND_BASE_URL` no GitLab e um runner com Docker-in-Docker, conforme o
+[guia de deploy](docs/deploy-aws.md). A `main` do GitLab deve permitir force push
+à identidade do espelhamento e continuar protegida para autorizar o deploy.
 
 ## Feed da Home
 
@@ -122,42 +167,85 @@ os novos exemplos.
 
 ## Autenticação
 
-Cadastre um usuário enviando JSON:
+`POST /auth/register` é um único endpoint que decide o tipo de conta pelo campo
+`user_type` do próprio corpo (`PERSONAL` ou `BUSINESS`), uma união
+discriminada validada pelo Pydantic. Os dois formatos aparecem no Swagger UI.
+
+Cadastro de pessoa física:
 
 ```bash
-curl -X POST http://localhost:8000/register \
+curl -X POST http://localhost:8000/auth/register \
   -H "Content-Type: application/json" \
-  -d '{"email":"felipe@hangy.com","password":"strong-password"}'
+  -d '{
+        "user_type": "PERSONAL",
+        "email": "felipe@hangy.com",
+        "password": "strong-password",
+        "name": "Felipe Souza",
+        "cpf": "52998224725",
+        "phone": "51999990000",
+        "date_of_birth": "2000-04-12",
+        "country": "BR",
+        "state": "RS",
+        "city": "Porto Alegre",
+        "accepted_terms_version": "2026-08-01"
+      }'
 ```
 
-O campo `user_type` é opcional e aceita `PERSONAL` (padrão) ou `BUSINESS`.
-
-O login segue o fluxo OAuth2 Password e, por isso, recebe os campos como
-`application/x-www-form-urlencoded`. O padrão OAuth2 fixa o nome do campo como
-`username`, mas o valor esperado é o e-mail:
+Cadastro de pessoa jurídica:
 
 ```bash
-curl -X POST http://localhost:8000/login \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=felipe@hangy.com&password=strong-password"
+curl -X POST http://localhost:8000/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+        "user_type": "BUSINESS",
+        "email": "contato@bar.com",
+        "password": "strong-password",
+        "business_name": "Bar do Zé",
+        "cnpj": "11222333000181",
+        "phone": "5133330000",
+        "description": "Bar e petiscaria",
+        "location": {"latitude": -30.0331, "longitude": -51.23},
+        "address": "Av. Independência, 100 — Porto Alegre",
+        "accepted_terms_version": "2026-08-01"
+      }'
 ```
 
-A resposta contém um JWT no campo `access_token`. Envie-o como Bearer token
-para acessar uma rota protegida:
+CPF e CNPJ são validados por dígito verificador (400 se inválidos); cadastro
+`PERSONAL` exige 18 anos completos na data de nascimento (403 caso contrário).
+E-mail, CPF e CNPJ são únicos entre contas ativas (409 em caso de duplicidade;
+o e-mail é único por conta, não por tipo). O sucesso devolve `201` já com o
+`access_token`, no mesmo formato de resposta do login.
+
+`POST /auth/login` recebe e-mail e senha como JSON:
+
+```bash
+curl -X POST http://localhost:8000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email": "felipe@hangy.com", "password": "strong-password"}'
+```
+
+Credenciais inválidas (e-mail inexistente ou senha errada) sempre devolvem o
+mesmo `401` com `{"detail": "Incorrect email or password"}`, para não indicar
+qual dos dois estava errado. Uma conta excluída (`deleted_at` preenchido)
+devolve `403` mesmo com a senha correta.
+
+A resposta, igual à de `/auth/register`, contém um JWT no campo `access_token` e o
+usuário autenticado. Envie o token como Bearer para acessar uma rota
+protegida:
 
 ```bash
 curl http://localhost:8000/users/me \
   -H "Authorization: Bearer SEU_ACCESS_TOKEN"
 ```
 
-No Swagger UI, o botão **Authorize** oferece duas opções: `OAuth2Password`
-recebe o e-mail (no campo `username`) e a senha e chama `/login`;
-`BearerToken` permite colar diretamente um JWT existente. As duas opções
-enviam o mesmo header `Authorization: Bearer`.
+No Swagger UI, o botão **Authorize** oferece `BearerToken`: cole ali um JWT
+obtido em `/auth/login` ou `/auth/register`.
 
 As senhas são protegidas com Argon2 por meio do `pwdlib`; somente o hash é
-persistido. Os tokens são criados e verificados com PyJWT e expiram conforme
-`ACCESS_TOKEN_EXPIRE_MINUTES`.
+persistido. Os tokens são criados e verificados com PyJWT, carregam a data de
+emissão (`iat`) e expiram conforme `ACCESS_TOKEN_EXPIRE_MINUTES`. Trocar a
+senha atualiza `password_changed_at` e invalida tokens emitidos antes dessa
+troca, mesmo que ainda não tenham expirado.
 
 ## Migrações
 

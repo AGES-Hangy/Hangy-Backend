@@ -10,3 +10,15 @@ __pycache__
 htmlcov
 app.db
 tests
+.env
+.env.*
+!.env.example
+.github
+.gitlab-ci.yml
+docs
+scripts
+infra
+**/.terraform
+**/*.tfstate*
+**/*.tfvars*
+**/*.tfplan

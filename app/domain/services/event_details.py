@@ -51,11 +51,7 @@ class EventDetailsService:
         if (
             event.event_privacy is EventPrivacyEnum.INVITE_ONLY
             and not is_organizer
-            and participation_status
-            not in (
-                EventParticipantStatusEnum.INVITED,
-                EventParticipantStatusEnum.CONFIRMED,
-            )
+            and participation_status is not EventParticipantStatusEnum.CONFIRMED
         ):
             raise EventDetailsNotFoundError
         if event.event_status is EventStatusEnum.CANCELLED:
@@ -105,10 +101,19 @@ class EventDetailsService:
             return EventAvailableActionEnum.NONE
         if participation_status is EventParticipantStatusEnum.CONFIRMED:
             return EventAvailableActionEnum.CANCEL_PRESENCE
-        if participation_status is EventParticipantStatusEnum.INVITED:
-            return EventAvailableActionEnum.ACCEPT_INVITE
-        if participation_status is not None:
+        if participation_status is EventParticipantStatusEnum.PENDING:
+            return (
+                EventAvailableActionEnum.CANCEL_PRESENCE
+                if privacy is EventPrivacyEnum.PRIVATE
+                else EventAvailableActionEnum.NONE
+            )
+        if participation_status in (
+            EventParticipantStatusEnum.REJECTED,
+            EventParticipantStatusEnum.REMOVED,
+        ):
             return EventAvailableActionEnum.NONE
+        # None or CANCELLED: the viewer is free to (re)join, same as someone
+        # who never participated.
         if privacy is EventPrivacyEnum.PUBLIC:
             return EventAvailableActionEnum.CONFIRM
         if privacy is EventPrivacyEnum.PRIVATE:
