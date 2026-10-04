@@ -2,7 +2,7 @@
 # One resource_group covers provisioning, publishing and the remote deployment.
 set -Eeuo pipefail
 umask 077
-for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY FRONTEND_BASE_URL GITLAB_OIDC_TOKEN CI_PROJECT_PATH CI_SERVER_URL CI_COMMIT_SHA CI_PIPELINE_ID CI_JOB_ID; do
+for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY FRONTEND_BASE_URL CI_JOB_JWT_V2 CI_PROJECT_PATH CI_SERVER_URL CI_COMMIT_SHA CI_PIPELINE_ID CI_JOB_ID; do
   [[ -n "${!name:-}" ]] || { echo "Missing CI/CD variable: $name" >&2; exit 1; }
 done
 export AWS_REGION="${AWS_REGION:-us-east-2}"
@@ -67,6 +67,13 @@ if ! grep -Fxq 'aws_iam_openid_connect_provider.gitlab[0]' <<< "$state"; then
     '.OpenIDConnectProviderList[].Arn | select(endswith($suffix))' <<< "$providers")
   if [[ -n "$oidc_arn" ]]; then
     export TF_VAR_gitlab_oidc_provider_arn="$oidc_arn"
+    # The legacy token's audience is the GitLab URL. Preserve other clients
+    # when reusing a provider managed outside this Terraform state.
+    provider=$(aws iam get-open-id-connect-provider --open-id-connect-provider-arn "$oidc_arn" --output json)
+    if ! jq -e --arg audience "$CI_SERVER_URL" '.ClientIDList | index($audience) != null' <<< "$provider" >/dev/null; then
+      aws iam add-client-id-to-open-id-connect-provider \
+        --open-id-connect-provider-arn "$oidc_arn" --client-id "$CI_SERVER_URL"
+    fi
   fi
 fi
 terraform -chdir=infra/terraform plan -input=false -lock-timeout=5m -out="$work_dir/hangy.tfplan"
@@ -88,7 +95,7 @@ assumed=false
 for attempt in {1..6}; do
   if aws sts assume-role-with-web-identity --role-arn "$AWS_ROLE_ARN" \
     --role-session-name "hangy-${CI_PIPELINE_ID}-${CI_JOB_ID}" \
-    --web-identity-token "$GITLAB_OIDC_TOKEN" --duration-seconds 3600 \
+    --web-identity-token "$CI_JOB_JWT_V2" --duration-seconds 3600 \
     --output json > "$work_dir/credentials.json" 2> "$work_dir/oidc-error"; then
     assumed=true
     break
@@ -104,7 +111,7 @@ AWS_SECRET_ACCESS_KEY=$(jq -er '.Credentials.SecretAccessKey' "$work_dir/credent
 AWS_SESSION_TOKEN=$(jq -er '.Credentials.SessionToken' "$work_dir/credentials.json")
 export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_SESSION_TOKEN
 rm -f -- "$work_dir/credentials.json"
-unset GITLAB_OIDC_TOKEN
+unset CI_JOB_JWT_V2
 
 repository_uri=$(aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" \
   --query 'repositories[0].repositoryUri' --output text)

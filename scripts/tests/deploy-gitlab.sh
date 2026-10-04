@@ -44,7 +44,7 @@ case "$1" in
     [[ "$TF_VAR_gitlab_project_path" == '2026-2/2jk-4jk/hangy/hangy-backend' ]]
     [[ "$TF_VAR_gitlab_url" == 'https://tools.ages.pucrs.br' ]]
     [[ "$TF_VAR_api_allowed_cidrs" == '["0.0.0.0/0"]' ]]
-    if [[ "$MOCK_CASE" == shared ]]; then
+    if [[ "$MOCK_CASE" == shared* ]]; then
       [[ "$TF_VAR_gitlab_oidc_provider_arn" == 'arn:aws:iam::123456789012:oidc-provider/tools.ages.pucrs.br' ]]
     else
       [[ -z "${TF_VAR_gitlab_oidc_provider_arn:-}" ]]
@@ -75,14 +75,29 @@ case "$1 $2" in
   's3api head-bucket'|'s3api put-public-access-block'|'s3api put-bucket-encryption'|\
   's3api put-bucket-versioning'|'s3api put-bucket-policy') ;;
   'iam list-open-id-connect-providers')
-    if [[ "$MOCK_CASE" == shared ]]; then
+    if [[ "$MOCK_CASE" == shared* ]]; then
       echo '{"OpenIDConnectProviderList":[{"Arn":"arn:aws:iam::123456789012:oidc-provider/tools.ages.pucrs.br"}]}'
     else
       echo '{"OpenIDConnectProviderList":[]}'
     fi
     ;;
+  'iam get-open-id-connect-provider')
+    [[ "$AWS_ACCESS_KEY_ID" == provisioning-key ]]
+    if [[ "$MOCK_CASE" == shared_ready ]]; then
+      echo '{"ClientIDList":["sts.amazonaws.com","https://tools.ages.pucrs.br"]}'
+    else
+      echo '{"ClientIDList":["sts.amazonaws.com"]}'
+    fi
+    ;;
+  'iam add-client-id-to-open-id-connect-provider')
+    [[ "$AWS_ACCESS_KEY_ID" == provisioning-key && "$MOCK_CASE" == shared ]]
+    [[ "$3" == --open-id-connect-provider-arn && "$4" == 'arn:aws:iam::123456789012:oidc-provider/tools.ages.pucrs.br' ]]
+    [[ "$5" == --client-id && "$6" == 'https://tools.ages.pucrs.br' ]]
+    ;;
   'sts assume-role-with-web-identity')
     [[ -z "${AWS_ACCESS_KEY_ID:-}" && -z "${AWS_SECRET_ACCESS_KEY:-}" && -z "${AWS_SESSION_TOKEN:-}" ]]
+    [[ "$3" == --role-arn && "$4" == 'arn:aws:iam::123456789012:role/hangy-gitlab-deploy' ]]
+    [[ "$7" == --web-identity-token && "$8" == oidc-token ]]
     [[ "$MOCK_CASE" != oidc_failure ]] || exit 1
     echo '{"Credentials":{"AccessKeyId":"deploy-key","SecretAccessKey":"deploy-secret","SessionToken":"deploy-token"}}'
     ;;
@@ -115,7 +130,8 @@ run_case() {
     export CI_SERVER_URL=https://tools.ages.pucrs.br
     export CI_COMMIT_SHA=test-commit CI_PIPELINE_ID=1 CI_JOB_ID=2
     export AWS_ACCESS_KEY_ID=provisioning-key AWS_SECRET_ACCESS_KEY=provisioning-secret
-    export AWS_SESSION_TOKEN=provisioning-token GITLAB_OIDC_TOKEN=oidc-token
+    export AWS_SESSION_TOKEN=provisioning-token CI_JOB_JWT_V2=oidc-token
+    if [[ "$scenario" == missing_token ]]; then unset CI_JOB_JWT_V2; fi
     export FRONTEND_BASE_URL=https://hangy.example AWS_REGION=us-east-2
     unset CORS_ORIGINS API_ALLOWED_CIDRS TF_STATE_KEY
     bash scripts/deploy-gitlab.sh
@@ -132,10 +148,19 @@ run_case() {
     if [[ "$scenario" == managed ]]; then
       ! grep -q 'aws iam list-open-id-connect-providers' "$work_dir/operations"
     fi
+    if [[ "$scenario" == shared ]]; then
+      grep -q 'aws iam add-client-id-to-open-id-connect-provider' "$work_dir/operations"
+    else
+      ! grep -q 'aws iam add-client-id-to-open-id-connect-provider' "$work_dir/operations"
+    fi
   else
     [[ "$result" -ne 0 ]]
     case "$scenario" in
       stale) [[ ! -s "$work_dir/operations" ]] ;;
+      missing_token)
+        [[ ! -s "$work_dir/operations" ]]
+        grep -q 'Missing CI/CD variable: CI_JOB_JWT_V2' "$work_dir/output"
+        ;;
       build_failure|oidc_failure) ! grep -q 'aws ssm send-command' "$work_dir/operations" ;;
       ssm_failure) grep -q 'ended with status Failed' "$work_dir/output" ;;
     esac
@@ -147,6 +172,8 @@ run_case() {
 run_case fresh success
 run_case managed success arm64
 run_case shared success
+run_case shared_ready success
+run_case missing_token failure
 run_case stale failure
 run_case build_failure failure
 run_case oidc_failure failure

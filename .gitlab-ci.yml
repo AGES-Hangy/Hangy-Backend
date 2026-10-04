@@ -73,9 +73,7 @@ deploy:
   resource_group: aws-production
   environment:
     name: production
-  id_tokens:
-    GITLAB_OIDC_TOKEN:
-      aud: sts.amazonaws.com
+  # This GitLab instance uses the predefined CI_JOB_JWT_V2 token (pre-15.7).
   rules:
     - if: '$CI_SERVER_HOST == "tools.ages.pucrs.br" && $CI_PROJECT_PATH == "2026-2/2jk-4jk/hangy/hangy-backend" && $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "main" && $CI_COMMIT_REF_PROTECTED == "true"'
     - when: never

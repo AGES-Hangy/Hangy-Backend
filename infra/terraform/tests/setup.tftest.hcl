@@ -73,8 +73,8 @@ run "secure_arm_stack" {
     error_message = "OIDC deve autorizar somente a main do repositório informado."
   }
   assert {
-    condition     = aws_iam_openid_connect_provider.gitlab[0].url == "https://tools.ages.pucrs.br" && contains(aws_iam_openid_connect_provider.gitlab[0].client_id_list, "sts.amazonaws.com") && jsondecode(aws_iam_role.gitlab.assume_role_policy).Statement[0].Condition.StringEquals["tools.ages.pucrs.br:aud"] == "sts.amazonaws.com"
-    error_message = "O provedor e a role devem validar o emissor AGES e a audiência AWS STS."
+    condition     = aws_iam_openid_connect_provider.gitlab[0].url == "https://tools.ages.pucrs.br" && toset(aws_iam_openid_connect_provider.gitlab[0].client_id_list) == toset([var.gitlab_url]) && jsondecode(aws_iam_role.gitlab.assume_role_policy).Statement[0].Condition.StringEquals["tools.ages.pucrs.br:aud"] == var.gitlab_url
+    error_message = "O provedor e a role devem validar o emissor AGES e a audiência fixa de CI_JOB_JWT_V2."
   }
   assert {
     condition     = jsondecode(aws_secretsmanager_secret_version.app.secret_string).DATABASE_URL == "postgresql+psycopg://hangy:TestPasswordForMockProviderOnly1234567890@hangy.test.rds.amazonaws.com:5432/hangy?sslmode=require&connect_timeout=10"

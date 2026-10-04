@@ -72,10 +72,21 @@ O runner precisa existir antes do primeiro pipeline; ele não é instalado na EC
 da aplicação pelo Terraform. Consulte **Settings → CI/CD → Runners** ou a equipe
 da AGES. Sem um runner compatível, os jobs ficam pendentes ou falham ao usar Docker.
 
-O GitLab precisa suportar `id_tokens` (15.7+) e expor publicamente seu discovery
-OIDC e suas chaves em `https://tools.ages.pucrs.br`. A AWS usa esses endpoints
-para validar o token com audiência `sts.amazonaws.com`. O Terraform cria ou
-reutiliza o provedor e limita a role ao caminho completo do projeto e à `main`.
+O pipeline usa o token predefinido `CI_JOB_JWT_V2`, disponível para integração
+OIDC a partir do GitLab 14.7, para funcionar na instância que não reconhece
+`id_tokens` (introduzido no GitLab 15.7). Não cadastre esse token nas variáveis
+CI/CD: ele é emitido pelo GitLab para cada job. Se estiver ausente, o deploy
+falha antes de criar recursos.
+
+O GitLab precisa expor publicamente seu discovery OIDC e suas chaves em
+`https://tools.ages.pucrs.br`. A AWS usa esses endpoints para validar o token,
+cuja audiência fixa é `https://tools.ages.pucrs.br`. O Terraform configura essa
+audiência no provedor e na role, limitada ao caminho completo do projeto e à
+`main`. Ao reutilizar um provedor externo ao state, o script adiciona a audiência
+se necessário, preservando as demais.
+
+`CI_JOB_JWT_V2` foi removido no GitLab 17.0. Antes de atualizar para essa versão,
+migre o job para `id_tokens` e ajuste a audiência do provedor e da role juntos.
 
 ## 2. Configurar variáveis CI/CD no GitLab
 
@@ -92,7 +103,9 @@ Assim, as credenciais ficam disponíveis somente ao job de produção.
 
 A identidade AWS precisa de permissões para gerenciar VPC, EC2/EBS/EIP, RDS,
 ECR, S3, Secrets Manager, IAM/OIDC e documentos/associações SSM, incluindo
-`iam:PassRole` e `iam:ListOpenIDConnectProviders`. A role de deploy criada pelo
+`iam:PassRole`, `iam:ListOpenIDConnectProviders`, `iam:GetOpenIDConnectProvider`
+e `iam:AddClientIDToOpenIDConnectProvider` para reutilizar um provedor existente.
+A role de deploy criada pelo
 Terraform tem permissões menores e não serve como credencial de provisionamento.
 A credencial inicial é o único acesso AWS que precisa existir antes do pipeline.
 
