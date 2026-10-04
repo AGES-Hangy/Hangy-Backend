@@ -96,6 +96,7 @@ resource "aws_iam_role_policy" "gitlab" {
         Action = [
           "ecr:DescribeRepositories",
           "ecr:DescribeImages",
+          "ecr:BatchGetImage",
           "ecr:BatchCheckLayerAvailability",
           "ecr:InitiateLayerUpload",
           "ecr:UploadLayerPart",
