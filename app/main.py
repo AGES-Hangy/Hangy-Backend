@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.presentation.routes import (
     auth_router,
+    businesses_router,
     cancel_participation_router,
     events_router,
     feed_router,
@@ -32,6 +33,7 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(events_router)
 app.include_router(cancel_participation_router)
+app.include_router(businesses_router)
 app.include_router(invites_router)
 app.include_router(notifications_router)
 app.include_router(tags_router)
