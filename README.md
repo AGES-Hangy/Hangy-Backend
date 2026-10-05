@@ -169,6 +169,58 @@ Use um host ou uma VM dedicada ao runner, com seu próprio Docker e apenas jobs
 confiáveis, conforme os [requisitos de deploy](docs/deploy-aws.md).
 Consulte também a [documentação de instalação do runner em Docker](https://docs.gitlab.com/runner/install/docker/).
 
+No Windows, abra o **PowerShell** com o Docker Desktop iniciado no modo
+**Linux containers**. Os comandos abaixo usam a série 14.8 do runner para
+acompanhar a instância GitLab 14.8.2; essa versão antiga não deve ser tratada
+como uma versão atual com correções de segurança.
+
+Inicie o runner com um volume persistente para sua configuração:
+
+```powershell
+docker run -d --name gitlab-runner --restart unless-stopped `
+  -v gitlab-runner-config:/etc/gitlab-runner `
+  -v /var/run/docker.sock:/var/run/docker.sock `
+  gitlab/gitlab-runner:v14.8.0
+```
+
+Registre o runner no projeto:
+
+```powershell
+docker exec -it gitlab-runner gitlab-runner register `
+  --url "https://tools.ages.pucrs.br/" `
+  --executor docker `
+  --docker-image alpine:3.21 `
+  --docker-privileged `
+  --description "Hangy local PC" `
+  --tag-list hangy-docker `
+  --run-untagged=false `
+  --locked=true
+```
+
+Cole o **registration token** obtido acima quando solicitado e aceite os
+valores já preenchidos nos demais prompts. Execute o registro apenas uma vez
+para este runner; reiniciar o contêiner preserva a configuração.
+
+Confira a conexão e os logs:
+
+```powershell
+docker exec gitlab-runner gitlab-runner verify
+docker logs --tail 100 gitlab-runner
+```
+
+Em **Settings → CI/CD → Runners**, confirme que o runner aparece online.
+Para atender também a merge requests de branches não protegidas, ele não deve
+estar marcado como **Protected**. A verificação confirma a conexão; a execução
+de um pipeline valida o funcionamento dos jobs.
+
+Mantenha o PC acordado e o Docker Desktop em execução enquanto houver jobs.
+Para parar ou iniciar novamente o runner:
+
+```powershell
+docker stop gitlab-runner
+docker start gitlab-runner
+```
+
 ## Feed da Home
 
 `GET /feed?limit=10` exige um Bearer token e retorna `sections`, agrupadas
