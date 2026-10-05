@@ -9,6 +9,7 @@ from app.domain.assemblers import (
     AuthAssembler,
     DeviceAssembler,
     PasswordResetAssembler,
+    UserProfileAssembler,
 )
 from app.domain.entities import User
 from app.domain.services import (
@@ -49,6 +50,7 @@ from app.infrastructure.repository.person_profile import (
 )
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
 from app.infrastructure.repository.user_profile import SqlAlchemyUserProfileRepository
+from app.infrastructure.repository.user_tags import SqlAlchemyUserTagsRepository
 from app.presentation.dtos import (
     AuthOutput,
     CurrentUserOutput,
@@ -58,6 +60,7 @@ from app.presentation.dtos import (
     RegisterDeviceInput,
     RegisterDeviceOutput,
     RegisterRequest,
+    UserProfileOutput,
     VerifyResetCodeRequest,
     VerifyResetCodeResponse,
 )
@@ -111,7 +114,10 @@ def get_password_reset_service(
 def get_user_profile_service(
     db: Annotated[Session, Depends(get_db)],
 ) -> UserProfileService:
-    return UserProfileService(repository=SqlAlchemyUserProfileRepository(db))
+    return UserProfileService(
+        repository=SqlAlchemyUserProfileRepository(db),
+        tags_repository=SqlAlchemyUserTagsRepository(db),
+    )
 
 
 credentials_exception = HTTPException(
@@ -378,3 +384,48 @@ def remove_device(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Device not found",
         ) from error
+
+
+@router.get(
+    "/users/me/profile",
+    response_model=UserProfileOutput,
+    status_code=status.HTTP_200_OK,
+    tags=["Profile"],
+    summary="Perfil do usuario autenticado com os contadores das abas",
+    description=(
+        "Retorna os dados do perfil (com as tags de interesse ordenadas pela "
+        "macro e depois pelo nome) e os contadores das abas. `confirmed` conta "
+        "participacoes CONFIRMED em eventos PUBLISHED que ainda nao terminaram; "
+        "`past` conta participacoes CONFIRMED em eventos terminados (`ends_at` "
+        "ja passou ou status FINISHED); eventos cancelados ou excluidos nao "
+        "entram. `photos` conta as imagens das experiencias do proprio usuario. "
+        "`photo_url` vem `null` quando o usuario nao tem foto."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": (
+                "Token ausente, invalido, expirado ou emitido antes da "
+                "ultima troca de senha."
+            ),
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "A conta associada ao token foi excluida.",
+            "content": {
+                "application/json": {"example": {"detail": "Account has been deleted"}}
+            },
+        },
+    },
+)
+def read_current_user_profile(
+    current_user: Annotated[User, Depends(get_current_user)],
+    user_profile_service: Annotated[
+        UserProfileService, Depends(get_user_profile_service)
+    ],
+) -> UserProfileOutput:
+    profile = user_profile_service.get_profile(current_user)
+    return UserProfileAssembler.to_dto(profile)

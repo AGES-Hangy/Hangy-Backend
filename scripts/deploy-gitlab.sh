@@ -123,10 +123,12 @@ docker buildx create --use --name hangy-builder --driver docker-container
 docker buildx build --platform linux/arm64 --load --tag "$image" .
 
 # Exercise the production entrypoint before publishing the image.
+# Allow slower ARM64 emulation on local runners without changing production checks.
 docker run --platform linux/arm64 -d --name hangy-smoke \
+  --health-timeout=30s --health-start-period=120s \
   -e DATABASE_URL=sqlite:// -e JWT_SECRET_KEY=smoke-test-only "$image"
 healthy=false
-for attempt in {1..30}; do
+for attempt in {1..150}; do
   if [[ "$(docker inspect --format '{{.State.Health.Status}}' hangy-smoke)" == healthy ]]; then
     healthy=true
     break
@@ -134,6 +136,8 @@ for attempt in {1..30}; do
   sleep 2
 done
 if [[ "$healthy" != true ]]; then
+  echo 'Smoke test did not become healthy within 300 seconds.' >&2
+  docker inspect --format '{{json .State.Health}}' hangy-smoke
   docker logs hangy-smoke
   exit 1
 fi

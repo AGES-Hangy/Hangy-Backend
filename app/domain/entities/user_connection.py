@@ -14,10 +14,3 @@ class UserConnection:
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class UserFollow:
-    follower_id: UUID
-    followed_business_id: UUID
-    created_at: datetime
