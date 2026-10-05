@@ -8,7 +8,7 @@ fi
 
 # Finish the initial AMI boot before installing packages through State Manager.
 cloud-init status --wait
-dnf install -y docker jq util-linux coreutils awscli2
+dnf install -y docker jq util-linux coreutils awscli-2
 systemctl enable --now docker amazon-ssm-agent
 install -d -m 700 /opt/hangy
 
