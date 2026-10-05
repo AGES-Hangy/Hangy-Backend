@@ -144,10 +144,14 @@ SEED_TAGS: dict[str, tuple[str, ...]] = {
 }
 
 # admin@hangy.com is a BUSINESS user and stays without interests, which makes it
-# the account to check the empty feed with.
+# the account to check the empty feed with. For GET /users/me/tags,
+# pedro@hangy.com has one tag in every macro, listed out of order on purpose so
+# the response shows the macro-then-name ordering, and ana@hangy.com is a
+# PERSONAL user without interests, which returns `{"tags": []}`.
 SEED_INTERESTS: dict[str, tuple[str, ...]] = {
     "user@hangy.com": ("Futebol", "Corrida", "Rock"),
     "maria@hangy.com": ("Samba",),
+    "pedro@hangy.com": ("Teatro", "Sertanejo", "Confeitaria", "Futebol", "Churrasco"),
 }
 
 EVENT_DURATION = timedelta(hours=3)

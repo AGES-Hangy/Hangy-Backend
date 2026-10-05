@@ -105,6 +105,36 @@ def list_tags(
     return TagAssembler.to_dtos(tags)
 
 
+@router.get(
+    "/users/me/tags",
+    response_model=UserTagsOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Listar as tags de interesse do usuario autenticado",
+    description=(
+        "Retorna as tags de interesse atuais do usuario logado, cada uma com a "
+        "sua tag macro em `parent`, para a tela de edicao abrir com elas "
+        "pre-marcadas. A lista vem ordenada pelo nome da macro e depois pelo "
+        "nome da tag. Um usuario sem tags recebe `tags` vazio."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, expirado ou invalido.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+    },
+)
+def list_user_tags(
+    current_user: Annotated[User, Depends(get_current_user)],
+    user_tags_service: Annotated[UserTagsService, Depends(get_user_tags_service)],
+) -> UserTagsOutput:
+    tags = user_tags_service.get_tags(current_user.user_id)
+    return TagAssembler.to_user_tags_dto(tags)
+
+
 @router.put(
     "/users/me/tags",
     response_model=UserTagsOutput,

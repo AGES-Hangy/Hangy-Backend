@@ -9,6 +9,8 @@ from app.domain.enums import TagTypeEnum
 class UserTagsRepository(Protocol):
     def find_by_ids(self, tag_ids: Collection[UUID]) -> list[Tag]: ...
 
+    def list_user_tags(self, user_id: UUID) -> list[Tag]: ...
+
     def replace_user_tags(
         self, user_id: UUID, tag_ids: Collection[UUID]
     ) -> list[Tag]: ...
@@ -27,10 +29,15 @@ class OnlyMicroTagsSelectableError(Exception):
 
 
 class UserTagsService:
-    """Replace the authenticated user's interest tags as a single set."""
+    """Read and replace the authenticated user's interest tags as a single set."""
 
     def __init__(self, repository: UserTagsRepository) -> None:
         self.repository = repository
+
+    def get_tags(self, user_id: UUID) -> list[Tag]:
+        # A user without interests is a valid state (the feed renders its empty
+        # state), so an empty list is returned instead of an error.
+        return self.repository.list_user_tags(user_id)
 
     def replace_tags(self, user_id: UUID, tag_ids: Collection[UUID]) -> list[Tag]:
         if tag_ids:
