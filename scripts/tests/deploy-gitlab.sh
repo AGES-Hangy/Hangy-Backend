@@ -23,7 +23,16 @@ set -euo pipefail
 echo "docker $*" >> "$MOCK_LOG"
 case "$1 ${2:-}" in
   'info --format') echo "${MOCK_ARCH:-x86_64}" ;;
-  'inspect --format') echo healthy ;;
+  'inspect --format')
+    if [[ "$MOCK_CASE" == smoke_timeout ]]; then
+      echo starting
+    elif [[ "$MOCK_CASE" == slow_start ]] && \
+      [[ "$(grep -c '^docker inspect' "$MOCK_LOG")" -le 40 ]]; then
+      echo starting
+    else
+      echo healthy
+    fi
+    ;;
   'buildx build') [[ "$MOCK_CASE" != build_failure ]] ;;
   'login --username') cat >/dev/null ;;
 esac
@@ -162,6 +171,13 @@ run_case() {
         grep -q 'Missing CI/CD variable: CI_JOB_JWT_V2' "$work_dir/output"
         ;;
       build_failure|oidc_failure) ! grep -q 'aws ssm send-command' "$work_dir/operations" ;;
+      smoke_timeout)
+        grep -q 'Smoke test did not become healthy within 300 seconds.' "$work_dir/output"
+        grep -q 'docker inspect --format {{json .State.Health}} hangy-smoke' "$work_dir/operations"
+        grep -q 'docker logs hangy-smoke' "$work_dir/operations"
+        ! grep -q 'docker push' "$work_dir/operations"
+        ! grep -q 'aws ssm send-command' "$work_dir/operations"
+        ;;
       ssm_failure) grep -q 'ended with status Failed' "$work_dir/output" ;;
     esac
   fi
@@ -176,5 +192,7 @@ run_case shared_ready success
 run_case missing_token failure
 run_case stale failure
 run_case build_failure failure
+run_case slow_start success
+run_case smoke_timeout failure
 run_case oidc_failure failure
 run_case ssm_failure failure
