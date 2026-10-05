@@ -12,17 +12,12 @@ class SqlAlchemyUserRepository:
         self.db = db
 
     def get_by_id(self, user_id: UUID) -> User | None:
-        model = self.db.scalar(
-            select(UserModel).where(
-                UserModel.user_id == user_id,
-                UserModel.deleted_at.is_(None),
-            )
-        )
+        # Deleted accounts are included here too: the auth flow needs to see
+        # them to tell "no such account" apart from "this account was deleted".
+        model = self.db.scalar(select(UserModel).where(UserModel.user_id == user_id))
         return self._to_entity(model) if model is not None else None
 
     def get_by_email(self, email: str) -> User | None:
-        # Unlike get_by_id, deleted accounts are included: login needs to
-        # tell "no such account" apart from "this account was deleted".
         model = self.db.scalar(select(UserModel).where(UserModel.email == email))
         return self._to_entity(model) if model is not None else None
 
