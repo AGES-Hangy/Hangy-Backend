@@ -144,6 +144,31 @@ Configure as variáveis CI/CD `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` e
 [guia de deploy](docs/deploy-aws.md). A `main` do GitLab deve permitir force push
 à identidade do espelhamento e continuar protegida para autorizar o deploy.
 
+### Acesso ao GitLab e registro do runner
+
+A URL da instância é **https://tools.ages.pucrs.br/**. Use essa URL base
+no registro do runner, sem acrescentar o caminho do projeto.
+
+Para obter o token de registro no GitLab 14.8.2:
+
+1. Entre no [GitLab da AGES](https://tools.ages.pucrs.br/) com sua conta.
+2. Abra o projeto `2026-2/2jk-4jk/hangy/hangy-backend`.
+3. Acesse **Settings → CI/CD → Runners** e expanda a seção.
+4. Na área de configuração manual de um runner específico do projeto,
+   copie o **registration token**. Se a seção não estiver disponível,
+   solicite acesso ao responsável pelo projeto ou à equipe da AGES.
+5. Informe o token no prompt interativo de registro do runner. Não use um
+   token de acesso pessoal e não salve o token no README, em commits,
+   capturas de tela ou comandos que fiquem no histórico do terminal.
+
+O pipeline exige executor Docker, tag `hangy-docker` e modo privilegiado para
+Docker-in-Docker. Montar `/var/run/docker.sock` dá ao runner controle do Docker;
+jobs privilegiados podem comprometer o ambiente que os executa. Por isso, este
+guia não recomenda executar essa configuração no Docker de um PC de uso diário.
+Use um host ou uma VM dedicada ao runner, com seu próprio Docker e apenas jobs
+confiáveis, conforme os [requisitos de deploy](docs/deploy-aws.md).
+Consulte também a [documentação de instalação do runner em Docker](https://docs.gitlab.com/runner/install/docker/).
+
 ## Feed da Home
 
 `GET /feed?limit=10` exige um Bearer token e retorna `sections`, agrupadas
