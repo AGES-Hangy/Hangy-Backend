@@ -1,17 +1,20 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import func, or_, select
+from sqlalchemy.orm import Session
 
-from app.domain.entities.tag import Tag
-from app.domain.entities.user_profile import UserProfile, UserProfileCounts
-from app.domain.enums import EventParticipantStatusEnum, UserConnectionStatusEnum
+from app.domain.entities import BusinessProfile, PersonProfile, UserProfileCounts
+from app.domain.enums import (
+    EventParticipantStatusEnum,
+    EventStatusEnum,
+    UserConnectionStatusEnum,
+)
 from app.infrastructure.repository.models import (
+    BusinessProfileModel,
     EventModel,
     EventParticipantModel,
-    TagModel,
-    UserModel,
+    PersonProfileModel,
 )
 from app.infrastructure.repository.models.event_experience_model import (
     EventExperienceModel,
@@ -23,9 +26,6 @@ from app.infrastructure.repository.models.user_connection_model import (
     UserConnectionModel,
 )
 
-_CONFIRMED = EventParticipantStatusEnum.CONFIRMED
-_CONNECTION_CONFIRMED = UserConnectionStatusEnum.CONFIRMED
-
 
 def _now_utc() -> datetime:
     return datetime.now(UTC)
@@ -35,107 +35,106 @@ class SqlAlchemyUserProfileRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def get_profile(self, user_id: UUID) -> UserProfile | None:
-        user = self.db.scalar(
-            select(UserModel)
-            .options(selectinload(UserModel.tags))
-            .where(
-                UserModel.user_id == user_id,
-                UserModel.deleted_at.is_(None),
-            )
-        )
-        if user is None:
-            return None
+    def get_person_profile(self, user_id: UUID) -> PersonProfile | None:
+        model = self.db.get(PersonProfileModel, user_id)
+        return self._to_person_entity(model) if model is not None else None
 
+    def get_business_profile(self, user_id: UUID) -> BusinessProfile | None:
+        model = self.db.get(BusinessProfileModel, user_id)
+        return self._to_business_entity(model) if model is not None else None
+
+    def get_profile_counts(self, user_id: UUID) -> UserProfileCounts:
+        """Every counter of the profile screen, aggregated in a single query."""
         now = _now_utc()
+        # A FINISHED event is over even if it was closed before ends_at; a
+        # PUBLISHED one is over once ends_at is reached. CANCELLED and DRAFT
+        # events belong to neither tab.
+        is_over = or_(
+            EventModel.event_status == EventStatusEnum.FINISHED,
+            EventModel.ends_at <= now,
+        )
 
-        confirmed_count = (
-            self.db.scalar(
+        def confirmed_participations(*conditions):
+            return (
                 select(func.count())
                 .select_from(EventParticipantModel)
                 .join(EventModel, EventModel.event_id == EventParticipantModel.event_id)
                 .where(
                     EventParticipantModel.user_id == user_id,
-                    EventParticipantModel.status == _CONFIRMED,
-                    EventModel.ends_at > now,
+                    EventParticipantModel.status
+                    == EventParticipantStatusEnum.CONFIRMED,
                     EventModel.deleted_at.is_(None),
+                    *conditions,
                 )
+                .scalar_subquery()
             )
-            or 0
-        )
 
-        past_count = (
-            self.db.scalar(
-                select(func.count())
-                .select_from(EventParticipantModel)
-                .join(EventModel, EventModel.event_id == EventParticipantModel.event_id)
-                .where(
-                    EventParticipantModel.user_id == user_id,
-                    EventParticipantModel.status == _CONFIRMED,
-                    EventModel.ends_at <= now,
-                    EventModel.deleted_at.is_(None),
-                )
-            )
-            or 0
+        confirmed = confirmed_participations(
+            EventModel.event_status == EventStatusEnum.PUBLISHED, ~is_over
         )
-
-        photos_count = (
-            self.db.scalar(
-                select(func.count())
-                .select_from(ExperienceImagesModel)
-                .join(
-                    EventExperienceModel,
-                    EventExperienceModel.experience_id
-                    == ExperienceImagesModel.experience_id,
-                )
-                .join(
-                    EventParticipantModel,
-                    EventParticipantModel.participant_id
-                    == EventExperienceModel.event_participant_id,
-                )
-                .where(
-                    EventParticipantModel.user_id == user_id,
-                    ExperienceImagesModel.deleted_at.is_(None),
-                    EventExperienceModel.deleted_at.is_(None),
-                )
-            )
-            or 0
-        )
-
-        connections_count = (
-            self.db.scalar(
-                select(func.count())
-                .select_from(UserConnectionModel)
-                .where(
-                    (
-                        (UserConnectionModel.requester_id == user_id)
-                        | (UserConnectionModel.receiver_id == user_id)
-                    ),
-                    UserConnectionModel.status == _CONNECTION_CONFIRMED,
-                    UserConnectionModel.deleted_at.is_(None),
-                )
-            )
-            or 0
-        )
-
-        return UserProfile(
-            user_id=user.user_id,
-            name=user.name,
-            description=user.description,
-            photo_url=user.profile_photo_url,
-            tags=tuple(_to_tag_entity(t) for t in user.tags),
-            connections_count=connections_count,
-            counts=UserProfileCounts(
-                past=past_count,
-                confirmed=confirmed_count,
-                photos=photos_count,
+        past = confirmed_participations(
+            EventModel.event_status.in_(
+                (EventStatusEnum.PUBLISHED, EventStatusEnum.FINISHED)
             ),
+            is_over,
+        )
+        photos = (
+            select(func.count())
+            .select_from(ExperienceImagesModel)
+            .join(
+                EventExperienceModel,
+                EventExperienceModel.experience_id
+                == ExperienceImagesModel.experience_id,
+            )
+            .join(
+                EventParticipantModel,
+                EventParticipantModel.participant_id
+                == EventExperienceModel.event_participant_id,
+            )
+            .where(
+                EventParticipantModel.user_id == user_id,
+                EventExperienceModel.deleted_at.is_(None),
+                ExperienceImagesModel.deleted_at.is_(None),
+            )
+            .scalar_subquery()
+        )
+        connections = (
+            select(func.count())
+            .select_from(UserConnectionModel)
+            .where(
+                or_(
+                    UserConnectionModel.requester_id == user_id,
+                    UserConnectionModel.receiver_id == user_id,
+                ),
+                UserConnectionModel.status == UserConnectionStatusEnum.CONFIRMED,
+                UserConnectionModel.deleted_at.is_(None),
+            )
+            .scalar_subquery()
         )
 
+        row = self.db.execute(select(past, confirmed, photos, connections)).one()
+        return UserProfileCounts(
+            past=row[0], confirmed=row[1], photos=row[2], connections=row[3]
+        )
 
-def _to_tag_entity(model: TagModel) -> Tag:
-    return Tag(
-        tag_id=model.tag_id,
-        tag_name=model.tag_name,
-        tag_parent_id=model.tag_parent_id,
-    )
+    @staticmethod
+    def _to_person_entity(model: PersonProfileModel) -> PersonProfile:
+        return PersonProfile(
+            user_id=model.user_id,
+            cpf=model.cpf,
+            date_of_birth=model.date_of_birth,
+            state=model.state,
+            city=model.city,
+            updated_at=model.updated_at,
+        )
+
+    @staticmethod
+    def _to_business_entity(model: BusinessProfileModel) -> BusinessProfile:
+        return BusinessProfile(
+            user_id=model.user_id,
+            cnpj=model.cnpj,
+            address=model.address,
+            updated_at=model.updated_at,
+            business_latitude=model.business_latitude,
+            business_longitude=model.business_longitude,
+        )

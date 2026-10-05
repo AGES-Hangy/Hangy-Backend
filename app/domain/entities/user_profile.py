@@ -11,6 +11,7 @@ class UserProfileCounts:
     past: int
     confirmed: int
     photos: int
+    connections: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,5 +21,4 @@ class UserProfile:
     description: str | None
     photo_url: str | None
     tags: tuple[Tag, ...]
-    connections_count: int
     counts: UserProfileCounts

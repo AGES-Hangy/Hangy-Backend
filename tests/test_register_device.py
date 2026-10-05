@@ -129,7 +129,7 @@ def test_token_is_reassigned_to_new_user(client: TestClient) -> None:
 
     assert row is not None
     me_b = client.get("/users/me", headers=auth_headers(token_b)).json()
-    assert str(row.user_id) == me_b["user_id"]
+    assert str(row.user_id) == me_b["id"]
 
 
 def test_invalid_token_format_returns_422(client: TestClient) -> None:

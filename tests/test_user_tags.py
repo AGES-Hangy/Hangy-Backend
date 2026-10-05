@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 import pytest
@@ -8,9 +8,15 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.domain.enums import EventPrivacyEnum, EventStatusEnum, UserTypeEnum
 from app.domain.services import UserNotFoundError, UserTagNotFoundError
 from app.infrastructure.repository import Base, get_db
-from app.infrastructure.repository.models import TagModel, UserModel
+from app.infrastructure.repository.models import (
+    EventModel,
+    TagModel,
+    UserModel,
+    event_tag,
+)
 from app.infrastructure.repository.models.user_model import user_tag
 from app.infrastructure.repository.user_tags import SqlAlchemyUserTagsRepository
 from app.main import app
@@ -319,3 +325,197 @@ def test_sending_more_than_the_max_allowed_tags_returns_422(
     )
 
     assert response.status_code == 422
+
+
+def open_db() -> Iterator[Session]:
+    return app.dependency_overrides[get_db]()
+
+
+def get_user_tags(client: TestClient, token: str) -> dict:
+    response = client.get("/users/me/tags", headers=auth_headers(token))
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_get_returns_current_tags_with_their_macro_ordered_by_macro_then_name(
+    client: TestClient,
+) -> None:
+    _, token = register_and_authenticate(client)
+    client.put(
+        "/users/me/tags",
+        json={"tag_ids": [str(FOOTBALL_ID), str(YOGA_ID), str(RUNNING_ID)]},
+        headers=auth_headers(token),
+    )
+
+    # "Bem-estar" sorts before "Esportes", so Yoga comes first even though
+    # "Corrida" and "Futebol" sort before "Yoga" by their own names.
+    assert get_user_tags(client, token) == {
+        "tags": [
+            {
+                "id": str(YOGA_ID),
+                "name": "Yoga",
+                "parent": {"id": str(WELLBEING_ID), "name": "Bem-estar"},
+            },
+            {
+                "id": str(RUNNING_ID),
+                "name": "Corrida",
+                "parent": {"id": str(SPORTS_ID), "name": "Esportes"},
+            },
+            {
+                "id": str(FOOTBALL_ID),
+                "name": "Futebol",
+                "parent": {"id": str(SPORTS_ID), "name": "Esportes"},
+            },
+        ]
+    }
+
+
+def test_get_returns_null_parent_for_a_tag_without_macro(client: TestClient) -> None:
+    # The PUT only accepts micro tags, but a row pointing at a macro tag (old
+    # data, or a parent deleted with ON DELETE SET NULL) must still be listed,
+    # sorted under its own name.
+    user_id, token = register_and_authenticate(client)
+    db_generator = open_db()
+    db = next(db_generator)
+    try:
+        for tag_id in (FOOTBALL_ID, SPORTS_ID):
+            db.execute(user_tag.insert().values(user_id=UUID(user_id), tag_id=tag_id))
+        db.commit()
+    finally:
+        db_generator.close()
+
+    assert get_user_tags(client, token) == {
+        "tags": [
+            {"id": str(SPORTS_ID), "name": "Esportes", "parent": None},
+            {
+                "id": str(FOOTBALL_ID),
+                "name": "Futebol",
+                "parent": {"id": str(SPORTS_ID), "name": "Esportes"},
+            },
+        ]
+    }
+
+
+def test_get_for_a_user_without_tags_returns_an_empty_list(client: TestClient) -> None:
+    _, token = register_and_authenticate(client)
+
+    assert get_user_tags(client, token) == {"tags": []}
+
+
+def test_get_without_a_token_returns_401(client: TestClient) -> None:
+    response = client.get("/users/me/tags")
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Could not validate credentials"}
+
+
+def test_get_with_an_invalid_token_returns_401(client: TestClient) -> None:
+    response = client.get("/users/me/tags", headers=auth_headers("not-a-valid-token"))
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Could not validate credentials"}
+
+
+def test_replacing_the_set_is_reflected_in_the_next_get(client: TestClient) -> None:
+    _, token = register_and_authenticate(client)
+    client.put(
+        "/users/me/tags",
+        json={"tag_ids": [str(FOOTBALL_ID), str(RUNNING_ID)]},
+        headers=auth_headers(token),
+    )
+
+    response = client.put(
+        "/users/me/tags",
+        json={"tag_ids": [str(YOGA_ID), str(FOOTBALL_ID)]},
+        headers=auth_headers(token),
+    )
+    assert response.status_code == 200
+
+    tags = get_user_tags(client, token)["tags"]
+    assert [tag["id"] for tag in tags] == [str(YOGA_ID), str(FOOTBALL_ID)]
+
+
+def test_sending_the_same_set_twice_gives_the_same_get(client: TestClient) -> None:
+    _, token = register_and_authenticate(client)
+    payload = {"tag_ids": [str(FOOTBALL_ID), str(YOGA_ID)]}
+
+    client.put("/users/me/tags", json=payload, headers=auth_headers(token))
+    first = get_user_tags(client, token)
+    client.put("/users/me/tags", json=payload, headers=auth_headers(token))
+    second = get_user_tags(client, token)
+
+    assert len(first["tags"]) == 2
+    assert first == second
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "PUT /users/me/tags aceita lista vazia e limpa as tags (200); a US2.3 "
+        "pede 400. Pendente na task 065."
+    ),
+)
+def test_replacing_with_an_empty_list_returns_400(client: TestClient) -> None:
+    _, token = register_and_authenticate(client)
+
+    response = client.put(
+        "/users/me/tags", json={"tag_ids": []}, headers=auth_headers(token)
+    )
+
+    assert response.status_code == 400
+
+
+def test_the_feed_follows_the_replaced_tags(client: TestClient) -> None:
+    _, token = register_and_authenticate(client)
+    db_generator = open_db()
+    db = next(db_generator)
+    try:
+        creator = UserModel(
+            user_type=UserTypeEnum.PERSONAL,
+            email="creator@hangy.com",
+            password_hash="hashed",
+        )
+        db.add(creator)
+        db.commit()
+        starts_at = datetime.now(UTC) + timedelta(days=1)
+        for title, tag_id in (("Pelada no Parcão", FOOTBALL_ID), ("Yoga", YOGA_ID)):
+            event = EventModel(
+                event_creator_id=creator.user_id,
+                event_title=title,
+                event_latitude=-30.0,
+                event_longitude=-51.0,
+                starts_at=starts_at,
+                ends_at=starts_at + timedelta(hours=2),
+                event_status=EventStatusEnum.PUBLISHED,
+                event_privacy=EventPrivacyEnum.PUBLIC,
+            )
+            db.add(event)
+            db.commit()
+            db.execute(
+                event_tag.insert().values(event_id=event.event_id, tag_id=tag_id)
+            )
+        db.commit()
+    finally:
+        db_generator.close()
+
+    def feed_titles() -> dict[str, list[str]]:
+        response = client.get("/feed", headers=auth_headers(token))
+        assert response.status_code == 200, response.text
+        return {
+            section["tag"]["name"]: [item["title"] for item in section["items"]]
+            for section in response.json()["sections"]
+        }
+
+    client.put(
+        "/users/me/tags",
+        json={"tag_ids": [str(FOOTBALL_ID)]},
+        headers=auth_headers(token),
+    )
+    assert feed_titles() == {"Esportes": ["Pelada no Parcão"]}
+
+    client.put(
+        "/users/me/tags",
+        json={"tag_ids": [str(YOGA_ID)]},
+        headers=auth_headers(token),
+    )
+    assert feed_titles() == {"Bem-estar": ["Yoga"]}

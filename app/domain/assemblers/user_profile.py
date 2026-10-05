@@ -23,7 +23,7 @@ class UserProfileAssembler:
                     for tag in profile.tags
                     if tag.tag_id is not None
                 ],
-                connections_count=profile.connections_count,
+                connections_count=profile.counts.connections,
             ),
             counts=UserProfileCountsOutput(
                 past=profile.counts.past,

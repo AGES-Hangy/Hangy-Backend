@@ -1,12 +1,12 @@
 from collections.abc import Collection
 from uuid import UUID
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session, aliased, contains_eager, joinedload
 
 from app.domain.entities import Tag
 from app.domain.services import UserNotFoundError, UserTagNotFoundError
-from app.infrastructure.repository.models import TagModel, UserModel
+from app.infrastructure.repository.models import TagModel, UserModel, user_tag
 from app.infrastructure.repository.tag import SqlAlchemyTagRepository
 
 
@@ -29,6 +29,27 @@ class SqlAlchemyUserTagsRepository:
             )
             for model in models
         ]
+
+    def list_user_tags(self, user_id: UUID) -> list[Tag]:
+        """The user's tags ordered by macro name, then tag name, then id."""
+        # A tag without a parent sorts under its own name, so the order does not
+        # depend on where each database places NULLs.
+        parent = aliased(TagModel)
+        models = self.db.scalars(
+            select(TagModel)
+            .join(user_tag, user_tag.c.tag_id == TagModel.tag_id)
+            # The same outer join sorts by the macro name and fills `parent`,
+            # so building the entities issues no extra query per tag (no N+1).
+            .outerjoin(parent, TagModel.parent)
+            .where(user_tag.c.user_id == user_id)
+            .options(contains_eager(TagModel.parent.of_type(parent)))
+            .order_by(
+                func.coalesce(parent.tag_name, TagModel.tag_name),
+                TagModel.tag_name,
+                TagModel.tag_id,
+            )
+        ).all()
+        return [self._to_entity(model) for model in models]
 
     def replace_user_tags(self, user_id: UUID, tag_ids: Collection[UUID]) -> list[Tag]:
         user_model = self._get_active_user(user_id)
