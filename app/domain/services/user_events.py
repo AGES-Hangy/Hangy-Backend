@@ -58,7 +58,7 @@ class UserEventsService:
         cursor_event_id: UUID | None = None
         if cursor:
             cursor_starts_at, cursor_event_id = decode_cursor(cursor)
-            
+
         events = self.repository.list_for_user(
             user_id,
             requested_tab,
