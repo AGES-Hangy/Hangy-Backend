@@ -1,10 +1,15 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
-from app.domain.entities import BusinessProfile, PersonProfile, UserProfileCounts
+from app.domain.entities import (
+    BusinessProfile,
+    EditedPersonProfile,
+    PersonProfile,
+    UserProfileCounts,
+)
 from app.domain.enums import (
     EventParticipantStatusEnum,
     EventStatusEnum,
@@ -15,6 +20,7 @@ from app.infrastructure.repository.models import (
     EventModel,
     EventParticipantModel,
     PersonProfileModel,
+    UserModel,
 )
 from app.infrastructure.repository.models.event_experience_model import (
     EventExperienceModel,
@@ -116,6 +122,38 @@ class SqlAlchemyUserProfileRepository:
         return UserProfileCounts(
             past=row[0], confirmed=row[1], photos=row[2], connections=row[3]
         )
+
+    def update_person_profile(
+        self, profile: EditedPersonProfile
+    ) -> EditedPersonProfile:
+        # Name and bio are shared by every user type, so they live on user;
+        # the location belongs to person_profile. Both change in one commit.
+        self.db.execute(
+            update(UserModel)
+            .where(
+                UserModel.user_id == profile.user_id,
+                UserModel.deleted_at.is_(None),
+            )
+            .values(
+                name=profile.name,
+                description=profile.description,
+                updated_at=profile.updated_at,
+            )
+        )
+        self.db.execute(
+            update(PersonProfileModel)
+            .where(
+                PersonProfileModel.user_id == profile.user_id,
+                PersonProfileModel.user.has(UserModel.deleted_at.is_(None)),
+            )
+            .values(
+                state=profile.state,
+                city=profile.city,
+                updated_at=profile.updated_at,
+            )
+        )
+        self.db.commit()
+        return profile
 
     @staticmethod
     def _to_person_entity(model: PersonProfileModel) -> PersonProfile:
