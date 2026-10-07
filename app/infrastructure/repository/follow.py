@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -65,6 +65,16 @@ class SqlAlchemyFollowRepository:
             # first. The composite PK keeps a single row; the outcome is the
             # same as an already-followed business.
             self.db.rollback()
+
+    def remove(self, follower_id: UUID, followed_business_id: UUID) -> None:
+        """Delete the follow row. Deleting a missing row is a no-op."""
+        self.db.execute(
+            delete(UserFollowModel).where(
+                UserFollowModel.follower_id == follower_id,
+                UserFollowModel.followed_business_id == followed_business_id,
+            )
+        )
+        self.db.commit()
 
     @staticmethod
     def _to_entity(model: UserFollowModel) -> UserFollow:
