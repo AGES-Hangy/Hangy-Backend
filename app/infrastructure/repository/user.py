@@ -1,4 +1,5 @@
-from datetime import datetime
+import secrets
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -25,7 +26,7 @@ class SqlAlchemyUserRepository:
         return self._to_entity(model) if model is not None else None
 
     def has_future_events_as_organizer(self, user_id: UUID) -> bool:
-        now = datetime.now()
+        now = datetime.now(UTC)
         stmt = select(EventModel.event_id).where(
             EventModel.event_creator_id == user_id,
             EventModel.deleted_at.is_(None),
@@ -39,6 +40,7 @@ class SqlAlchemyUserRepository:
         if model is None:
             return
         model.email = f"deleted_{user_id}@deleted.invalid"
+        model.password_hash = secrets.token_hex(32)
         model.name = None
         model.description = None
         model.user_phone = None

@@ -2,16 +2,11 @@ from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
-from pwdlib import PasswordHash
-
 from app.domain.entities import User
-
-password_hash = PasswordHash.recommended()
+from app.domain.services.auth import password_hash
 
 
 class DeleteAccountRepository(Protocol):
-    def get_by_id(self, user_id: UUID) -> User | None: ...
-
     def soft_delete(self, user_id: UUID, deleted_at: datetime) -> None: ...
 
     def has_future_events_as_organizer(self, user_id: UUID) -> bool: ...
