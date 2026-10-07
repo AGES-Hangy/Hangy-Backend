@@ -25,3 +25,21 @@ class BusinessProfile:
     updated_at: datetime
     business_latitude: float | None = None
     business_longitude: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OwnBusinessProfile:
+    """A business account as shown to its own owner.
+
+    The display name, bio and phone live on the user row, while CNPJ, address
+    and coordinates live on the business profile, so this joins both halves.
+    """
+
+    user_id: UUID
+    cnpj: str
+    address: str
+    business_name: str | None = None
+    description: str | None = None
+    phone: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None

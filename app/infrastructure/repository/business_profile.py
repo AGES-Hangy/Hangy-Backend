@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -75,3 +77,15 @@ class SqlAlchemyBusinessRegistrationRepository:
             business_latitude=model.business_latitude,
             business_longitude=model.business_longitude,
         )
+
+class SqlAlchemyBusinessProfileRepository:
+    def __init__(self, db: Session) -> None:
+        self.db = db
+
+    def get_by_user_id(self, user_id: UUID) -> BusinessProfile | None:
+        model = self.db.scalar(
+            select(BusinessProfileModel).where(BusinessProfileModel.user_id == user_id)
+        )
+        if model is None:
+            return None
+        return SqlAlchemyBusinessRegistrationRepository._to_entity(model)
