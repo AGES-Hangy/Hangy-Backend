@@ -1,9 +1,11 @@
+from app.domain.entities.person_profile_update import EditedPersonProfile
 from app.domain.entities.user_profile import UserProfile
 from app.presentation.dtos.user_profile import (
     ProfileTagOutput,
     UserProfileCountsOutput,
     UserProfileDataOutput,
     UserProfileOutput,
+    UserProfileUpdateOutput,
 )
 
 __all__ = ["UserProfileAssembler"]
@@ -30,4 +32,14 @@ class UserProfileAssembler:
                 confirmed=profile.counts.confirmed,
                 photos=profile.counts.photos,
             ),
+        )
+
+    @staticmethod
+    def to_update_dto(profile: EditedPersonProfile) -> UserProfileUpdateOutput:
+        return UserProfileUpdateOutput(
+            id=profile.user_id,
+            name=profile.name,
+            description=profile.description,
+            city=profile.city,
+            updated_at=profile.updated_at,
         )
