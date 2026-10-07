@@ -73,3 +73,45 @@ def follow_business(
             status.HTTP_403_FORBIDDEN, "Target is not a business profile"
         ) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+@router.delete(
+    "/{business_id}/follow",
+    response_model=None,
+    response_class=Response,
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Deixar de seguir um estabelecimento",
+    description=(
+        "O usuário autenticado deixa de seguir o estabelecimento. Idempotente: "
+        "deixar de seguir quem não é seguido também devolve 204."
+    ),
+    responses={
+        401: {
+            "description": "Token ausente, expirado ou inválido.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        404: {
+            "description": "Estabelecimento inexistente ou excluído.",
+            "content": {
+                "application/json": {"example": {"detail": "Business not found"}}
+            },
+        },
+    },
+)
+def unfollow_business(
+    business_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[FollowService, Depends(get_follow_service)],
+) -> Response:
+    if current_user.user_id is None:
+        raise credentials_exception
+    try:
+        service.unfollow(current_user.user_id, business_id)
+    except (BusinessNotFoundError, TargetNotBusinessError) as error:
+        # A personal profile is never a followable business, so for this
+        # endpoint it is indistinguishable from a missing one.
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Business not found") from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -174,3 +174,73 @@ def test_follow_with_invalid_token_returns_401(client: TestClient) -> None:
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Could not validate credentials"}
+
+def test_unfollow_business_returns_204_and_removes_the_follow(
+    client: TestClient,
+) -> None:
+    client.post(f"/businesses/{BUSINESS_ID}/follow", headers=_auth())
+
+    response = client.delete(f"/businesses/{BUSINESS_ID}/follow", headers=_auth())
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert _follow_rows(client) == []
+
+
+def test_unfollow_business_not_followed_is_idempotent(client: TestClient) -> None:
+    first = client.delete(f"/businesses/{BUSINESS_ID}/follow", headers=_auth())
+    second = client.delete(f"/businesses/{BUSINESS_ID}/follow", headers=_auth())
+
+    assert first.status_code == 204
+    assert second.status_code == 204
+    assert _follow_rows(client) == []
+
+
+def test_unfollow_only_removes_the_callers_follow(client: TestClient) -> None:
+    client.post(f"/businesses/{BUSINESS_ID}/follow", headers=_auth())
+    client.post(f"/businesses/{BUSINESS_ID}/follow", headers=_auth(OTHER_PERSON_ID))
+
+    response = client.delete(f"/businesses/{BUSINESS_ID}/follow", headers=_auth())
+
+    assert response.status_code == 204
+    assert _follow_rows(client) == [(OTHER_PERSON_ID, BUSINESS_ID)]
+
+
+def test_unfollow_missing_business_returns_404(client: TestClient) -> None:
+    response = client.delete(f"/businesses/{MISSING_ID}/follow", headers=_auth())
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Business not found"}
+
+
+def test_unfollow_deleted_business_returns_404(client: TestClient) -> None:
+    response = client.delete(
+        f"/businesses/{DELETED_BUSINESS_ID}/follow", headers=_auth()
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Business not found"}
+
+
+def test_unfollow_personal_profile_returns_404(client: TestClient) -> None:
+    response = client.delete(f"/businesses/{OTHER_PERSON_ID}/follow", headers=_auth())
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Business not found"}
+
+
+def test_unfollow_without_token_returns_401(client: TestClient) -> None:
+    response = client.delete(f"/businesses/{BUSINESS_ID}/follow")
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Could not validate credentials"}
+
+
+def test_unfollow_with_invalid_token_returns_401(client: TestClient) -> None:
+    response = client.delete(
+        f"/businesses/{BUSINESS_ID}/follow",
+        headers={"Authorization": "Bearer invalid"},
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Could not validate credentials"}
