@@ -15,12 +15,14 @@ from app.domain.entities import User
 from app.domain.services import (
     AccountDeletedError,
     AuthService,
+    DeleteAccountService,
     DescriptionTooLongError,
     DeviceNotFoundError,
     DeviceService,
     DuplicateCnpjError,
     DuplicateCpfError,
     DuplicateEmailError,
+    HasFutureEventsError,
     InvalidAccessTokenError,
     InvalidCnpjError,
     InvalidCoordinatesError,
@@ -31,6 +33,7 @@ from app.domain.services import (
     InvalidResetTokenError,
     MinimumAgeError,
     NotAPersonalProfileError,
+    PasswordConfirmationError,
     PasswordResetService,
     RegisterBusinessService,
     RegisterPersonalService,
@@ -56,6 +59,7 @@ from app.infrastructure.repository.user_tags import SqlAlchemyUserTagsRepository
 from app.presentation.dtos import (
     AuthOutput,
     CurrentUserOutput,
+    DeleteAccountInput,
     LoginRequest,
     PasswordResetConfirmInput,
     PasswordResetRequestInput,
@@ -504,3 +508,62 @@ def update_current_user_profile(
             detail="Description exceeds maximum length",
         ) from error
     return UserProfileAssembler.to_update_dto(profile)
+
+
+def get_delete_account_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> DeleteAccountService:
+    return DeleteAccountService(repository=SqlAlchemyUserRepository(db))
+
+
+@router.delete(
+    "/users/me",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, invalido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Senha incorreta.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Password confirmation failed"}
+                }
+            },
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "Usuario organiza eventos futuros.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Account has future events as organizer"}
+                }
+            },
+        },
+    },
+)
+def delete_account(
+    payload: DeleteAccountInput,
+    current_user: Annotated[User, Depends(get_current_user)],
+    delete_service: Annotated[
+        DeleteAccountService, Depends(get_delete_account_service)
+    ],
+) -> Response:
+    try:
+        delete_service.delete_account(current_user, payload.password.get_secret_value())
+    except PasswordConfirmationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Password confirmation failed",
+        ) from error
+    except HasFutureEventsError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Account has future events as organizer",
+        ) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
