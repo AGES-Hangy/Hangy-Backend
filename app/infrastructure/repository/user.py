@@ -1,5 +1,5 @@
 import secrets
-from datetime import UTC, date, datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from sqlalchemy import delete, or_, select, update
@@ -9,12 +9,18 @@ from app.domain.entities import User
 from app.domain.enums import EventParticipantStatusEnum, EventStatusEnum
 from app.domain.services.auth import password_hash
 from app.infrastructure.repository.models import UserModel
-from app.infrastructure.repository.models.business_profile_model import BusinessProfileModel
+from app.infrastructure.repository.models.business_profile_model import (
+    BusinessProfileModel,
+)
 from app.infrastructure.repository.models.event_model import EventModel
-from app.infrastructure.repository.models.event_participant_model import EventParticipantModel
+from app.infrastructure.repository.models.event_participant_model import (
+    EventParticipantModel,
+)
 from app.infrastructure.repository.models.follow import UserFollowModel
 from app.infrastructure.repository.models.person_profile_model import PersonProfileModel
-from app.infrastructure.repository.models.user_connection_model import UserConnectionModel
+from app.infrastructure.repository.models.user_connection_model import (
+    UserConnectionModel,
+)
 from app.infrastructure.repository.models.user_device_model import UserDeviceModel
 
 

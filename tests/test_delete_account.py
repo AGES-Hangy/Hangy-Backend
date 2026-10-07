@@ -160,7 +160,7 @@ def test_pii_fields_anonymized_after_deletion(client: TestClient) -> None:
     )
     assert profile is not None
     assert profile.cpf != PERSONAL_PAYLOAD["cpf"]
-    assert profile.date_of_birth is not None  # NOT NULL — uses sentinel date(1900, 1, 1)
+    assert profile.date_of_birth is not None  # NOT NULL — sentinel date(1900, 1, 1)
     assert profile.state == ""
     assert profile.city == ""
 
