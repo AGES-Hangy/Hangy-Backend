@@ -175,6 +175,7 @@ def test_follow_with_invalid_token_returns_401(client: TestClient) -> None:
     assert response.status_code == 401
     assert response.json() == {"detail": "Could not validate credentials"}
 
+
 def test_unfollow_business_returns_204_and_removes_the_follow(
     client: TestClient,
 ) -> None:

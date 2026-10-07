@@ -74,6 +74,7 @@ def follow_business(
         ) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+
 @router.delete(
     "/{business_id}/follow",
     response_model=None,
