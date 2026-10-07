@@ -212,7 +212,7 @@ def test_get_profile_returns_404_if_blocked(
         column("blocked_id", Uuid),
     )
 
-    # We must ensure the table exists in sqlite for testing, but it's not created by Base.metadata because it's not a model
+    # This unmapped table must be created explicitly for the SQLite fixture.
     try:
         from sqlalchemy import Column, MetaData, Table
 

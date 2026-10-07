@@ -28,6 +28,7 @@ from app.infrastructure.repository.models import (
 from app.main import app
 from app.seed import (
     SEED_EVENTS,
+    SEED_INTERESTS,
     SEED_NOTIFICATIONS,
     SEED_TAGS,
     SEED_USERS,
@@ -86,7 +87,9 @@ def test_seed_creates_the_sample_data_only_once(
         assert len(tags) == SEED_TAG_COUNT
         assert count(db, EventModel) == len(SEED_EVENTS)
         assert count(db, EventInviteLinkModel) == 1
-        assert count(db, user_tag) == 4
+        assert count(db, user_tag) == sum(
+            len(tag_names) for tag_names in SEED_INTERESTS.values()
+        )
         assert count(db, EventParticipantModel) == 12
         assert count(db, NotificationModel) == len(SEED_NOTIFICATIONS)
 
@@ -265,6 +268,55 @@ def test_seeded_business_user_has_an_empty_feed(
     app.dependency_overrides.clear()
 
     assert response.json() == {"sections": []}
+
+
+@pytest.mark.parametrize(
+    ("email", "password", "expected"),
+    [
+        (
+            "pedro@hangy.com",
+            "pedro-password",
+            [
+                ("Arte e Cultura", "Teatro"),
+                ("Esportes", "Futebol"),
+                ("Gastronomia", "Churrasco"),
+                ("Gastronomia", "Confeitaria"),
+                ("Música", "Sertanejo"),
+            ],
+        ),
+        ("ana@hangy.com", "ana-password", []),
+    ],
+)
+def test_seeded_user_tags_match_the_documented_sample(
+    session_factory: sessionmaker[Session],
+    email: str,
+    password: str,
+    expected: list[tuple[str, str]],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+
+    def override_get_db() -> Iterator[Session]:
+        with session_factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as client:
+        login = client.post(
+            "/auth/login",
+            json={"email": email, "password": password},
+        )
+        assert login.status_code == 200
+        response = client.get(
+            "/users/me/tags",
+            headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert [
+        (tag["parent"]["name"], tag["name"]) for tag in response.json()["tags"]
+    ] == expected
 
 
 def test_seeded_notifications_feed_the_unread_count(
@@ -502,3 +554,69 @@ def test_seed_resets_only_the_demo_notification_to_unread(
 
         assert db.get(NotificationModel, demo_id).read is False
         assert db.get(NotificationModel, user_notification_id).read is True
+
+
+@pytest.mark.parametrize(
+    ("email", "password", "status_code", "expected"),
+    [
+        (
+            "carla@hangy.com",
+            "carla-password",
+            200,
+            {"name": "Carla Dias", "description": "Curto samba", "city": "Canoas"},
+        ),
+        (
+            "admin@hangy.com",
+            "admin-password",
+            403,
+            {"detail": "Not a personal profile"},
+        ),
+    ],
+)
+def test_seeded_users_cover_the_profile_update_cases(
+    session_factory: sessionmaker[Session],
+    email: str,
+    password: str,
+    status_code: int,
+    expected: dict[str, str],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+
+    def override_get_db() -> Iterator[Session]:
+        with session_factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as client:
+        login = client.post(
+            "/auth/login",
+            json={"email": email, "password": password},
+        )
+        assert login.status_code == 200
+        response = client.patch(
+            "/users/me/profile",
+            headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+            json={"description": "Curto samba", "city": "Canoas"},
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == status_code
+    assert response.json().items() >= expected.items()
+
+
+def test_seed_preserves_a_profile_edited_while_testing(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        carla = db.scalar(select(UserModel).where(UserModel.email == "carla@hangy.com"))
+        carla.description = "Bio editada pelo PATCH"
+        carla.person_profile.city = "Canoas"
+        db.commit()
+
+        seed_everything(db)
+        db.expire_all()
+
+        assert carla.description == "Bio editada pelo PATCH"
+        assert carla.person_profile.city == "Canoas"

@@ -114,6 +114,12 @@ volta a ficar não lida a cada execução do seed. A
 caso `403`. A collection `postman/tid219_patch_notifications_read.postman_collection.json`
 percorre todos os cenários.
 
+Para testar `PATCH /users/me/profile`, use qualquer usuário `PERSONAL` (por
+exemplo, `carla@hangy.com`) para o caso `200` e o `admin@hangy.com`, que é
+`BUSINESS`, para o caso `403`. Os usuários do seed começam sem bio. O seed não
+sobrescreve usuários que já existem, então as edições feitas pela rota continuam
+após reiniciar o contêiner.
+
 As tags de exemplo seguem a hierarquia macro → micro usada pelo feed:
 `Esportes` (Futebol, Corrida), `Música` (Rock, Samba, Sertanejo),
 `Gastronomia` (Churrasco, Culinária Italiana, Confeitaria) e `Arte e Cultura`
@@ -143,6 +149,83 @@ Configure as variáveis CI/CD `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` e
 `FRONTEND_BASE_URL` no GitLab e um runner com Docker-in-Docker, conforme o
 [guia de deploy](docs/deploy-aws.md). A `main` do GitLab deve permitir force push
 à identidade do espelhamento e continuar protegida para autorizar o deploy.
+
+### Acesso ao GitLab e registro do runner
+
+A URL da instância é **https://tools.ages.pucrs.br/**. Use essa URL base
+no registro do runner, sem acrescentar o caminho do projeto.
+
+Para obter o token de registro no GitLab 14.8.2:
+
+1. Entre no [GitLab da AGES](https://tools.ages.pucrs.br/) com sua conta.
+2. Abra o projeto `2026-2/2jk-4jk/hangy/hangy-backend`.
+3. Acesse **Settings → CI/CD → Runners** e expanda a seção.
+4. Na área de configuração manual de um runner específico do projeto,
+   copie o **registration token**. Se a seção não estiver disponível,
+   solicite acesso ao responsável pelo projeto ou à equipe da AGES.
+5. Informe o token no prompt interativo de registro do runner. Não use um
+   token de acesso pessoal e não salve o token no README, em commits,
+   capturas de tela ou comandos que fiquem no histórico do terminal.
+
+O pipeline exige executor Docker, tag `hangy-docker` e modo privilegiado para
+Docker-in-Docker. Montar `/var/run/docker.sock` dá ao runner controle do Docker;
+jobs privilegiados podem comprometer o ambiente que os executa. Por isso, este
+guia não recomenda executar essa configuração no Docker de um PC de uso diário.
+Use um host ou uma VM dedicada ao runner, com seu próprio Docker e apenas jobs
+confiáveis, conforme os [requisitos de deploy](docs/deploy-aws.md).
+Consulte também a [documentação de instalação do runner em Docker](https://docs.gitlab.com/runner/install/docker/).
+
+No Windows, abra o **PowerShell** com o Docker Desktop iniciado no modo
+**Linux containers**. Os comandos abaixo usam a série 14.8 do runner para
+acompanhar a instância GitLab 14.8.2; essa versão antiga não deve ser tratada
+como uma versão atual com correções de segurança.
+
+Inicie o runner com um volume persistente para sua configuração:
+
+```powershell
+docker run -d --name gitlab-runner --restart unless-stopped `
+  -v gitlab-runner-config:/etc/gitlab-runner `
+  -v /var/run/docker.sock:/var/run/docker.sock `
+  gitlab/gitlab-runner:v14.8.0
+```
+
+Registre o runner no projeto:
+
+```powershell
+docker exec -it gitlab-runner gitlab-runner register `
+  --url "https://tools.ages.pucrs.br/" `
+  --executor docker `
+  --docker-image alpine:3.21 `
+  --docker-privileged `
+  --description "Hangy local PC" `
+  --tag-list hangy-docker `
+  --run-untagged=false `
+  --locked=true
+```
+
+Cole o **registration token** obtido acima quando solicitado e aceite os
+valores já preenchidos nos demais prompts. Execute o registro apenas uma vez
+para este runner; reiniciar o contêiner preserva a configuração.
+
+Confira a conexão e os logs:
+
+```powershell
+docker exec gitlab-runner gitlab-runner verify
+docker logs --tail 100 gitlab-runner
+```
+
+Em **Settings → CI/CD → Runners**, confirme que o runner aparece online.
+Para atender também a merge requests de branches não protegidas, ele não deve
+estar marcado como **Protected**. A verificação confirma a conexão; a execução
+de um pipeline valida o funcionamento dos jobs.
+
+Mantenha o PC acordado e o Docker Desktop em execução enquanto houver jobs.
+Para parar ou iniciar novamente o runner:
+
+```powershell
+docker stop gitlab-runner
+docker start gitlab-runner
+```
 
 ## Feed da Home
 

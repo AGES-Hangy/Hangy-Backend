@@ -1,16 +1,18 @@
-from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
+
+from pydantic import BaseModel
 
 from app.domain.enums import UserConnectionStatusEnum
 
 
-@dataclass(frozen=True, slots=True)
-class UserConnection:
-    connection_id: UUID | None
+class SendConnectionRequestInput(BaseModel):
+    receiver_id: UUID
+
+
+class SendConnectionRequestOutput(BaseModel):
+    connection_id: UUID
     requester_id: UUID
     receiver_id: UUID
     status: UserConnectionStatusEnum
     created_at: datetime
-    updated_at: datetime
-    deleted_at: datetime | None = None

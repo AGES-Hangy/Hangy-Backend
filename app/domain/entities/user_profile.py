@@ -4,6 +4,26 @@ from uuid import UUID
 from app.domain.entities.tag import Tag
 from app.domain.enums import UserConnectionStatusEnum, UserTypeEnum
 
+__all__ = ["UserProfile", "UserProfileCounts", "UserProfileData"]
+
+
+@dataclass(frozen=True, slots=True)
+class UserProfileCounts:
+    past: int
+    confirmed: int
+    photos: int
+    connections: int
+
+
+@dataclass(frozen=True, slots=True)
+class UserProfile:
+    user_id: UUID
+    name: str | None
+    description: str | None
+    photo_url: str | None
+    tags: tuple[Tag, ...]
+    counts: UserProfileCounts
+
 
 @dataclass(frozen=True, slots=True)
 class UserProfileData:
@@ -17,6 +37,3 @@ class UserProfileData:
     is_following: bool
     is_blocked: bool
     connections_count: int
-
-
-__all__ = ["UserProfileData"]
