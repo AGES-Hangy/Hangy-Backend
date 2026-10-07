@@ -541,7 +541,7 @@ def get_delete_account_service(
             "description": "Usuario organiza eventos futuros.",
             "content": {
                 "application/json": {
-                    "example": {"detail": "Account has future events as organizer"}
+                    "example": {"detail": "Cannot delete with active events"}
                 }
             },
         },
@@ -564,6 +564,6 @@ def delete_account(
     except HasFutureEventsError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Account has future events as organizer",
+            detail="Cannot delete with active events",
         ) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -9,7 +9,7 @@ from app.domain.services.auth import password_hash
 class DeleteAccountRepository(Protocol):
     def soft_delete(self, user_id: UUID, deleted_at: datetime) -> None: ...
 
-    def has_future_events_as_organizer(self, user_id: UUID) -> bool: ...
+    def has_future_events_as_organizer(self, user_id: UUID, now: datetime) -> bool: ...
 
 
 class PasswordConfirmationError(Exception):
@@ -25,11 +25,15 @@ class DeleteAccountService:
         self.repository = repository
 
     def delete_account(self, user: User, password: str) -> None:
+        if user.user_id is None:
+            raise ValueError("A persisted user must have an id")
+
         if not password_hash.verify(password, user.password_hash):
             raise PasswordConfirmationError
 
-        if self.repository.has_future_events_as_organizer(user.user_id):  # type: ignore[arg-type]
+        now = datetime.now(UTC)
+
+        if self.repository.has_future_events_as_organizer(user.user_id, now):
             raise HasFutureEventsError
 
-        now = datetime.now(UTC)
-        self.repository.soft_delete(user.user_id, now)  # type: ignore[arg-type]
+        self.repository.soft_delete(user.user_id, now)
