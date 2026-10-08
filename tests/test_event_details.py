@@ -283,7 +283,6 @@ def test_event_is_hidden_when_organizer_blocked_the_viewer(
             Column("blocker_id", Uuid, nullable=False),
             Column("blocked_id", Uuid, nullable=False),
         )
-        user_block.create(db.get_bind())
         db.execute(
             user_block.insert().values(
                 blocker_id=scenario.organizer_id,
