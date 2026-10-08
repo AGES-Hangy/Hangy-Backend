@@ -72,7 +72,7 @@ class SqlAlchemyUserRepository:
             .where(BusinessProfileModel.user_id == user_id)
             .values(
                 cnpj=uid_str[:14],
-                address=None,
+                address="",
                 business_latitude=None,
                 business_longitude=None,
             )
@@ -103,8 +103,11 @@ class SqlAlchemyUserRepository:
             update(EventParticipantModel)
             .where(
                 EventParticipantModel.user_id == user_id,
-                EventParticipantModel.status.notin_(
-                    [EventParticipantStatusEnum.CANCELLED]
+                EventParticipantModel.status.in_(
+                    [
+                        EventParticipantStatusEnum.CONFIRMED,
+                        EventParticipantStatusEnum.PENDING,
+                    ]
                 ),
             )
             .values(status=EventParticipantStatusEnum.CANCELLED)

@@ -250,3 +250,42 @@ def test_delete_without_token_returns_401(client: TestClient) -> None:
         headers={"Content-Type": "application/json"},
     )
     assert response.status_code == 401
+
+
+BUSINESS_EMAIL = "contato@business.hangy.com"
+BUSINESS_PASSWORD = "senha-forte-456"
+
+BUSINESS_PAYLOAD = {
+    "user_type": "BUSINESS",
+    "email": BUSINESS_EMAIL,
+    "password": BUSINESS_PASSWORD,
+    "business_name": "Estabelecimento Teste",
+    "cnpj": "11222333000181",
+    "phone": "5133330000",
+    "description": "Descrição do estabelecimento",
+    "location": {"latitude": -30.0331, "longitude": -51.23},
+    "address": "Av. Independência, 100 — Porto Alegre",
+    "accepted_terms_version": TERMS_VERSION,
+}
+
+
+def test_delete_business_account_returns_204(client: TestClient) -> None:
+    reg = client.post("/auth/register", json=BUSINESS_PAYLOAD)
+    assert reg.status_code == 201
+
+    login = client.post(
+        "/auth/login",
+        json={"email": BUSINESS_EMAIL, "password": BUSINESS_PASSWORD},
+    )
+    assert login.status_code == 200
+    token = login.json()["access_token"]
+
+    response = _delete_me(client, token, BUSINESS_PASSWORD)
+
+    assert response.status_code == 204
+
+    db: Session = client.db  # type: ignore[attr-defined]
+    db.expire_all()
+    user = db.scalar(select(UserModel).where(UserModel.email.like("deleted_%")))
+    assert user is not None
+    assert user.deleted_at is not None
