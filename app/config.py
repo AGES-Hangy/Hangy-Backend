@@ -36,6 +36,10 @@ class Settings:
     terms_summary: str = os.getenv(
         "TERMS_SUMMARY", "Termos de uso e política de privacidade do Hangy."
     )
+    # Must not exceed the length of the user.description column (500).
+    profile_description_max_length: int = int(
+        os.getenv("PROFILE_DESCRIPTION_MAX_LENGTH", "500")
+    )
 
 
 settings = Settings()
