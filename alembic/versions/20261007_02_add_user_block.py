@@ -1,7 +1,7 @@
 """add_user_block
 
-Revision ID: 20261007_01
-Revises: 20260928_02
+Revision ID: 20261007_02
+Revises: 20261007_01
 Create Date: 2026-10-07 10:00:00.000000
 """
 
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "20261007_01"
-down_revision: str | Sequence[str] | None = "20260928_02"
+revision: str = "20261007_02"
+down_revision: str | Sequence[str] | None = "20261007_01"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
