@@ -123,6 +123,7 @@ def unfollow_business(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Business not found") from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+
 @following_router.get(
     "/users/me/following",
     response_model=FollowingOutput,

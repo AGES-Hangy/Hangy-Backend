@@ -11,6 +11,7 @@ class UserFollow:
     followed_business_id: UUID
     created_at: datetime
 
+
 @dataclass(frozen=True, slots=True)
 class FollowedBusiness:
     """A business as listed in the follower's ``/users/me/following``."""

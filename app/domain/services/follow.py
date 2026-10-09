@@ -29,6 +29,7 @@ __all__ = [
     "TargetNotBusinessError",
 ]
 
+
 class FollowRepository(Protocol):
     def get_active_user(self, user_id: UUID) -> User | None: ...
 
@@ -109,8 +110,7 @@ class FollowService:
         """
         if not MIN_FOLLOWING_LIMIT <= limit <= MAX_FOLLOWING_LIMIT:
             raise InvalidPaginationError(
-                f"limit must be between {MIN_FOLLOWING_LIMIT} "
-                f"and {MAX_FOLLOWING_LIMIT}"
+                f"limit must be between {MIN_FOLLOWING_LIMIT} and {MAX_FOLLOWING_LIMIT}"
             )
 
         cursor_followed_at: datetime | None = None
