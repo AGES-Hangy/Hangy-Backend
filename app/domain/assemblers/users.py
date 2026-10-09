@@ -17,7 +17,6 @@ class UsersAssembler:
             ],
             connection_status=entity.connection_status,
             is_following=entity.is_following,
-            is_blocked=entity.is_blocked,
             connections_count=entity.connections_count,
         )
 

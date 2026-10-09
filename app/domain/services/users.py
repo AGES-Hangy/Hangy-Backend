@@ -23,9 +23,6 @@ class UsersService:
         if profile is None:
             raise UserNotFoundError()
 
-        if profile.is_blocked:
-            raise UserNotFoundError()
-
         return profile
 
 

@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Column, MetaData, Table, Uuid, create_engine
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -25,6 +25,7 @@ from app.infrastructure.repository.models import (
     TagModel,
     UserModel,
 )
+from app.infrastructure.repository.models.user_block_model import UserBlockModel
 from app.main import app
 
 
@@ -277,15 +278,8 @@ def test_event_is_hidden_when_organizer_blocked_the_viewer(
     client, session_factory = details_client
     with session_factory() as db:
         scenario = _create_scenario(db)
-        user_block = Table(
-            "user_block",
-            MetaData(),
-            Column("blocker_id", Uuid, nullable=False),
-            Column("blocked_id", Uuid, nullable=False),
-        )
-        user_block.create(db.get_bind())
-        db.execute(
-            user_block.insert().values(
+        db.add(
+            UserBlockModel(
                 blocker_id=scenario.organizer_id,
                 blocked_id=scenario.viewer_id,
             )

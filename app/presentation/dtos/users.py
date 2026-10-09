@@ -21,7 +21,6 @@ class UserProfileDTO(BaseModel):
     tags: list[UserProfileTagDTO]
     connection_status: UserConnectionStatusEnum | None
     is_following: bool
-    is_blocked: bool
     connections_count: int
 
     model_config = ConfigDict(from_attributes=True)

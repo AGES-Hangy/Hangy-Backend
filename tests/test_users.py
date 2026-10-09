@@ -17,6 +17,7 @@ from app.infrastructure.repository.models import (
     UserModel,
     user_follows,
 )
+from app.infrastructure.repository.models.user_block_model import UserBlockModel
 from app.main import app
 
 USER_EMAIL = "test@hangy.com"
@@ -203,33 +204,8 @@ def test_get_profile_returns_404_if_blocked(
     viewer_id = create_user(db_session, "PERSONAL", "viewer4@test.com", "Viewer")
     target_id = create_user(db_session, "PERSONAL", "target4@test.com", "Target")
 
-    # Mocking block via table clause
-    from sqlalchemy import Uuid, column, insert, table
-
-    user_block = table(
-        "user_block",
-        column("blocker_id", Uuid),
-        column("blocked_id", Uuid),
-    )
-
-    # This unmapped table must be created explicitly for the SQLite fixture.
-    try:
-        from sqlalchemy import Column, MetaData, Table
-
-        metadata = MetaData()
-        Table(
-            "user_block",
-            metadata,
-            Column("blocker_id", Uuid),
-            Column("blocked_id", Uuid),
-        )
-        metadata.create_all(db_session.bind)
-        db_session.execute(
-            insert(user_block).values(blocker_id=target_id, blocked_id=viewer_id)
-        )
-        db_session.commit()
-    except Exception:
-        pass
+    db_session.add(UserBlockModel(blocker_id=target_id, blocked_id=viewer_id))
+    db_session.commit()
 
     import jwt
 

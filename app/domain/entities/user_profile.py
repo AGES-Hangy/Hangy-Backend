@@ -35,5 +35,4 @@ class UserProfileData:
     tags: tuple[Tag, ...]
     connection_status: UserConnectionStatusEnum | None
     is_following: bool
-    is_blocked: bool
     connections_count: int

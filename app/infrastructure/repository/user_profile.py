@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import Uuid, and_, column, func, inspect, or_, select, table, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.domain.entities import (
@@ -33,12 +33,8 @@ from app.infrastructure.repository.models.event_experience_model import (
 from app.infrastructure.repository.models.experience_images_model import (
     ExperienceImagesModel,
 )
-
-USER_BLOCK_TABLE_NAME = "user_block"
-user_block = table(
-    USER_BLOCK_TABLE_NAME,
-    column("blocker_id", Uuid),
-    column("blocked_id", Uuid),
+from app.infrastructure.repository.models.user_block_model import (
+    UserBlockModel,
 )
 
 
@@ -61,9 +57,7 @@ class SqlAlchemyUserProfileRepository:
     def get_profile_counts(self, user_id: UUID) -> UserProfileCounts:
         """Every counter of the profile screen, aggregated in a single query."""
         now = _now_utc()
-        # A FINISHED event is over even if it was closed before ends_at; a
-        # PUBLISHED one is over once ends_at is reached. CANCELLED and DRAFT
-        # events belong to neither tab.
+
         is_over = or_(
             EventModel.event_status == EventStatusEnum.FINISHED,
             EventModel.ends_at <= now,
@@ -135,8 +129,6 @@ class SqlAlchemyUserProfileRepository:
     def update_person_profile(
         self, profile: EditedPersonProfile
     ) -> EditedPersonProfile:
-        # Name and bio are shared by every user type, so they live on user;
-        # the location belongs to person_profile. Both change in one commit.
         self.db.execute(
             update(UserModel)
             .where(
@@ -203,7 +195,8 @@ class SqlAlchemyUserProfileRepository:
         if model is None:
             return None
 
-        is_blocked = self._viewer_is_blocked(user_id=user_id, viewer_id=viewer_id)
+        if self._viewer_is_blocked(user_id=user_id, viewer_id=viewer_id):
+            return None
 
         connections_count = 0
         is_following = False
@@ -285,22 +278,17 @@ class SqlAlchemyUserProfileRepository:
             ),
             connection_status=connection_status,
             is_following=is_following,
-            is_blocked=is_blocked,
             connections_count=connections_count,
         )
 
     def _viewer_is_blocked(self, user_id: UUID, viewer_id: UUID) -> bool:
-        bind = self.db.get_bind()
-        if not inspect(bind).has_table(USER_BLOCK_TABLE_NAME):
-            return False
-
         return (
             self.db.scalar(
                 select(func.count())
-                .select_from(user_block)
+                .select_from(UserBlockModel)
                 .where(
-                    user_block.c.blocker_id == user_id,
-                    user_block.c.blocked_id == viewer_id,
+                    UserBlockModel.blocker_id == user_id,
+                    UserBlockModel.blocked_id == viewer_id,
                 )
             )
             > 0
