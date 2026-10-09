@@ -1,10 +1,11 @@
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.domain.entities import BusinessProfile, User, UserFollow
+from app.domain.entities import BusinessProfile, FollowedBusiness, User, UserFollow
 from app.infrastructure.repository.business_profile import (
     SqlAlchemyBusinessRegistrationRepository,
 )
@@ -75,6 +76,55 @@ class SqlAlchemyFollowRepository:
             )
         )
         self.db.commit()
+
+    def list_following(
+        self,
+        follower_id: UUID,
+        *,
+        limit: int,
+        cursor_followed_at: datetime | None,
+        cursor_business_id: UUID | None,
+    ) -> list[FollowedBusiness]:
+        """Businesses followed by ``follower_id``, newest follow first.
+
+        Joins ``user`` and keeps only ``deleted_at IS NULL``: a soft-deleted
+        account never shows up, even if a stale follow row is left behind.
+        Kept apart from the service so the business-side follower listing
+        (US11.3) can add a sibling query on the same table.
+        """
+        stmt = (
+            select(UserFollowModel, UserModel)
+            .join(UserModel, UserModel.user_id == UserFollowModel.followed_business_id)
+            .where(
+                UserFollowModel.follower_id == follower_id,
+                UserModel.deleted_at.is_(None),
+            )
+            .order_by(
+                UserFollowModel.created_at.desc(),
+                UserFollowModel.followed_business_id.desc(),
+            )
+        )
+        if cursor_followed_at is not None and cursor_business_id is not None:
+            stmt = stmt.where(
+                or_(
+                    UserFollowModel.created_at < cursor_followed_at,
+                    (UserFollowModel.created_at == cursor_followed_at)
+                    & (UserFollowModel.followed_business_id < cursor_business_id),
+                )
+            )
+        rows = self.db.execute(stmt.limit(limit)).all()
+        return [self._to_followed_business(follow, user) for follow, user in rows]
+
+    @staticmethod
+    def _to_followed_business(
+        follow: UserFollowModel, user: UserModel
+    ) -> FollowedBusiness:
+        return FollowedBusiness(
+            user_id=user.user_id,
+            business_name=user.name,
+            photo_url=user.profile_photo_url,
+            followed_at=follow.created_at,
+        )
 
     @staticmethod
     def _to_entity(model: UserFollowModel) -> UserFollow:
