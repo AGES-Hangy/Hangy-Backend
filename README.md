@@ -114,6 +114,12 @@ volta a ficar não lida a cada execução do seed. A
 caso `403`. A collection `postman/tid219_patch_notifications_read.postman_collection.json`
 percorre todos os cenários.
 
+Para testar `PATCH /users/me/profile`, use qualquer usuário `PERSONAL` (por
+exemplo, `carla@hangy.com`) para o caso `200` e o `admin@hangy.com`, que é
+`BUSINESS`, para o caso `403`. Os usuários do seed começam sem bio. O seed não
+sobrescreve usuários que já existem, então as edições feitas pela rota continuam
+após reiniciar o contêiner.
+
 As tags de exemplo seguem a hierarquia macro → micro usada pelo feed:
 `Esportes` (Futebol, Corrida), `Música` (Rock, Samba, Sertanejo),
 `Gastronomia` (Churrasco, Culinária Italiana, Confeitaria) e `Arte e Cultura`
