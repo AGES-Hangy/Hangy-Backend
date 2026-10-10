@@ -9,15 +9,20 @@ from app.domain.assemblers.users import UsersAssembler
 from app.domain.entities import User
 from app.domain.services import (
     DEFAULT_USER_EVENTS_LIMIT,
+    MAX_PROFILE_EVENTS_CURSOR_LENGTH,
+    MAX_PROFILE_EVENTS_LIMIT,
+    MIN_USER_EVENTS_LIMIT,
     InvalidPaginationError,
     InvalidUserEventsTabError,
+    ProfileEventsService,
     UserEventsService,
 )
 from app.domain.services.users import UserNotFoundError, UsersService
 from app.infrastructure.repository import get_db
+from app.infrastructure.repository.user import SqlAlchemyUserRepository
 from app.infrastructure.repository.user_events import SqlAlchemyUserEventsRepository
 from app.infrastructure.repository.user_profile import SqlAlchemyUserProfileRepository
-from app.presentation.dtos import UserEventsOutput
+from app.presentation.dtos import ProfileEventsOutput, UserEventsOutput
 from app.presentation.dtos.users import UserProfileDTO
 from app.presentation.routes.auth import get_current_user
 
@@ -130,10 +135,104 @@ def get_user_profile(
     return UsersAssembler.to_profile_dto(profile)
 
 
+def get_profile_events_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> ProfileEventsService:
+    return ProfileEventsService(
+        user_repository=SqlAlchemyUserRepository(db),
+        repository=SqlAlchemyUserEventsRepository(db),
+    )
+
+
+@router.get(
+    "/users/{user_id}/events",
+    response_model=ProfileEventsOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Listar os eventos de um usuário",
+    description=(
+        "Retorna os eventos que o usuário criou ou em que tem presença "
+        "confirmada, em ordem crescente de data, incluindo os passados. "
+        "Para outra pessoa, só eventos PUBLIC com status PUBLISHED ou "
+        "FINISHED; o próprio dono vê todos os seus eventos. Eventos cujo "
+        "organizador bloqueou o solicitante não aparecem."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "Cursor de paginação malformado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid pagination parameters"}
+                }
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "A conta associada ao token foi excluída.",
+            "content": {
+                "application/json": {"example": {"detail": "Account has been deleted"}}
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": (
+                "O usuário não existe, a conta foi excluída ou ele bloqueou "
+                "o solicitante."
+            ),
+            "content": {"application/json": {"example": {"detail": "User not found"}}},
+        },
+    },
+)
+def list_user_events(
+    user_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    profile_events_service: Annotated[
+        ProfileEventsService, Depends(get_profile_events_service)
+    ],
+    limit: Annotated[
+        int,
+        Query(
+            ge=MIN_USER_EVENTS_LIMIT,
+            le=MAX_PROFILE_EVENTS_LIMIT,
+            description="Tamanho da página (1–50).",
+        ),
+    ] = DEFAULT_USER_EVENTS_LIMIT,
+    cursor: Annotated[
+        str | None,
+        Query(
+            max_length=MAX_PROFILE_EVENTS_CURSOR_LENGTH,
+            description="Cursor opaco devolvido em next_cursor.",
+        ),
+    ] = None,
+) -> ProfileEventsOutput:
+    assert current_user.user_id is not None
+    try:
+        page = profile_events_service.get_profile_events(
+            user_id, current_user.user_id, limit=limit, cursor=cursor
+        )
+    except UserNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        ) from error
+    except InvalidPaginationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters",
+        ) from error
+    return UserEventsAssembler.to_profile_dto(page)
+
+
 __all__ = [
+    "get_profile_events_service",
     "get_user_events_service",
     "get_user_profile",
     "get_users_service",
+    "list_user_events",
     "read_current_user_events",
     "router",
 ]

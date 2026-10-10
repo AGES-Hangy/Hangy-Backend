@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from app.domain.enums import EventParticipantStatusEnum
+from app.domain.enums import EventParticipantStatusEnum, EventPrivacyEnum
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,4 +20,22 @@ class UserEvent:
 @dataclass(frozen=True, slots=True)
 class UserEventsPage:
     items: tuple[UserEvent, ...]
+    next_cursor: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileEvent:
+    """An event as listed on someone's profile, possibly another user's."""
+
+    event_id: UUID
+    title: str
+    starts_at: datetime
+    privacy: EventPrivacyEnum
+    location_name: str | None = None
+    cover_photo_url: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ProfileEventsPage:
+    items: tuple[ProfileEvent, ...]
     next_cursor: str | None

@@ -297,6 +297,19 @@ SEED_EVENTS = (
         event_status=EventStatusEnum.CANCELLED,
         confirmed_emails=("user@hangy.com",),
     ),
+    # Already over and closed as FINISHED: out of the feed, but listed by
+    # GET /users/{id}/events on both João's profile (creator) and Maria's
+    # (confirmed participant).
+    SeedEvent(
+        title="Sarau de teatro",
+        location_name="Teatro de Arena",
+        tag_name="Teatro",
+        creator_email="joao@hangy.com",
+        starts_in_days=-5,
+        event_status=EventStatusEnum.FINISHED,
+        cover_photo_url="https://picsum.photos/seed/sarau/800/450",
+        confirmed_emails=("maria@hangy.com",),
+    ),
 )
 
 

@@ -90,7 +90,7 @@ def test_seed_creates_the_sample_data_only_once(
         assert count(db, user_tag) == sum(
             len(tag_names) for tag_names in SEED_INTERESTS.values()
         )
-        assert count(db, EventParticipantModel) == 12
+        assert count(db, EventParticipantModel) == 13
         assert count(db, NotificationModel) == len(SEED_NOTIFICATIONS)
 
 
@@ -268,6 +268,59 @@ def test_seeded_business_user_has_an_empty_feed(
     app.dependency_overrides.clear()
 
     assert response.json() == {"sections": []}
+
+
+@pytest.mark.parametrize(
+    ("profile_email", "expected_titles"),
+    [
+        # Created PUBLIC events only, past one included; the PRIVATE,
+        # INVITE_ONLY, DRAFT and CANCELLED ones stay off the business agenda.
+        (
+            "admin@hangy.com",
+            ["Pelada de ontem", "Pelada no Parcão", "Show de rock no Opinião"],
+        ),
+        # Her own PUBLIC event plus the PUBLIC ones she confirmed presence in,
+        # FINISHED included; "Aniversário da Maria" and "Corrida da Redenção"
+        # are PRIVATE, and she is only pending on "Show de rock no Opinião".
+        (
+            "maria@hangy.com",
+            ["Sarau de teatro", "Pelada no Parcão", "Roda de samba na Cidade Baixa"],
+        ),
+        # Her only participation was cancelled.
+        ("ana@hangy.com", []),
+    ],
+)
+def test_seeded_user_events_match_the_documented_sample(
+    session_factory: sessionmaker[Session],
+    profile_email: str,
+    expected_titles: list[str],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        profile_id = db.scalar(
+            select(UserModel.user_id).where(UserModel.email == profile_email)
+        )
+
+    def override_get_db() -> Iterator[Session]:
+        with session_factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as client:
+        login = client.post(
+            "/auth/login",
+            json={"email": "user@hangy.com", "password": "user-password"},
+        )
+        response = client.get(
+            f"/users/{profile_id}/events",
+            headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["title"] for item in body["items"]] == expected_titles
+    assert body["next_cursor"] is None
 
 
 @pytest.mark.parametrize(
@@ -503,7 +556,7 @@ def test_seed_restores_participants_changed_while_testing(
         assert (
             participants[maria.user_id].status == EventParticipantStatusEnum.CONFIRMED
         )
-        assert count(db, EventParticipantModel) == 12
+        assert count(db, EventParticipantModel) == 13
 
 
 def test_seed_recomputes_notification_dates_from_the_current_time(
