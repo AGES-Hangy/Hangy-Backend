@@ -15,6 +15,7 @@ from app.domain.entities import User
 from app.domain.services import (
     AccountDeletedError,
     AuthService,
+    DescriptionTooLongError,
     DeviceNotFoundError,
     DeviceService,
     DuplicateCnpjError,
@@ -29,6 +30,7 @@ from app.domain.services import (
     InvalidResetCodeError,
     InvalidResetTokenError,
     MinimumAgeError,
+    NotAPersonalProfileError,
     PasswordResetService,
     RegisterBusinessService,
     RegisterPersonalService,
@@ -61,6 +63,8 @@ from app.presentation.dtos import (
     RegisterDeviceOutput,
     RegisterRequest,
     UserProfileOutput,
+    UserProfileUpdateInput,
+    UserProfileUpdateOutput,
     VerifyResetCodeRequest,
     VerifyResetCodeResponse,
 )
@@ -68,6 +72,7 @@ from app.presentation.mappers import (
     DeviceMapper,
     PasswordResetMapper,
     UserMapper,
+    UserProfileMapper,
 )
 
 router = APIRouter(tags=["Authentication"])
@@ -117,6 +122,7 @@ def get_user_profile_service(
     return UserProfileService(
         repository=SqlAlchemyUserProfileRepository(db),
         tags_repository=SqlAlchemyUserTagsRepository(db),
+        description_max_length=settings.profile_description_max_length,
     )
 
 
@@ -429,3 +435,72 @@ def read_current_user_profile(
 ) -> UserProfileOutput:
     profile = user_profile_service.get_profile(current_user)
     return UserProfileAssembler.to_dto(profile)
+
+
+@router.patch(
+    "/users/me/profile",
+    response_model=UserProfileUpdateOutput,
+    status_code=status.HTTP_200_OK,
+    tags=["Profile"],
+    summary="Editar o perfil pessoal do usuario autenticado",
+    description=(
+        "Atualizacao parcial: so os campos enviados mudam. `description` pode "
+        "ser `null` para limpar a bio; `name`, `state` e `city` nao. CPF, "
+        "e-mail, data de nascimento e qualquer outro campo desconhecido sao "
+        "ignorados. `updated_at` so muda quando algum valor realmente muda. "
+        "Apenas contas PERSONAL possuem perfil pessoal."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": (
+                "A bio passou do limite configurado em PROFILE_DESCRIPTION_MAX_LENGTH."
+            ),
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Description exceeds maximum length"}
+                }
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": (
+                "Token ausente, invalido, expirado ou emitido antes da "
+                "ultima troca de senha."
+            ),
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": (
+                "A conta e comercial (`Not a personal profile`) ou foi "
+                "excluida (`Account has been deleted`)."
+            ),
+            "content": {
+                "application/json": {"example": {"detail": "Not a personal profile"}}
+            },
+        },
+    },
+)
+def update_current_user_profile(
+    payload: UserProfileUpdateInput,
+    current_user: Annotated[User, Depends(get_current_user)],
+    user_profile_service: Annotated[
+        UserProfileService, Depends(get_user_profile_service)
+    ],
+) -> UserProfileUpdateOutput:
+    update = UserProfileMapper.to_update(payload)
+    try:
+        profile = user_profile_service.update_profile(current_user, update)
+    except NotAPersonalProfileError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a personal profile",
+        ) from error
+    except DescriptionTooLongError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Description exceeds maximum length",
+        ) from error
+    return UserProfileAssembler.to_update_dto(profile)
