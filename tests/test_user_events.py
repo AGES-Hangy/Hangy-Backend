@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Column, MetaData, Table, Uuid, create_engine
+from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -26,6 +26,7 @@ from app.infrastructure.repository.models.event_model import EventModel
 from app.infrastructure.repository.models.event_participant_model import (
     EventParticipantModel,
 )
+from app.infrastructure.repository.models.user_block_model import UserBlockModel
 from app.main import app
 
 URL = "/users/me/events"
@@ -528,15 +529,8 @@ def _add_participant(
 
 
 def _block(db: Session, blocker_id: UUID, blocked_id: UUID) -> None:
-    """Stand-in for task 087's table, which this task must not create."""
-    user_block = Table(
-        "user_block",
-        MetaData(),
-        Column("blocker_id", Uuid, nullable=False),
-        Column("blocked_id", Uuid, nullable=False),
-    )
-    user_block.create(db.get_bind(), checkfirst=True)
-    db.execute(user_block.insert().values(blocker_id=blocker_id, blocked_id=blocked_id))
+    db.add(UserBlockModel(blocker_id=blocker_id, blocked_id=blocked_id))
+    db.flush()
 
 
 def _register(client: TestClient, payload: dict[str, Any]) -> UUID:

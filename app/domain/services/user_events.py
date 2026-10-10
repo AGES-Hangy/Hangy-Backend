@@ -16,7 +16,7 @@ from app.domain.services.notification import (
     decode_cursor,
     encode_cursor,
 )
-from app.domain.services.user_tags import UserNotFoundError
+from app.domain.services.users import UserNotFoundError
 
 DEFAULT_USER_EVENTS_LIMIT = 20
 MIN_USER_EVENTS_LIMIT = 1

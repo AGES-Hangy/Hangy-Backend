@@ -2,7 +2,7 @@ from collections.abc import Collection
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import exists, func, inspect, or_, select
+from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.domain.entities import ProfileEvent, UserEvent
@@ -12,11 +12,10 @@ from app.domain.enums import (
     EventStatusEnum,
     UserEventsTabEnum,
 )
-from app.infrastructure.repository.event_details import (
-    USER_BLOCK_TABLE_NAME,
-    user_block,
-)
 from app.infrastructure.repository.models import EventModel, EventParticipantModel
+from app.infrastructure.repository.models.user_block_model import (
+    UserBlockModel,
+)
 
 
 def _now_utc() -> datetime:
@@ -105,16 +104,13 @@ class SqlAlchemyUserEventsRepository:
         )
 
     def user_blocked_viewer(self, user_id: UUID, viewer_id: UUID) -> bool:
-        if not self._has_user_block_table():
-            return False
-
         return (
             self.db.scalar(
                 select(func.count())
-                .select_from(user_block)
+                .select_from(UserBlockModel)
                 .where(
-                    user_block.c.blocker_id == user_id,
-                    user_block.c.blocked_id == viewer_id,
+                    UserBlockModel.blocker_id == user_id,
+                    UserBlockModel.blocked_id == viewer_id,
                 )
             )
             > 0
@@ -148,6 +144,12 @@ class SqlAlchemyUserEventsRepository:
                     EventModel.event_creator_id == user_id,
                     EventModel.event_id.in_(confirmed_participations),
                 ),
+                # Same rule as GET /events/{id}: an organizer who blocked the
+                # viewer hides the event, so the card never leads to a 404.
+                ~exists().where(
+                    UserBlockModel.blocker_id == EventModel.event_creator_id,
+                    UserBlockModel.blocked_id == viewer_id,
+                ),
             )
             .order_by(EventModel.starts_at.asc(), EventModel.event_id.asc())
         )
@@ -155,15 +157,6 @@ class SqlAlchemyUserEventsRepository:
             stmt = stmt.where(EventModel.event_privacy.in_(privacies))
         if statuses is not None:
             stmt = stmt.where(EventModel.event_status.in_(statuses))
-        if self._has_user_block_table():
-            # Same rule as GET /events/{id}: an organizer who blocked the
-            # viewer hides the event, so the card never leads to a 404.
-            stmt = stmt.where(
-                ~exists().where(
-                    user_block.c.blocker_id == EventModel.event_creator_id,
-                    user_block.c.blocked_id == viewer_id,
-                )
-            )
         if cursor_starts_at is not None and cursor_event_id is not None:
             stmt = stmt.where(
                 or_(
@@ -175,10 +168,6 @@ class SqlAlchemyUserEventsRepository:
 
         models = self.db.scalars(stmt.limit(limit)).all()
         return [self._to_profile_entity(model) for model in models]
-
-    def _has_user_block_table(self) -> bool:
-        """Task 087 owns ``user_block``; until it lands, nobody is blocked."""
-        return inspect(self.db.get_bind()).has_table(USER_BLOCK_TABLE_NAME)
 
     @staticmethod
     def _to_profile_entity(model: EventModel) -> ProfileEvent:
