@@ -72,6 +72,7 @@ class EventDetailsService:
                 participation_status,
                 is_organizer,
             ),
+            is_favorited=data.viewer_favorited,
         )
         preview = None
         if can_see_participants:

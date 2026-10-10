@@ -64,6 +64,7 @@ class EventDetailsAssembler:
                 participation_status=details.viewer.participation_status,
                 can_see_participants=details.viewer.can_see_participants,
                 available_action=details.viewer.available_action,
+                is_favorited=details.viewer.is_favorited,
             ),
             participants_preview=preview,
         )
