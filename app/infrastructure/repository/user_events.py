@@ -1,18 +1,21 @@
-from collections.abc import Collection
 from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import exists, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.domain.entities import ProfileEvent, UserEvent
+from app.domain.entities import UserEvent
 from app.domain.enums import (
     EventParticipantStatusEnum,
     EventPrivacyEnum,
     EventStatusEnum,
     UserEventsTabEnum,
 )
-from app.infrastructure.repository.models import EventModel, EventParticipantModel
+from app.infrastructure.repository.models import (
+    EventFavoriteModel,
+    EventModel,
+    EventParticipantModel,
+)
 from app.infrastructure.repository.models.user_block_model import (
     UserBlockModel,
 )
@@ -25,83 +28,6 @@ def _now_utc() -> datetime:
 class SqlAlchemyUserEventsRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
-
-    def list_for_user(
-        self,
-        user_id: UUID,
-        tab: UserEventsTabEnum,
-        *,
-        limit: int,
-        cursor_starts_at: datetime | None,
-        cursor_event_id: UUID | None,
-    ) -> list[UserEvent]:
-        """List the user's confirmed participations of one profile tab.
-
-        The tab rules mirror `get_profile_counts`, so a list never disagrees
-        with the counter shown on its tab.
-        """
-        now = _now_utc()
-        is_over = or_(
-            EventModel.event_status == EventStatusEnum.FINISHED,
-            EventModel.ends_at <= now,
-        )
-
-        stmt = (
-            select(EventModel, EventParticipantModel.status)
-            .join(
-                EventParticipantModel,
-                EventParticipantModel.event_id == EventModel.event_id,
-            )
-            .where(
-                EventParticipantModel.user_id == user_id,
-                EventParticipantModel.status == EventParticipantStatusEnum.CONFIRMED,
-                EventModel.deleted_at.is_(None),
-            )
-        )
-
-        if tab is UserEventsTabEnum.CONFIRMED:
-            stmt = stmt.where(
-                EventModel.event_status == EventStatusEnum.PUBLISHED, ~is_over
-            ).order_by(EventModel.starts_at.asc(), EventModel.event_id.asc())
-            if cursor_starts_at is not None and cursor_event_id is not None:
-                stmt = stmt.where(
-                    or_(
-                        EventModel.starts_at > cursor_starts_at,
-                        (EventModel.starts_at == cursor_starts_at)
-                        & (EventModel.event_id > cursor_event_id),
-                    )
-                )
-        else:
-            stmt = stmt.where(
-                EventModel.event_status.in_(
-                    (EventStatusEnum.PUBLISHED, EventStatusEnum.FINISHED)
-                ),
-                is_over,
-            ).order_by(EventModel.starts_at.desc(), EventModel.event_id.desc())
-            if cursor_starts_at is not None and cursor_event_id is not None:
-                stmt = stmt.where(
-                    or_(
-                        EventModel.starts_at < cursor_starts_at,
-                        (EventModel.starts_at == cursor_starts_at)
-                        & (EventModel.event_id < cursor_event_id),
-                    )
-                )
-
-        rows = self.db.execute(stmt.limit(limit)).all()
-        return [self._to_entity(event, status) for event, status in rows]
-
-    @staticmethod
-    def _to_entity(
-        model: EventModel, participation_status: EventParticipantStatusEnum
-    ) -> UserEvent:
-        return UserEvent(
-            event_id=model.event_id,
-            title=model.event_title,
-            starts_at=model.starts_at,
-            participation_status=participation_status,
-            location_name=model.location_name,
-            cover_photo_url=model.cover_photo_url,
-        )
 
     def user_blocked_viewer(self, user_id: UUID, viewer_id: UUID) -> bool:
         return (
@@ -116,66 +42,140 @@ class SqlAlchemyUserEventsRepository:
             > 0
         )
 
-    def list_for_profile(
+    def list_for_user(
         self,
         user_id: UUID,
-        viewer_id: UUID,
+        tab: UserEventsTabEnum,
         *,
-        privacies: Collection[EventPrivacyEnum] | None,
-        statuses: Collection[EventStatusEnum] | None,
+        viewer_id: UUID,
+        public_only: bool,
         limit: int,
         cursor_starts_at: datetime | None,
         cursor_event_id: UUID | None,
-    ) -> list[ProfileEvent]:
-        """List the events a user created or confirmed presence in.
+    ) -> list[UserEvent]:
+        """List one profile tab of `user_id` as `viewer_id` may see it.
 
-        A single SELECT over events, so one created by the user who is also a
-        participant still comes back only once.
+        Each tab is a single SELECT over events, so an event the user both
+        created and attends comes back once. The `history` and `confirmed`
+        rules mirror `get_profile_counts`, so a list never disagrees with the
+        counter shown on its tab.
         """
-        confirmed_participations = select(EventParticipantModel.event_id).where(
-            EventParticipantModel.user_id == user_id,
-            EventParticipantModel.status == EventParticipantStatusEnum.CONFIRMED,
+        now = _now_utc()
+        is_over = or_(
+            EventModel.event_status == EventStatusEnum.FINISHED,
+            EventModel.ends_at <= now,
         )
-        stmt = (
-            select(EventModel)
+        is_confirmed = (
+            exists()
             .where(
-                EventModel.deleted_at.is_(None),
-                or_(
-                    EventModel.event_creator_id == user_id,
-                    EventModel.event_id.in_(confirmed_participations),
+                EventParticipantModel.event_id == EventModel.event_id,
+                EventParticipantModel.user_id == user_id,
+                EventParticipantModel.status == EventParticipantStatusEnum.CONFIRMED,
+            )
+            .correlate(EventModel)
+        )
+
+        stmt = select(EventModel, is_confirmed.label("is_confirmed")).where(
+            EventModel.deleted_at.is_(None),
+            # Same rule as GET /events/{id}: an organizer who blocked the
+            # viewer hides the event, so the card never leads to a 404.
+            ~exists()
+            .where(
+                UserBlockModel.blocker_id == EventModel.event_creator_id,
+                UserBlockModel.blocked_id == viewer_id,
+            )
+            .correlate(EventModel),
+        )
+        if public_only:
+            stmt = stmt.where(EventModel.event_privacy == EventPrivacyEnum.PUBLIC)
+
+        # CANCELLED is in none of the status lists below: it never shows up.
+        newest_first = False
+        if tab is UserEventsTabEnum.HISTORY:
+            newest_first = True
+            stmt = stmt.where(
+                is_over,
+                EventModel.event_status.in_(
+                    (EventStatusEnum.PUBLISHED, EventStatusEnum.FINISHED)
                 ),
-                # Same rule as GET /events/{id}: an organizer who blocked the
-                # viewer hides the event, so the card never leads to a 404.
-                ~exists().where(
-                    UserBlockModel.blocker_id == EventModel.event_creator_id,
-                    UserBlockModel.blocked_id == viewer_id,
+                or_(EventModel.event_creator_id == user_id, is_confirmed),
+            )
+        elif tab is UserEventsTabEnum.CREATED:
+            # A draft is only ever shown to its own organizer.
+            statuses = (
+                (EventStatusEnum.PUBLISHED,)
+                if public_only
+                else (EventStatusEnum.PUBLISHED, EventStatusEnum.DRAFT)
+            )
+            stmt = stmt.where(
+                EventModel.event_creator_id == user_id,
+                ~is_over,
+                EventModel.event_status.in_(statuses),
+            )
+        elif tab is UserEventsTabEnum.INTERESTS:
+            is_favorited = (
+                exists()
+                .where(
+                    EventFavoriteModel.event_id == EventModel.event_id,
+                    EventFavoriteModel.user_id == user_id,
+                )
+                .correlate(EventModel)
+            )
+            # Visibility is resolved on read: a favorite whose event turned
+            # invite-only stays stored, it just stops being listed.
+            stmt = stmt.where(
+                is_favorited,
+                ~is_over,
+                EventModel.event_status == EventStatusEnum.PUBLISHED,
+                or_(
+                    EventModel.event_privacy != EventPrivacyEnum.INVITE_ONLY,
+                    EventModel.event_creator_id == user_id,
+                    is_confirmed,
                 ),
             )
-            .order_by(EventModel.starts_at.asc(), EventModel.event_id.asc())
-        )
-        if privacies is not None:
-            stmt = stmt.where(EventModel.event_privacy.in_(privacies))
-        if statuses is not None:
-            stmt = stmt.where(EventModel.event_status.in_(statuses))
-        if cursor_starts_at is not None and cursor_event_id is not None:
+        else:
             stmt = stmt.where(
-                or_(
-                    EventModel.starts_at > cursor_starts_at,
-                    (EventModel.starts_at == cursor_starts_at)
-                    & (EventModel.event_id > cursor_event_id),
-                )
+                is_confirmed,
+                ~is_over,
+                EventModel.event_status == EventStatusEnum.PUBLISHED,
             )
 
-        models = self.db.scalars(stmt.limit(limit)).all()
-        return [self._to_profile_entity(model) for model in models]
+        if newest_first:
+            stmt = stmt.order_by(
+                EventModel.starts_at.desc(), EventModel.event_id.desc()
+            )
+            if cursor_starts_at is not None and cursor_event_id is not None:
+                stmt = stmt.where(
+                    or_(
+                        EventModel.starts_at < cursor_starts_at,
+                        (EventModel.starts_at == cursor_starts_at)
+                        & (EventModel.event_id < cursor_event_id),
+                    )
+                )
+        else:
+            stmt = stmt.order_by(EventModel.starts_at.asc(), EventModel.event_id.asc())
+            if cursor_starts_at is not None and cursor_event_id is not None:
+                stmt = stmt.where(
+                    or_(
+                        EventModel.starts_at > cursor_starts_at,
+                        (EventModel.starts_at == cursor_starts_at)
+                        & (EventModel.event_id > cursor_event_id),
+                    )
+                )
+
+        rows = self.db.execute(stmt.limit(limit)).all()
+        return [self._to_entity(event, confirmed) for event, confirmed in rows]
 
     @staticmethod
-    def _to_profile_entity(model: EventModel) -> ProfileEvent:
-        return ProfileEvent(
+    def _to_entity(model: EventModel, is_confirmed: bool) -> UserEvent:
+        return UserEvent(
             event_id=model.event_id,
             title=model.event_title,
             starts_at=model.starts_at,
             privacy=model.event_privacy,
+            participation_status=(
+                EventParticipantStatusEnum.CONFIRMED if is_confirmed else None
+            ),
             location_name=model.location_name,
             cover_photo_url=model.cover_photo_url,
         )

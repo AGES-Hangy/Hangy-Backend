@@ -9,12 +9,8 @@ from app.domain.assemblers.users import UsersAssembler
 from app.domain.entities import User
 from app.domain.services import (
     DEFAULT_USER_EVENTS_LIMIT,
-    MAX_PROFILE_EVENTS_CURSOR_LENGTH,
-    MAX_PROFILE_EVENTS_LIMIT,
-    MIN_USER_EVENTS_LIMIT,
     InvalidPaginationError,
     InvalidUserEventsTabError,
-    ProfileEventsService,
     UserEventsService,
 )
 from app.domain.services.users import UserNotFoundError, UsersService
@@ -22,7 +18,7 @@ from app.infrastructure.repository import get_db
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
 from app.infrastructure.repository.user_events import SqlAlchemyUserEventsRepository
 from app.infrastructure.repository.user_profile import SqlAlchemyUserProfileRepository
-from app.presentation.dtos import ProfileEventsOutput, UserEventsOutput
+from app.presentation.dtos import UserEventsOutput, UserEventsTabsOutput
 from app.presentation.dtos.users import UserProfileDTO
 from app.presentation.routes.auth import get_current_user
 
@@ -32,7 +28,10 @@ router = APIRouter(tags=["Profile"])
 def get_user_events_service(
     db: Annotated[Session, Depends(get_db)],
 ) -> UserEventsService:
-    return UserEventsService(repository=SqlAlchemyUserEventsRepository(db))
+    return UserEventsService(
+        repository=SqlAlchemyUserEventsRepository(db),
+        user_repository=SqlAlchemyUserRepository(db),
+    )
 
 
 @router.get(
@@ -135,35 +134,29 @@ def get_user_profile(
     return UsersAssembler.to_profile_dto(profile)
 
 
-def get_profile_events_service(
-    db: Annotated[Session, Depends(get_db)],
-) -> ProfileEventsService:
-    return ProfileEventsService(
-        user_repository=SqlAlchemyUserRepository(db),
-        repository=SqlAlchemyUserEventsRepository(db),
-    )
-
-
 @router.get(
     "/users/{user_id}/events",
-    response_model=ProfileEventsOutput,
+    response_model=UserEventsTabsOutput,
     status_code=status.HTTP_200_OK,
-    summary="Listar os eventos de um usuário",
+    summary="Listar os eventos de um perfil por categoria",
     description=(
-        "Retorna os eventos que o usuário criou ou em que tem presença "
-        "confirmada, em ordem crescente de data, incluindo os passados. "
-        "Para outra pessoa, só eventos PUBLIC com status PUBLISHED ou "
-        "FINISHED; o próprio dono vê todos os seus eventos. Eventos cujo "
-        "organizador bloqueou o solicitante não aparecem."
+        "Sem `tab`, devolve a primeira página de cada categoria permitida ao "
+        "solicitante. Com `tab` e `cursor` juntos, devolve só a continuação "
+        "daquela categoria e as demais vêm `null`. Conta pessoal no próprio "
+        "perfil vê `history`, `created`, `interests` e `confirmed`; "
+        "estabelecimento no próprio perfil e qualquer um no perfil de outro "
+        "veem `history` e `created`. No perfil de outro só entram eventos "
+        "PUBLIC e `participation_status` é sempre `null`. Categoria não "
+        "permitida vem `null`; permitida e vazia vem com `items` vazio."
     ),
     responses={
         status.HTTP_400_BAD_REQUEST: {
-            "description": "Cursor de paginação malformado.",
-            "content": {
-                "application/json": {
-                    "example": {"detail": "Invalid pagination parameters"}
-                }
-            },
+            "description": (
+                "`Invalid tab`: tab desconhecida, não permitida ao solicitante "
+                "ou enviada sem cursor (e vice-versa). `Invalid pagination "
+                "parameters`: limit fora de 1–100 ou cursor malformado."
+            ),
+            "content": {"application/json": {"example": {"detail": "Invalid tab"}}},
         },
         status.HTTP_401_UNAUTHORIZED: {
             "description": "Token ausente, inválido ou expirado.",
@@ -191,44 +184,45 @@ def get_profile_events_service(
 def list_user_events(
     user_id: UUID,
     current_user: Annotated[User, Depends(get_current_user)],
-    profile_events_service: Annotated[
-        ProfileEventsService, Depends(get_profile_events_service)
-    ],
-    limit: Annotated[
-        int,
+    user_events_service: Annotated[UserEventsService, Depends(get_user_events_service)],
+    tab: Annotated[
+        str | None,
         Query(
-            ge=MIN_USER_EVENTS_LIMIT,
-            le=MAX_PROFILE_EVENTS_LIMIT,
-            description="Tamanho da página (1–50).",
+            description=(
+                "`history`, `created`, `interests` ou `confirmed`. "
+                "Só é aceita junto com `cursor`."
+            )
         ),
+    ] = None,
+    limit: Annotated[
+        int, Query(description="Tamanho da página por categoria (1–100).")
     ] = DEFAULT_USER_EVENTS_LIMIT,
     cursor: Annotated[
         str | None,
-        Query(
-            max_length=MAX_PROFILE_EVENTS_CURSOR_LENGTH,
-            description="Cursor opaco devolvido em next_cursor.",
-        ),
+        Query(description="`next_cursor` devolvido pela categoria de `tab`."),
     ] = None,
-) -> ProfileEventsOutput:
-    assert current_user.user_id is not None
+) -> UserEventsTabsOutput:
     try:
-        page = profile_events_service.get_profile_events(
-            user_id, current_user.user_id, limit=limit, cursor=cursor
+        tabs = user_events_service.get_profile_events(
+            user_id, current_user, tab=tab, limit=limit, cursor=cursor
         )
     except UserNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        ) from error
+    except InvalidUserEventsTabError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tab"
         ) from error
     except InvalidPaginationError as error:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid pagination parameters",
         ) from error
-    return UserEventsAssembler.to_profile_dto(page)
+    return UserEventsAssembler.to_tabs_dto(tabs)
 
 
 __all__ = [
-    "get_profile_events_service",
     "get_user_events_service",
     "get_user_profile",
     "get_users_service",

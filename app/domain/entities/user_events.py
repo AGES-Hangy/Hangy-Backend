@@ -7,12 +7,15 @@ from app.domain.enums import EventParticipantStatusEnum, EventPrivacyEnum
 
 @dataclass(frozen=True, slots=True)
 class UserEvent:
-    """An event of the authenticated user as listed by a profile tab."""
+    """An event as listed by a profile tab."""
 
     event_id: UUID
     title: str
     starts_at: datetime
-    participation_status: EventParticipantStatusEnum
+    privacy: EventPrivacyEnum
+    # The profile owner's own participation; unset when they only created or
+    # favorited the event, and always hidden from other viewers.
+    participation_status: EventParticipantStatusEnum | None = None
     location_name: str | None = None
     cover_photo_url: str | None = None
 
@@ -24,18 +27,10 @@ class UserEventsPage:
 
 
 @dataclass(frozen=True, slots=True)
-class ProfileEvent:
-    """An event as listed on someone's profile, possibly another user's."""
+class UserEventsTabs:
+    """Every tab of a profile; None marks a tab the viewer is not shown."""
 
-    event_id: UUID
-    title: str
-    starts_at: datetime
-    privacy: EventPrivacyEnum
-    location_name: str | None = None
-    cover_photo_url: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ProfileEventsPage:
-    items: tuple[ProfileEvent, ...]
-    next_cursor: str | None
+    history: UserEventsPage | None = None
+    created: UserEventsPage | None = None
+    interests: UserEventsPage | None = None
+    confirmed: UserEventsPage | None = None

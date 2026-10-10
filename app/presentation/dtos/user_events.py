@@ -7,20 +7,6 @@ from app.domain.enums import EventParticipantStatusEnum, EventPrivacyEnum
 
 
 class UserEventOutput(BaseModel):
-    event_id: UUID
-    title: str
-    event_date: datetime
-    location_name: str | None
-    cover_photo_url: str | None
-    participation_status: EventParticipantStatusEnum
-
-
-class UserEventsOutput(BaseModel):
-    items: list[UserEventOutput]
-    next_cursor: str | None
-
-
-class ProfileEventOutput(BaseModel):
     # Only what the profile card renders: nothing about the organizer leaks.
     event_id: UUID
     title: str
@@ -28,8 +14,18 @@ class ProfileEventOutput(BaseModel):
     location_name: str | None
     cover_photo_url: str | None
     privacy: EventPrivacyEnum
+    participation_status: EventParticipantStatusEnum | None
 
 
-class ProfileEventsOutput(BaseModel):
-    items: list[ProfileEventOutput]
+class UserEventsOutput(BaseModel):
+    items: list[UserEventOutput]
     next_cursor: str | None
+
+
+class UserEventsTabsOutput(BaseModel):
+    # Always the four keys: null is "not shown to this viewer", which is not
+    # the same as a shown tab that happens to be empty.
+    history: UserEventsOutput | None
+    created: UserEventsOutput | None
+    interests: UserEventsOutput | None
+    confirmed: UserEventsOutput | None
