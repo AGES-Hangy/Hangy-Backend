@@ -90,7 +90,7 @@ def test_seed_creates_the_sample_data_only_once(
         assert count(db, user_tag) == sum(
             len(tag_names) for tag_names in SEED_INTERESTS.values()
         )
-        assert count(db, EventParticipantModel) == 13
+        assert count(db, EventParticipantModel) == 14
         assert count(db, NotificationModel) == len(SEED_NOTIFICATIONS)
 
 
@@ -271,31 +271,59 @@ def test_seeded_business_user_has_an_empty_feed(
 
 
 @pytest.mark.parametrize(
-    ("profile_email", "expected_titles"),
+    ("profile_email", "expected"),
     [
-        # Created PUBLIC events only, past one included; the PRIVATE,
-        # INVITE_ONLY, DRAFT and CANCELLED ones stay off the business agenda.
+        # user@hangy.com's own profile: every tab, PRIVATE events included.
+        # The CANCELLED "Pelada" they had confirmed is in none of them.
+        (
+            "user@hangy.com",
+            {
+                "history": ["Sarau de teatro"],
+                "created": ["Corrida da Redenção"],
+                "interests": [
+                    "Show de rock no Opinião",
+                    "Roda de samba na Cidade Baixa",
+                ],
+                "confirmed": ["Pelada no Parcão", "Aniversário da Maria"],
+            },
+        ),
+        # A business agenda seen by a visitor: PUBLIC only, so the PRIVATE,
+        # INVITE_ONLY, DRAFT and CANCELLED events stay out.
         (
             "admin@hangy.com",
-            ["Pelada de ontem", "Pelada no Parcão", "Show de rock no Opinião"],
+            {
+                "history": ["Pelada de ontem"],
+                "created": ["Pelada no Parcão", "Show de rock no Opinião"],
+                "interests": None,
+                "confirmed": None,
+            },
         ),
-        # Her own PUBLIC event plus the PUBLIC ones she confirmed presence in,
-        # FINISHED included; "Aniversário da Maria" and "Corrida da Redenção"
-        # are PRIVATE, and she is only pending on "Show de rock no Opinião".
+        # "Aniversário da Maria" is PRIVATE, and what she is going to
+        # ("Pelada no Parcão") is not shown to visitors.
         (
             "maria@hangy.com",
-            ["Sarau de teatro", "Pelada no Parcão", "Roda de samba na Cidade Baixa"],
+            {
+                "history": ["Sarau de teatro"],
+                "created": ["Roda de samba na Cidade Baixa"],
+                "interests": None,
+                "confirmed": None,
+            },
         ),
-        # Her only participation was cancelled.
-        ("ana@hangy.com", []),
+        # Her only participation was cancelled: allowed tabs, but empty.
+        (
+            "ana@hangy.com",
+            {"history": [], "created": [], "interests": None, "confirmed": None},
+        ),
     ],
 )
 def test_seeded_user_events_match_the_documented_sample(
     session_factory: sessionmaker[Session],
     profile_email: str,
-    expected_titles: list[str],
+    expected: dict[str, list[str] | None],
 ) -> None:
     with session_factory() as db:
+        seed_everything(db)
+        # Twice, to show the favorites are not duplicated by a restart.
         seed_everything(db)
         profile_id = db.scalar(
             select(UserModel.user_id).where(UserModel.email == profile_email)
@@ -318,9 +346,11 @@ def test_seeded_user_events_match_the_documented_sample(
     app.dependency_overrides.clear()
 
     assert response.status_code == 200
-    body = response.json()
-    assert [item["title"] for item in body["items"]] == expected_titles
-    assert body["next_cursor"] is None
+    titles = {
+        tab: [item["title"] for item in page["items"]] if page is not None else None
+        for tab, page in response.json().items()
+    }
+    assert titles == expected
 
 
 @pytest.mark.parametrize(
@@ -556,7 +586,7 @@ def test_seed_restores_participants_changed_while_testing(
         assert (
             participants[maria.user_id].status == EventParticipantStatusEnum.CONFIRMED
         )
-        assert count(db, EventParticipantModel) == 13
+        assert count(db, EventParticipantModel) == 14
 
 
 def test_seed_recomputes_notification_dates_from_the_current_time(

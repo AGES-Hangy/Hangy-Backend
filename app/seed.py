@@ -20,6 +20,7 @@ from app.infrastructure.repository.business_profile import (
 from app.infrastructure.repository.models import (
     ConnectionNotificationModel,
     EventCancelledNotificationModel,
+    EventFavoriteModel,
     EventInviteLinkModel,
     EventModel,
     EventParticipantModel,
@@ -181,6 +182,9 @@ class SeedEvent:
     cancelled_emails: tuple[str, ...] = field(default_factory=tuple)
     # Taken out by the creator, who must not be asked to let them back in.
     removed_emails: tuple[str, ...] = field(default_factory=tuple)
+    # Personal accounts that marked the event as an interest: what fills the
+    # `interests` tab of GET /users/{user_id}/events.
+    favorited_emails: tuple[str, ...] = field(default_factory=tuple)
 
 
 SEED_EVENTS = (
@@ -254,6 +258,7 @@ SEED_EVENTS = (
         cover_photo_url="https://picsum.photos/seed/rock/800/450",
         pending_emails=("maria@hangy.com",),
         rejected_emails=("user@hangy.com",),
+        favorited_emails=("user@hangy.com",),
     ),
     # Invisible: user@hangy.com has no interest in these tags.
     SeedEvent(
@@ -262,6 +267,7 @@ SEED_EVENTS = (
         tag_name="Samba",
         creator_email="maria@hangy.com",
         starts_in_days=6,
+        favorited_emails=("user@hangy.com", "joao@hangy.com"),
     ),
     # João removed user@hangy.com, so they can't ask to join again.
     SeedEvent(
@@ -297,9 +303,9 @@ SEED_EVENTS = (
         event_status=EventStatusEnum.CANCELLED,
         confirmed_emails=("user@hangy.com",),
     ),
-    # Already over and closed as FINISHED: out of the feed, but listed by
-    # GET /users/{id}/events on both João's profile (creator) and Maria's
-    # (confirmed participant).
+    # Already over and closed as FINISHED: out of the feed, but on the
+    # `history` tab of GET /users/{id}/events for João (creator) and for the
+    # confirmed participants, user@hangy.com included.
     SeedEvent(
         title="Sarau de teatro",
         location_name="Teatro de Arena",
@@ -308,7 +314,7 @@ SEED_EVENTS = (
         starts_in_days=-5,
         event_status=EventStatusEnum.FINISHED,
         cover_photo_url="https://picsum.photos/seed/sarau/800/450",
-        confirmed_emails=("maria@hangy.com",),
+        confirmed_emails=("maria@hangy.com", "user@hangy.com"),
     ),
 )
 
@@ -609,6 +615,7 @@ def seed_events(db: Session) -> None:
                 event.location_name = seed.location_name
 
         _seed_participants(db, event, seed, users)
+        _seed_favorites(db, event, seed, users)
         _seed_invite_link(db, event, seed)
     db.commit()
 
@@ -768,6 +775,22 @@ def _seed_participants(
                 # so approving or removing someone while testing must not leave
                 # a "wants to join" notification with no pending request behind.
                 participant.status = status
+
+
+def _seed_favorites(
+    db: Session,
+    event: EventModel,
+    seed: SeedEvent,
+    users: dict[str, UserModel],
+) -> None:
+    for email in seed.favorited_emails:
+        user = users.get(email)
+        if user is None:
+            continue
+        # Put back on every run, like the participants: a demo that
+        # unfavorites the event can be repeated after a restart.
+        if db.get(EventFavoriteModel, (user.user_id, event.event_id)) is None:
+            db.add(EventFavoriteModel(user_id=user.user_id, event_id=event.event_id))
 
 
 def _seed_invite_link(db: Session, event: EventModel, seed: SeedEvent) -> None:
