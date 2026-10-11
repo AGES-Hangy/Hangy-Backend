@@ -23,6 +23,8 @@ class FollowRepository(Protocol):
 
     def add(self, follow: UserFollow) -> None: ...
 
+    def remove(self, follower_id: UUID, followed_business_id: UUID) -> None: ...
+
 
 class BusinessNotFoundError(Exception):
     """There is no active account with this id (missing or soft-deleted)."""
@@ -49,6 +51,11 @@ class FollowService:
                 created_at=datetime.now(UTC),
             )
         )
+
+    def unfollow(self, follower_id: UUID, business_id: UUID) -> None:
+        """Stop following a business. Idempotent: not following is a success."""
+        self.get_followable_business(business_id)
+        self.repository.remove(follower_id, business_id)
 
     def get_followable_business(self, business_id: UUID) -> BusinessProfile:
         """Resolve an active business or explain why it cannot be followed.

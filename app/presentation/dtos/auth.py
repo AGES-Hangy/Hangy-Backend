@@ -108,3 +108,9 @@ class CurrentUserOutput(BaseModel):
     user_type: UserTypeEnum
     name: str | None = None
     profile: PersonalProfileOutput | BusinessProfileOutput | None = None
+
+
+class DeleteAccountInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    password: SecretStr

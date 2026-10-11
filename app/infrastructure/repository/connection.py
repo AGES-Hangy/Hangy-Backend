@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import Uuid, and_, column, func, inspect, or_, select, table
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -9,14 +9,10 @@ from app.domain.enums import NotificationTypeEnum, UserConnectionStatusEnum
 from app.domain.services.connection import ConnectionAlreadyExistsError
 from app.domain.services.notification_dispatcher import NotificationDispatcher
 from app.infrastructure.repository.models import UserConnectionModel, UserModel
-from app.infrastructure.repository.user import SqlAlchemyUserRepository
-
-USER_BLOCK_TABLE_NAME = "user_block"
-user_block = table(
-    USER_BLOCK_TABLE_NAME,
-    column("blocker_id", Uuid),
-    column("blocked_id", Uuid),
+from app.infrastructure.repository.models.user_block_model import (
+    UserBlockModel,
 )
+from app.infrastructure.repository.user import SqlAlchemyUserRepository
 
 
 class SqlAlchemyConnectionRepository:
@@ -69,30 +65,19 @@ class SqlAlchemyConnectionRepository:
         return func.min, func.max
 
     def is_blocked(self, user_a: UUID, user_b: UUID) -> bool:
-        """Read task 087's table without owning its model or migration.
-
-        The dependency is not yet present on ``develop``. A lightweight table
-        clause keeps this task migration-free and starts enforcing the rule
-        as soon as ``user_block`` lands. Checked both ways: either side
-        having blocked the other hides the receiver from the requester.
-        """
-        bind = self.db.get_bind()
-        if not inspect(bind).has_table(USER_BLOCK_TABLE_NAME):
-            return False
-
         return (
             self.db.scalar(
                 select(func.count())
-                .select_from(user_block)
+                .select_from(UserBlockModel)
                 .where(
                     or_(
                         and_(
-                            user_block.c.blocker_id == user_a,
-                            user_block.c.blocked_id == user_b,
+                            UserBlockModel.blocker_id == user_a,
+                            UserBlockModel.blocked_id == user_b,
                         ),
                         and_(
-                            user_block.c.blocker_id == user_b,
-                            user_block.c.blocked_id == user_a,
+                            UserBlockModel.blocker_id == user_b,
+                            UserBlockModel.blocked_id == user_a,
                         ),
                     )
                 )
