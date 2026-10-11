@@ -29,6 +29,16 @@ class Settings:
     )
     invite_link_base_url: str = os.getenv("INVITE_LINK_BASE_URL", "hangy://invite/")
     frontend_base_url: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:8081")
+    # Keys the HMAC that offsets each event's approximate point; rotating it
+    # only affects points computed afterwards.
+    location_obfuscation_secret: str = required_environment_variable(
+        "LOCATION_OBFUSCATION_SECRET"
+    )
+    # Must stay above the largest offset (350 m) so the real address is always
+    # inside the area drawn around the approximate point.
+    private_event_area_radius_m: int = int(
+        os.getenv("PRIVATE_EVENT_AREA_RADIUS_M", "500")
+    )
     expo_access_token: str | None = os.getenv("EXPO_ACCESS_TOKEN")
     terms_version: str = os.getenv("TERMS_VERSION", "2026-08-01")
     terms_published_at: str = os.getenv("TERMS_PUBLISHED_AT", "2026-08-01T00:00:00Z")

@@ -165,10 +165,13 @@ EVENT_LONGITUDE = -51.2090
 class SeedEvent:
     title: str
     location_name: str
+    # What a PRIVATE event shows to whoever was not approved yet.
+    location_neighborhood: str
     tag_name: str
     creator_email: str
     # Days from "now", so a restart always leaves the feed with future events.
     starts_in_days: int
+    location_city: str = "Porto Alegre"
     privacy: EventPrivacyEnum = EventPrivacyEnum.PUBLIC
     event_status: EventStatusEnum = EventStatusEnum.PUBLISHED
     cover_photo_url: str | None = None
@@ -194,6 +197,7 @@ SEED_EVENTS = (
     SeedEvent(
         title="Pelada no Parcão",
         location_name="Parque Moinhos de Vento (Parcão)",
+        location_neighborhood="Moinhos de Vento",
         tag_name="Futebol",
         creator_email="admin@hangy.com",
         starts_in_days=1,
@@ -207,6 +211,7 @@ SEED_EVENTS = (
     SeedEvent(
         title="Corrida da Redenção",
         location_name="Parque Farroupilha (Redenção)",
+        location_neighborhood="Farroupilha",
         tag_name="Corrida",
         creator_email="user@hangy.com",
         starts_in_days=4,
@@ -215,11 +220,13 @@ SEED_EVENTS = (
         pending_emails=("joao@hangy.com",),
         cancelled_emails=("ana@hangy.com",),
     ),
-    # Visible, but the feed hides event_date and location_name for PRIVATE events.
+    # Visible, but the feed hides event_date and shows only the neighborhood of
+    # PRIVATE events to whoever was not approved.
     # Maria approved user@hangy.com's request.
     SeedEvent(
         title="Aniversário da Maria",
         location_name="Casa da Maria",
+        location_neighborhood="Bom Fim",
         tag_name="Futebol",
         creator_email="maria@hangy.com",
         starts_in_days=2,
@@ -233,6 +240,7 @@ SEED_EVENTS = (
     SeedEvent(
         title="Confraternização da equipe",
         location_name="Sede do Hangy",
+        location_neighborhood="Partenon",
         tag_name="Futebol",
         creator_email="admin@hangy.com",
         starts_in_days=10,
@@ -242,6 +250,7 @@ SEED_EVENTS = (
     SeedEvent(
         title="Rachão fechado",
         location_name="Quadra do bairro",
+        location_neighborhood="Santana",
         tag_name="Futebol",
         creator_email="admin@hangy.com",
         starts_in_days=3,
@@ -252,6 +261,7 @@ SEED_EVENTS = (
     SeedEvent(
         title="Show de rock no Opinião",
         location_name="Bar Opinião",
+        location_neighborhood="Cidade Baixa",
         tag_name="Rock",
         creator_email="admin@hangy.com",
         starts_in_days=5,
@@ -264,6 +274,7 @@ SEED_EVENTS = (
     SeedEvent(
         title="Roda de samba na Cidade Baixa",
         location_name="Cidade Baixa",
+        location_neighborhood="Cidade Baixa",
         tag_name="Samba",
         creator_email="maria@hangy.com",
         starts_in_days=6,
@@ -273,6 +284,7 @@ SEED_EVENTS = (
     SeedEvent(
         title="Churrasco do bairro",
         location_name="Salão de festas do bairro",
+        location_neighborhood="Santana",
         tag_name="Churrasco",
         creator_email="joao@hangy.com",
         starts_in_days=7,
@@ -282,6 +294,7 @@ SEED_EVENTS = (
     SeedEvent(
         title="Pelada de ontem",
         location_name="Parque Moinhos de Vento (Parcão)",
+        location_neighborhood="Moinhos de Vento",
         tag_name="Futebol",
         creator_email="admin@hangy.com",
         starts_in_days=-1,
@@ -291,6 +304,7 @@ SEED_EVENTS = (
     SeedEvent(
         title="Evento encerrado para teste de experiência",
         location_name="Parque Moinhos de Vento (Parcão)",
+        location_neighborhood="Moinhos de Vento",
         tag_name="Futebol",
         creator_email="admin@hangy.com",
         starts_in_days=-2,
@@ -299,6 +313,7 @@ SEED_EVENTS = (
     SeedEvent(
         title="Pelada em rascunho",
         location_name="Parque Moinhos de Vento (Parcão)",
+        location_neighborhood="Moinhos de Vento",
         tag_name="Futebol",
         creator_email="admin@hangy.com",
         starts_in_days=8,
@@ -307,6 +322,7 @@ SEED_EVENTS = (
     SeedEvent(
         title="Pelada",
         location_name="Parque Moinhos de Vento (Parcão)",
+        location_neighborhood="Moinhos de Vento",
         tag_name="Futebol",
         creator_email="admin@hangy.com",
         starts_in_days=9,
@@ -319,6 +335,7 @@ SEED_EVENTS = (
     SeedEvent(
         title="Sarau de teatro",
         location_name="Teatro de Arena",
+        location_neighborhood="Centro Histórico",
         tag_name="Teatro",
         creator_email="joao@hangy.com",
         starts_in_days=-5,
@@ -602,6 +619,8 @@ def seed_events(db: Session) -> None:
                 event_creator_id=creator.user_id,
                 event_title=seed.title,
                 location_name=seed.location_name,
+                location_neighborhood=seed.location_neighborhood,
+                location_city=seed.location_city,
                 event_description=f"Evento de exemplo criado pelo seed: {seed.title}.",
                 event_latitude=EVENT_LATITUDE,
                 event_longitude=EVENT_LONGITUDE,
@@ -623,6 +642,10 @@ def seed_events(db: Session) -> None:
             event.ends_at = starts_at + EVENT_DURATION
             if event.location_name is None:
                 event.location_name = seed.location_name
+            if event.location_neighborhood is None:
+                event.location_neighborhood = seed.location_neighborhood
+            if event.location_city is None:
+                event.location_city = seed.location_city
 
         _seed_participants(db, event, seed, users)
         _seed_favorites(db, event, seed, users)

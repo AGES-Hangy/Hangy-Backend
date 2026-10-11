@@ -87,19 +87,22 @@ def create_event(
     event_status: EventStatusEnum = EventStatusEnum.PUBLISHED,
     event_id: UUID | None = None,
     deleted_at: datetime | None = None,
+    privacy: EventPrivacyEnum = EventPrivacyEnum.PUBLIC,
 ) -> EventModel:
     event = EventModel(
         event_id=event_id or uuid4(),
         event_creator_id=creator_id,
         event_title=title,
         location_name="Parcão",
+        location_neighborhood="Moinhos de Vento",
+        location_city="Porto Alegre",
         cover_photo_url="https://example.com/cover.jpg",
         event_latitude=0.0,
         event_longitude=0.0,
         starts_at=starts_at,
         ends_at=ends_at or starts_at + timedelta(hours=2),
         event_status=event_status,
-        event_privacy=EventPrivacyEnum.PUBLIC,
+        event_privacy=privacy,
         deleted_at=deleted_at,
     )
     db.add(event)
@@ -1286,3 +1289,58 @@ def test_current_user_events_keep_their_own_tabs(
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Invalid tab"}
+
+
+def test_a_confirmed_participant_sees_the_address_of_a_private_event(
+    events_client,
+) -> None:
+    client, session = events_client
+    with session() as db:
+        me = create_user(db)
+        organizer = create_user(db)
+        event = create_event(
+            db,
+            organizer.user_id,
+            "Aniversário",
+            starts_at=NOW + timedelta(days=1),
+            privacy=EventPrivacyEnum.PRIVATE,
+        )
+        join(db, me.user_id, event)
+        db.commit()
+        headers = make_token(me.user_id)
+
+    body = client.get(URL, params={"tab": "confirmed"}, headers=headers).json()
+
+    # Only confirmed participations are listed, and those may see the address.
+    [item] = body["items"]
+    assert item["location_name"] == "Parcão"
+
+
+def test_interests_hide_the_address_of_a_private_event_until_confirmed(
+    events_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    test_client, session_factory = events_client
+    with session_factory() as db:
+        owner_id = _add_user(db, "Dona")
+        organizer_id = _add_user(db, "Organizadora")
+        wanted_id = _add_event(
+            db, organizer_id, "Quero ir", privacy=EventPrivacyEnum.PRIVATE
+        )
+        _favorite(db, wanted_id, owner_id)
+        going_id = _add_event(
+            db,
+            organizer_id,
+            "Vou",
+            starts_at=FUTURE + DAY,
+            privacy=EventPrivacyEnum.PRIVATE,
+        )
+        _favorite(db, going_id, owner_id)
+        _add_participant(db, going_id, owner_id)
+        db.commit()
+
+    body = _list(test_client, owner_id, owner_id)
+
+    # A favorite alone is no approval: only the confirmed one gets the address.
+    assert [
+        (item["title"], item["location_name"]) for item in body["interests"]["items"]
+    ] == [("Quero ir", None), ("Vou", "Parcão")]

@@ -117,7 +117,7 @@ def get_invite(
     share_service: Annotated[EventShareService, Depends(get_event_share_service)],
 ) -> EventInvitePreviewOutput:
     try:
-        event = share_service.resolve_invite(token)
+        preview = share_service.resolve_invite(token)
     except ShareableEventNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -128,4 +128,4 @@ def get_invite(
             status_code=status.HTTP_410_GONE,
             detail="Invite link expired",
         ) from error
-    return EventAssembler.to_invite_preview_dto(event)
+    return EventAssembler.to_invite_preview_dto(preview)

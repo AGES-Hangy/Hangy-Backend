@@ -13,6 +13,7 @@ from app.domain.enums import (
     EventPrivacyEnum,
     EventStatusEnum,
 )
+from app.domain.services.event_location import resolve_location
 
 PARTICIPANTS_PREVIEW_LIMIT = 5
 
@@ -83,6 +84,7 @@ class EventDetailsService:
 
         return EventDetails(
             event=event,
+            location=resolve_location(event, is_organizer, participation_status),
             tags=data.tags,
             organizer=data.organizer,
             viewer=viewer,

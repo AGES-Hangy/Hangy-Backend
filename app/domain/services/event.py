@@ -1,7 +1,8 @@
 from collections.abc import Collection
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.domain.entities import Event, EventParticipant, EventUpdate, NewEvent
 from app.domain.enums import (
@@ -9,6 +10,7 @@ from app.domain.enums import (
     EventStatusEnum,
     NotificationTypeEnum,
 )
+from app.domain.services.event_location import approximate_point
 
 MAX_EVENT_TAGS = 5
 MIN_LATITUDE, MAX_LATITUDE = -90.0, 90.0
@@ -130,7 +132,20 @@ class EventsService:
             if len(existing) != len(event.tag_ids):
                 raise EventTagNotFoundError
 
-        return self.repository.add(event)
+        # Computed for every event, whatever its privacy: who gets to see which
+        # point is decided when the event is read, not here.
+        event_id = uuid4()
+        approx_latitude, approx_longitude = approximate_point(
+            event_id, event.event_latitude, event.event_longitude
+        )
+        return self.repository.add(
+            replace(
+                event,
+                event_id=event_id,
+                approx_latitude=approx_latitude,
+                approx_longitude=approx_longitude,
+            )
+        )
 
     def update_participant_status(
         self,
@@ -218,6 +233,17 @@ class EventsService:
                 if len(existing) != len(tag_ids):
                     raise EventTagNotFoundError
 
+        # The approximate point only moves together with the real one, so
+        # editing anything else can never be used to sample new offsets.
+        approx_latitude, approx_longitude = (
+            event.approx_latitude,
+            event.approx_longitude,
+        )
+        if "location" in changes.fields_to_update:
+            approx_latitude, approx_longitude = approximate_point(
+                event_id, changes.event_latitude, changes.event_longitude
+            )
+
         updated_event = Event(
             event_id=event.event_id,
             event_creator_id=event.event_creator_id,
@@ -236,6 +262,8 @@ class EventsService:
                 if "location" in changes.fields_to_update
                 else event.event_longitude
             ),
+            approx_latitude=approx_latitude,
+            approx_longitude=approx_longitude,
             starts_at=starts_at,
             ends_at=ends_at,
             event_status=event.event_status,
@@ -251,6 +279,16 @@ class EventsService:
                 changes.location_name
                 if "location_name" in changes.fields_to_update
                 else event.location_name
+            ),
+            location_neighborhood=(
+                changes.location_neighborhood
+                if "location_neighborhood" in changes.fields_to_update
+                else event.location_neighborhood
+            ),
+            location_city=(
+                changes.location_city
+                if "location_city" in changes.fields_to_update
+                else event.location_city
             ),
             max_participants=event.max_participants,
             cover_photo_url=(

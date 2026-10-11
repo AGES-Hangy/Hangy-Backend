@@ -8,6 +8,7 @@ from app.domain.enums import (
     EventParticipantStatusEnum,
     EventPrivacyEnum,
     EventStatusEnum,
+    LocationPrecisionEnum,
     UserTypeEnum,
 )
 
@@ -57,8 +58,13 @@ class EventDetailsOutput(BaseModel):
     description: str | None
     event_date: datetime
     end_date: datetime
+    # For a PRIVATE event seen by someone not approved yet, these are an
+    # approximate point and the neighborhood, never the address.
     location: EventDetailsLocationOutput
     location_name: str | None
+    location_precision: LocationPrecisionEnum
+    # Radius of the area to draw instead of a pin; null for an exact location.
+    location_radius_m: int | None
     privacy: EventPrivacyEnum
     status: EventStatusEnum
     cover_photo_url: str | None

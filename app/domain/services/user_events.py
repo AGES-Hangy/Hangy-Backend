@@ -3,10 +3,17 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
-from app.domain.entities import User, UserEvent, UserEventsPage, UserEventsTabs
+from app.domain.entities import (
+    User,
+    UserEvent,
+    UserEventParticipation,
+    UserEventsPage,
+    UserEventsTabs,
+)
 from app.domain.enums import UserEventsTabEnum, UserTypeEnum
 from app.domain.services.auth import UserRepository
 from app.domain.services.block import BlockChecker
+from app.domain.services.event_location import resolve_location
 from app.domain.services.pagination import (
     InvalidPaginationError,
     decode_cursor,
@@ -46,7 +53,7 @@ class UserEventsRepository(Protocol):
         limit: int,
         cursor_starts_at: datetime | None,
         cursor_event_id: UUID | None,
-    ) -> list[UserEvent]: ...
+    ) -> list[UserEventParticipation]: ...
 
 
 class InvalidUserEventsTabError(Exception):
@@ -175,7 +182,7 @@ class UserEventsService:
         )
 
         has_more = len(events) > limit
-        items = events[:limit]
+        items = [self._to_item(event, user_id, viewer_id) for event in events[:limit]]
         next_cursor = None
         if has_more:
             last = items[-1]
@@ -193,3 +200,28 @@ class UserEventsService:
                 f"limit must be between {MIN_USER_EVENTS_LIMIT} "
                 f"and {MAX_USER_EVENTS_LIMIT}"
             )
+
+    @staticmethod
+    def _to_item(
+        participation: UserEventParticipation, user_id: UUID, viewer_id: UUID
+    ) -> UserEvent:
+        event = participation.event
+        if event.event_id is None:
+            raise ValueError("A persisted event must have an id")
+        return UserEvent(
+            event_id=event.event_id,
+            title=event.event_title,
+            starts_at=event.starts_at,
+            privacy=event.event_privacy,
+            participation_status=participation.participation_status,
+            # The participation is the profile owner's, so it only opens the
+            # address to the owner; a visitor is only ever listed PUBLIC events.
+            location=resolve_location(
+                event,
+                is_organizer=event.event_creator_id == viewer_id,
+                participation_status=(
+                    participation.participation_status if user_id == viewer_id else None
+                ),
+            ),
+            cover_photo_url=event.cover_photo_url,
+        )

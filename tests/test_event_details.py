@@ -88,6 +88,8 @@ def _create_scenario(
     privacy: EventPrivacyEnum = EventPrivacyEnum.PUBLIC,
     status: EventStatusEnum = EventStatusEnum.PUBLISHED,
     viewer_status: EventParticipantStatusEnum | None = None,
+    neighborhood: str | None = "Moinhos de Vento",
+    city: str | None = "Porto Alegre",
 ) -> EventScenario:
     scenario = EventScenario(
         event_id=uuid4(),
@@ -110,6 +112,8 @@ def _create_scenario(
         event_latitude=-30.0277,
         event_longitude=-51.2287,
         location_name="Parcao",
+        location_neighborhood=neighborhood,
+        location_city=city,
         starts_at=datetime.now(UTC) + timedelta(days=1),
         ends_at=datetime.now(UTC) + timedelta(days=1, hours=3),
         event_status=status,
@@ -162,6 +166,9 @@ def test_public_event_returns_all_details_and_confirmed_participants(
     assert body["title"] == "Pelada no Parcao"
     assert body["description"] == "Futebol society"
     assert body["location"] == {"latitude": -30.0277, "longitude": -51.2287}
+    assert body["location_name"] == "Parcao"
+    assert body["location_precision"] == "EXACT"
+    assert body["location_radius_m"] is None
     assert body["tags"][0]["name"] == "Futebol"
     assert body["organizer"] == {
         "id": str(scenario.organizer_id),
@@ -338,3 +345,99 @@ def test_openapi_documents_event_details(
     assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/EventDetailsOutput"
     }
+
+
+@pytest.mark.parametrize(
+    "viewer_status",
+    [
+        None,
+        EventParticipantStatusEnum.PENDING,
+        EventParticipantStatusEnum.REJECTED,
+        EventParticipantStatusEnum.CANCELLED,
+        EventParticipantStatusEnum.REMOVED,
+    ],
+)
+def test_private_event_gives_only_an_approximate_location_until_approved(
+    details_client: tuple[TestClient, sessionmaker[Session]],
+    viewer_status: EventParticipantStatusEnum | None,
+) -> None:
+    client, session_factory = details_client
+    with session_factory() as db:
+        scenario = _create_scenario(
+            db, privacy=EventPrivacyEnum.PRIVATE, viewer_status=viewer_status
+        )
+        event = db.get(EventModel, scenario.event_id)
+        assert event is not None
+        approximate_point = (event.approx_latitude, event.approx_longitude)
+
+    response = client.get(
+        f"/events/{scenario.event_id}",
+        headers=_authorization(scenario.viewer_id),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["location"] == {
+        "latitude": approximate_point[0],
+        "longitude": approximate_point[1],
+    }
+    assert body["location"] != {"latitude": -30.0277, "longitude": -51.2287}
+    assert body["location_name"] == "Moinhos de Vento, Porto Alegre"
+    assert body["location_precision"] == "APPROXIMATE"
+    assert body["location_radius_m"] == 500
+    # Regression: the address must not reach the response under any field.
+    assert "Parcao" not in response.text.replace("Pelada no Parcao", "")
+    assert body["location"]["latitude"] != -30.0277
+
+
+@pytest.mark.parametrize("viewer", ["organizer", "confirmed"])
+def test_private_event_gives_the_exact_location_to_organizer_and_confirmed(
+    details_client: tuple[TestClient, sessionmaker[Session]],
+    viewer: str,
+) -> None:
+    client, session_factory = details_client
+    with session_factory() as db:
+        scenario = _create_scenario(db, privacy=EventPrivacyEnum.PRIVATE)
+    viewer_id = (
+        scenario.organizer_id if viewer == "organizer" else scenario.confirmed_id
+    )
+
+    response = client.get(
+        f"/events/{scenario.event_id}", headers=_authorization(viewer_id)
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["location"] == {"latitude": -30.0277, "longitude": -51.2287}
+    assert body["location_name"] == "Parcao"
+    assert body["location_precision"] == "EXACT"
+    assert body["location_radius_m"] is None
+
+
+@pytest.mark.parametrize(
+    ("neighborhood", "city", "location_name"),
+    [(None, "Porto Alegre", "Porto Alegre"), (None, None, None)],
+)
+def test_private_event_without_neighborhood_never_falls_back_to_the_address(
+    details_client: tuple[TestClient, sessionmaker[Session]],
+    neighborhood: str | None,
+    city: str | None,
+    location_name: str | None,
+) -> None:
+    client, session_factory = details_client
+    with session_factory() as db:
+        scenario = _create_scenario(
+            db,
+            privacy=EventPrivacyEnum.PRIVATE,
+            neighborhood=neighborhood,
+            city=city,
+        )
+
+    response = client.get(
+        f"/events/{scenario.event_id}",
+        headers=_authorization(scenario.viewer_id),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["location_name"] == location_name
+    assert response.json()["location_precision"] == "APPROXIMATE"

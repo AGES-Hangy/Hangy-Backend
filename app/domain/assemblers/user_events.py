@@ -33,7 +33,7 @@ class UserEventsAssembler:
             event_id=item.event_id,
             title=item.title,
             event_date=item.starts_at,
-            location_name=item.location_name,
+            location_name=item.location.label,
             cover_photo_url=item.cover_photo_url,
             privacy=item.privacy,
             participation_status=item.participation_status,
