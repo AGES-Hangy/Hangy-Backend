@@ -1,12 +1,37 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import or_, select
+from sqlalchemy import ColumnElement, and_, exists, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domain.entities import UserBlock
 from app.domain.enums import UserConnectionStatusEnum
+from app.domain.services.block import UserAlreadyBlockedError
+from app.infrastructure.repository.connection import select_active_between
 from app.infrastructure.repository.models import UserBlockModel, UserConnectionModel
+
+
+def block_exists_between(
+    user_a: UUID | ColumnElement[UUID], user_b: UUID | ColumnElement[UUID]
+) -> ColumnElement[bool]:
+    """SQL condition for "either user blocked the other".
+
+    Accepts columns too, so list queries can filter rows in the database with
+    the same rule BlockService.is_blocked_between applies to a single pair.
+    """
+    return exists().where(
+        or_(
+            and_(
+                UserBlockModel.blocker_id == user_a,
+                UserBlockModel.blocked_id == user_b,
+            ),
+            and_(
+                UserBlockModel.blocker_id == user_b,
+                UserBlockModel.blocked_id == user_a,
+            ),
+        )
+    )
 
 
 class SqlAlchemyBlockRepository:
@@ -14,42 +39,25 @@ class SqlAlchemyBlockRepository:
         self.db = db
 
     def exists_between(self, user_a: UUID, user_b: UUID) -> bool:
-        return (
-            self.db.scalar(
-                select(UserBlockModel).where(
-                    or_(
-                        (UserBlockModel.blocker_id == user_a)
-                        & (UserBlockModel.blocked_id == user_b),
-                        (UserBlockModel.blocker_id == user_b)
-                        & (UserBlockModel.blocked_id == user_a),
-                    )
-                )
-            )
-            is not None
-        )
+        return bool(self.db.scalar(select(block_exists_between(user_a, user_b))))
 
     def create(self, blocker_id: UUID, blocked_id: UUID) -> UserBlock:
         model = UserBlockModel(blocker_id=blocker_id, blocked_id=blocked_id)
         self.db.add(model)
+        try:
+            self.db.flush()
+        except IntegrityError as error:
+            self.db.rollback()
+            raise UserAlreadyBlockedError from error
 
         connection = self.db.scalar(
-            select(UserConnectionModel)
-            .where(
-                UserConnectionModel.deleted_at.is_(None),
-                UserConnectionModel.status != UserConnectionStatusEnum.REJECTED,
-                or_(
-                    (UserConnectionModel.requester_id == blocker_id)
-                    & (UserConnectionModel.receiver_id == blocked_id),
-                    (UserConnectionModel.requester_id == blocked_id)
-                    & (UserConnectionModel.receiver_id == blocker_id),
-                ),
-            )
+            select_active_between(self.db, blocker_id, blocked_id)
+            .where(UserConnectionModel.status != UserConnectionStatusEnum.REJECTED)
             .with_for_update()
         )
         if connection is not None:
             connection.deleted_at = datetime.now(UTC)
 
-        self.db.flush()
         self.db.commit()
         self.db.refresh(model)
         return self._to_entity(model)

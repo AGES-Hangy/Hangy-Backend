@@ -14,6 +14,7 @@ from app.domain.services import (
     CannotBlockSelfError,
     InvalidPaginationError,
     InvalidUserEventsTabError,
+    UserAlreadyBlockedError,
     UserEventsService,
 )
 from app.domain.services.users import UserNotFoundError, UsersService
@@ -26,7 +27,7 @@ from app.presentation.dtos import UserEventsOutput
 from app.presentation.dtos.users import UserProfileDTO
 from app.presentation.routes.auth import get_current_user
 
-router = APIRouter(tags=["Users", "Profile"])
+router = APIRouter(tags=["Profile"])
 
 
 def get_block_service(db: Annotated[Session, Depends(get_db)]) -> BlockService:
@@ -45,12 +46,15 @@ def get_user_events_service(
 @router.post(
     "/users/{user_id}/block",
     status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Users"],
     summary="Bloquear um usuário",
     description=(
-        "Bloqueia o usuário informado: desfaz qualquer conexão existente entre "
-        "os dois na mesma operação e passa a esconder os dois lados em perfil, "
-        "busca e feed. O bloqueio é unilateral, mas o efeito de invisibilidade "
-        "é mútuo. Nenhuma notificação é enviada ao bloqueado."
+        "Bloqueia o usuário informado e desfaz, na mesma operação, a conexão "
+        "ou solicitação pendente entre os dois. O bloqueio é unilateral, mas "
+        "o efeito é mútuo: `GET /users/{user_id}` passa a devolver 404 para os "
+        "dois lados, nenhum dos dois consegue enviar solicitação de conexão "
+        "ao outro e os eventos de um deixam de aparecer no feed do outro. "
+        "Nenhuma notificação é enviada ao bloqueado."
     ),
     responses={
         status.HTTP_400_BAD_REQUEST: {
@@ -71,6 +75,12 @@ def get_user_events_service(
             "description": "Usuário a bloquear inexistente ou já excluído.",
             "content": {"application/json": {"example": {"detail": "User not found"}}},
         },
+        status.HTTP_409_CONFLICT: {
+            "description": "O usuário informado já está bloqueado.",
+            "content": {
+                "application/json": {"example": {"detail": "User already blocked"}}
+            },
+        },
     },
 )
 def block_user(
@@ -88,6 +98,10 @@ def block_user(
     except BlockedUserNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        ) from error
+    except UserAlreadyBlockedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="User already blocked"
         ) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -154,8 +168,13 @@ def read_current_user_events(
     return UserEventsAssembler.to_dto(page)
 
 
-def get_users_service(db: Annotated[Session, Depends(get_db)]) -> UsersService:
-    return UsersService(repository=SqlAlchemyUserProfileRepository(db))
+def get_users_service(
+    db: Annotated[Session, Depends(get_db)],
+    block_service: Annotated[BlockService, Depends(get_block_service)],
+) -> UsersService:
+    return UsersService(
+        repository=SqlAlchemyUserProfileRepository(db), block_checker=block_service
+    )
 
 
 @router.get(
@@ -169,7 +188,10 @@ def get_users_service(db: Annotated[Session, Depends(get_db)]) -> UsersService:
     ),
     responses={
         status.HTTP_404_NOT_FOUND: {
-            "description": "Usuário não encontrado ou o usuário bloqueou o visitante",
+            "description": (
+                "Usuário não encontrado, ou existe bloqueio entre ele e o "
+                "visitante, em qualquer sentido (mesmo erro nos dois casos)."
+            ),
             "content": {"application/json": {"example": {"detail": "User not found"}}},
         },
     },
@@ -193,6 +215,8 @@ def get_user_profile(
 
 
 __all__ = [
+    "block_user",
+    "get_block_service",
     "get_user_events_service",
     "get_user_profile",
     "get_users_service",

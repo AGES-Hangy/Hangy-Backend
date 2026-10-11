@@ -1,4 +1,5 @@
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
@@ -13,6 +14,7 @@ from app.infrastructure.repository.models import (
     NotificationModel,
     UserBlockModel,
     UserConnectionModel,
+    UserModel,
 )
 from app.main import app
 
@@ -167,6 +169,117 @@ def test_block_undoes_an_existing_connection(client: TestClient) -> None:
 
     assert reloaded is not None
     assert reloaded.deleted_at is not None
+
+
+def test_block_undoes_a_pending_request_sent_by_the_blocked_user(
+    client: TestClient,
+) -> None:
+    user_a_id = register_user(client, USER_A_EMAIL, "52998224725")
+    user_b_id = register_user(client, USER_B_EMAIL, "11144477735")
+    token_a = login(client, USER_A_EMAIL)
+
+    db_generator = db_session()
+    db = next(db_generator)
+    try:
+        db.add(
+            UserConnectionModel(
+                requester_id=UUID(user_b_id),
+                receiver_id=UUID(user_a_id),
+                status=UserConnectionStatusEnum.PENDING,
+            )
+        )
+        db.commit()
+    finally:
+        db_generator.close()
+
+    response = client.post(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+    assert response.status_code == 204
+
+    db_generator = db_session()
+    db = next(db_generator)
+    try:
+        reloaded = db.scalar(select(UserConnectionModel))
+    finally:
+        db_generator.close()
+
+    assert reloaded is not None
+    assert reloaded.deleted_at is not None
+
+
+def test_block_an_already_blocked_user_returns_409(client: TestClient) -> None:
+    register_user(client, USER_A_EMAIL, "52998224725")
+    user_b_id = register_user(client, USER_B_EMAIL, "11144477735")
+    token_a = login(client, USER_A_EMAIL)
+    first = client.post(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+    assert first.status_code == 204
+
+    response = client.post(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "User already blocked"}
+
+    db_generator = db_session()
+    db = next(db_generator)
+    try:
+        blocks = db.scalars(select(UserBlockModel)).all()
+    finally:
+        db_generator.close()
+
+    assert len(blocks) == 1
+
+
+def test_block_a_user_who_already_blocked_me_returns_204(client: TestClient) -> None:
+    user_a_id = register_user(client, USER_A_EMAIL, "52998224725")
+    user_b_id = register_user(client, USER_B_EMAIL, "11144477735")
+    token_a = login(client, USER_A_EMAIL)
+    token_b = login(client, USER_B_EMAIL)
+    first = client.post(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+    assert first.status_code == 204
+
+    response = client.post(f"/users/{user_a_id}/block", headers=auth_headers(token_b))
+
+    assert response.status_code == 204
+
+
+def test_block_deleted_user_returns_404(client: TestClient) -> None:
+    register_user(client, USER_A_EMAIL, "52998224725")
+    user_b_id = register_user(client, USER_B_EMAIL, "11144477735")
+    token_a = login(client, USER_A_EMAIL)
+
+    db_generator = db_session()
+    db = next(db_generator)
+    try:
+        target = db.get(UserModel, UUID(user_b_id))
+        assert target is not None
+        target.deleted_at = datetime.now(UTC)
+        db.commit()
+    finally:
+        db_generator.close()
+
+    response = client.post(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "User not found"}
+
+
+def test_block_hides_the_profile_from_both_sides(client: TestClient) -> None:
+    user_a_id = register_user(client, USER_A_EMAIL, "52998224725")
+    user_b_id = register_user(client, USER_B_EMAIL, "11144477735")
+    token_a = login(client, USER_A_EMAIL)
+    token_b = login(client, USER_B_EMAIL)
+    visible = client.get(f"/users/{user_b_id}", headers=auth_headers(token_a))
+    assert visible.status_code == 200
+
+    response = client.post(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+    assert response.status_code == 204
+
+    blocker_view = client.get(f"/users/{user_b_id}", headers=auth_headers(token_a))
+    blocked_view = client.get(f"/users/{user_a_id}", headers=auth_headers(token_b))
+
+    assert blocker_view.status_code == 404
+    assert blocker_view.json() == {"detail": "User not found"}
+    assert blocked_view.status_code == 404
+    assert blocked_view.json() == {"detail": "User not found"}
 
 
 def test_block_creates_no_notification_for_the_blocked_user(

@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -9,10 +9,31 @@ from app.domain.enums import NotificationTypeEnum, UserConnectionStatusEnum
 from app.domain.services.connection import ConnectionAlreadyExistsError
 from app.domain.services.notification_dispatcher import NotificationDispatcher
 from app.infrastructure.repository.models import UserConnectionModel, UserModel
-from app.infrastructure.repository.models.user_block_model import (
-    UserBlockModel,
-)
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
+
+
+def select_active_between(
+    db: Session, user_a: UUID, user_b: UUID
+) -> Select[tuple[UserConnectionModel]]:
+    """Select the non-deleted connection of a pair, whoever requested it.
+
+    Matches the shape of the uq_user_connection_active_pair partial index
+    (LEAST/GREATEST on Postgres) so the lookup can use it, instead of an
+    OR'd pair of ANDs that the planner can't.
+    """
+    low_id, high_id = sorted((user_a, user_b))
+    # Postgres has no multi-arg min/max; SQLite has no least/greatest.
+    if db.get_bind().dialect.name == "postgresql":
+        least_fn, greatest_fn = func.least, func.greatest
+    else:
+        least_fn, greatest_fn = func.min, func.max
+    return select(UserConnectionModel).where(
+        UserConnectionModel.deleted_at.is_(None),
+        least_fn(UserConnectionModel.requester_id, UserConnectionModel.receiver_id)
+        == low_id,
+        greatest_fn(UserConnectionModel.requester_id, UserConnectionModel.receiver_id)
+        == high_id,
+    )
 
 
 class SqlAlchemyConnectionRepository:
@@ -38,52 +59,8 @@ class SqlAlchemyConnectionRepository:
         return SqlAlchemyUserRepository._to_entity(model) if model is not None else None
 
     def find_active_between(self, user_a: UUID, user_b: UUID) -> UserConnection | None:
-        # Matches the shape of the uq_user_connection_active_pair partial
-        # index (LEAST/GREATEST on Postgres) so the lookup can use it,
-        # instead of an OR'd pair of ANDs that the planner can't.
-        low_id, high_id = sorted((user_a, user_b))
-        least_fn, greatest_fn = self._pair_functions()
-        model = self.db.scalar(
-            select(UserConnectionModel).where(
-                UserConnectionModel.deleted_at.is_(None),
-                least_fn(
-                    UserConnectionModel.requester_id, UserConnectionModel.receiver_id
-                )
-                == low_id,
-                greatest_fn(
-                    UserConnectionModel.requester_id, UserConnectionModel.receiver_id
-                )
-                == high_id,
-            )
-        )
+        model = self.db.scalar(select_active_between(self.db, user_a, user_b))
         return self._to_entity(model) if model is not None else None
-
-    def _pair_functions(self):
-        """Postgres has no multi-arg min/max; SQLite has no least/greatest."""
-        if self.db.get_bind().dialect.name == "postgresql":
-            return func.least, func.greatest
-        return func.min, func.max
-
-    def is_blocked(self, user_a: UUID, user_b: UUID) -> bool:
-        return (
-            self.db.scalar(
-                select(func.count())
-                .select_from(UserBlockModel)
-                .where(
-                    or_(
-                        and_(
-                            UserBlockModel.blocker_id == user_a,
-                            UserBlockModel.blocked_id == user_b,
-                        ),
-                        and_(
-                            UserBlockModel.blocker_id == user_b,
-                            UserBlockModel.blocked_id == user_a,
-                        ),
-                    )
-                )
-            )
-            > 0
-        )
 
     def create(self, requester_id: UUID, receiver_id: UUID) -> UserConnection:
         model = UserConnectionModel(

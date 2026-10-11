@@ -179,12 +179,35 @@ def test_send_connection_request_to_business_user_returns_404(
     assert response.json() == {"detail": "User not found"}
 
 
-@pytest.mark.skip(
-    reason=(
-        "USER_BLOCK (task 087) ainda não existe no banco: o repositório só tem "
-        "o ponto de extensão (sempre retorna 'não bloqueado'), sem tabela pra "
-        "exercitar o cenário de bloqueio de verdade."
-    )
-)
 def test_send_connection_request_to_blocker_returns_404(client: TestClient) -> None:
-    pass
+    user_a_id, token_a = register_and_authenticate(client, USER_A)
+    user_b_id, token_b = register_and_authenticate(client, USER_B)
+    block = client.post(f"/users/{user_a_id}/block", headers=auth_headers(token_b))
+    assert block.status_code == 204
+
+    response = client.post(
+        "/connections",
+        json={"receiver_id": user_b_id},
+        headers=auth_headers(token_a),
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "User not found"}
+
+
+def test_send_connection_request_to_blocked_user_returns_404(
+    client: TestClient,
+) -> None:
+    _, token_a = register_and_authenticate(client, USER_A)
+    user_b_id, _ = register_and_authenticate(client, USER_B)
+    block = client.post(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+    assert block.status_code == 204
+
+    response = client.post(
+        "/connections",
+        json={"receiver_id": user_b_id},
+        headers=auth_headers(token_a),
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "User not found"}

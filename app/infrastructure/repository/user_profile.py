@@ -33,9 +33,6 @@ from app.infrastructure.repository.models.event_experience_model import (
 from app.infrastructure.repository.models.experience_images_model import (
     ExperienceImagesModel,
 )
-from app.infrastructure.repository.models.user_block_model import (
-    UserBlockModel,
-)
 
 
 def _now_utc() -> datetime:
@@ -195,9 +192,6 @@ class SqlAlchemyUserProfileRepository:
         if model is None:
             return None
 
-        if self._viewer_is_blocked(user_id=user_id, viewer_id=viewer_id):
-            return None
-
         connections_count = 0
         is_following = False
         connection_status = None
@@ -279,19 +273,6 @@ class SqlAlchemyUserProfileRepository:
             connection_status=connection_status,
             is_following=is_following,
             connections_count=connections_count,
-        )
-
-    def _viewer_is_blocked(self, user_id: UUID, viewer_id: UUID) -> bool:
-        return (
-            self.db.scalar(
-                select(func.count())
-                .select_from(UserBlockModel)
-                .where(
-                    UserBlockModel.blocker_id == user_id,
-                    UserBlockModel.blocked_id == viewer_id,
-                )
-            )
-            > 0
         )
 
 
