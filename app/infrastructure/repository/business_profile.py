@@ -84,7 +84,6 @@ class SqlAlchemyBusinessRegistrationRepository:
         return SqlAlchemyUserRepository._to_entity(user_model)
 
 
-
 class SqlAlchemyBusinessProfileRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
