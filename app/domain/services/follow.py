@@ -9,7 +9,7 @@ from app.domain.entities import (
     User,
     UserFollow,
 )
-from app.domain.services.notification import (
+from app.domain.services.pagination import (
     InvalidPaginationError,
     decode_cursor,
     encode_cursor,
