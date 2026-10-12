@@ -16,6 +16,7 @@ from app.domain.enums import (
     UserRoleEnum,
     UserTypeEnum,
 )
+from app.domain.services.block import BlockService
 from app.domain.services.connection import (
     ConnectionService,
     InvalidConnectionStatusTransitionError,
@@ -27,6 +28,7 @@ from app.domain.services.participation import (
     ParticipationService,
 )
 from app.infrastructure.repository import Base
+from app.infrastructure.repository.block import SqlAlchemyBlockRepository
 from app.infrastructure.repository.connection import SqlAlchemyConnectionRepository
 from app.infrastructure.repository.device import SqlAlchemyUserDeviceRepository
 from app.infrastructure.repository.models import (
@@ -42,6 +44,7 @@ from app.infrastructure.repository.notification import SqlAlchemyNotificationRep
 from app.infrastructure.repository.participation import (
     SqlAlchemyParticipationRepository,
 )
+from app.infrastructure.repository.user import SqlAlchemyUserRepository
 
 ORGANIZER_ID = UUID("0b2f0010-0000-4000-8000-000000000001")
 USER_A_ID = UUID("0b2f0010-0000-4000-8000-000000000002")
@@ -129,6 +132,10 @@ def session_factory() -> Iterator[sessionmaker[Session]]:
 # ---------------------------------------------------------------------------
 
 
+def _block_service(db: Session) -> BlockService:
+    return BlockService(SqlAlchemyBlockRepository(db), SqlAlchemyUserRepository(db))
+
+
 def test_accept_connection_notifies_requester(
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -136,7 +143,7 @@ def test_accept_connection_notifies_requester(
         notification_repo = SqlAlchemyNotificationRepository(db)
         dispatcher = NotificationDispatcher(notification_repo)
         conn_repo = SqlAlchemyConnectionRepository(db, dispatcher)
-        svc = ConnectionService(conn_repo)
+        svc = ConnectionService(conn_repo, _block_service(db))
 
         connection = svc.send_request(requester_id=USER_A_ID, receiver_id=USER_B_ID)
         assert connection.connection_id is not None
@@ -179,7 +186,7 @@ def test_send_connection_request_notifies_receiver(
         notification_repo = SqlAlchemyNotificationRepository(db)
         dispatcher = NotificationDispatcher(notification_repo)
         conn_repo = SqlAlchemyConnectionRepository(db, dispatcher)
-        svc = ConnectionService(conn_repo)
+        svc = ConnectionService(conn_repo, _block_service(db))
 
         svc.send_request(requester_id=USER_A_ID, receiver_id=USER_B_ID)
 
@@ -200,7 +207,7 @@ def test_reject_connection_does_not_notify(
         notification_repo = SqlAlchemyNotificationRepository(db)
         dispatcher = NotificationDispatcher(notification_repo)
         conn_repo = SqlAlchemyConnectionRepository(db, dispatcher)
-        svc = ConnectionService(conn_repo)
+        svc = ConnectionService(conn_repo, _block_service(db))
 
         connection = svc.send_request(requester_id=USER_A_ID, receiver_id=USER_B_ID)
         db.query(NotificationModel).delete()
@@ -220,7 +227,7 @@ def test_reject_already_accepted_connection_raises(
         notification_repo = SqlAlchemyNotificationRepository(db)
         dispatcher = NotificationDispatcher(notification_repo)
         conn_repo = SqlAlchemyConnectionRepository(db, dispatcher)
-        svc = ConnectionService(conn_repo)
+        svc = ConnectionService(conn_repo, _block_service(db))
 
         connection = svc.send_request(requester_id=USER_A_ID, receiver_id=USER_B_ID)
         svc.accept(connection.connection_id, actor_id=USER_B_ID)
@@ -571,7 +578,7 @@ def test_push_for_connection_request_includes_sender_user_id(
             push_sender,
         )
         connection = ConnectionService(
-            SqlAlchemyConnectionRepository(db, dispatcher)
+            SqlAlchemyConnectionRepository(db, dispatcher), _block_service(db)
         ).send_request(requester_id=USER_A_ID, receiver_id=USER_B_ID)
 
         data = push_sender.calls[0][3]

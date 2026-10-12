@@ -35,9 +35,7 @@ class SqlAlchemyParticipationRepository:
             )
             .with_for_update()
         )
-        return (
-            SqlAlchemyEventRepository._to_entity(model) if model is not None else None
-        )
+        return SqlAlchemyEventRepository.to_entity(model) if model is not None else None
 
     def get_existing_participant_for_update(
         self, event_id: UUID, user_id: UUID

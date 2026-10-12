@@ -37,7 +37,12 @@ class SqlAlchemyBusinessRegistrationRepository:
 
     def get_by_cnpj(self, cnpj: str) -> BusinessProfile | None:
         model = self.db.scalar(
-            select(BusinessProfileModel).where(BusinessProfileModel.cnpj == cnpj)
+            select(BusinessProfileModel)
+            .join(UserModel, UserModel.user_id == BusinessProfileModel.user_id)
+            .where(
+                BusinessProfileModel.cnpj == cnpj,
+                UserModel.deleted_at.is_(None),
+            )
         )
         return to_business_profile_entity(model) if model is not None else None
 
@@ -77,6 +82,7 @@ class SqlAlchemyBusinessRegistrationRepository:
             raise DuplicateEmailError from error
         self.db.refresh(user_model)
         return SqlAlchemyUserRepository._to_entity(user_model)
+
 
 
 class SqlAlchemyBusinessProfileRepository:
