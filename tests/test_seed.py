@@ -90,7 +90,7 @@ def test_seed_creates_the_sample_data_only_once(
         assert count(db, user_tag) == sum(
             len(tag_names) for tag_names in SEED_INTERESTS.values()
         )
-        assert count(db, EventParticipantModel) == 12
+        assert count(db, EventParticipantModel) == 13
         assert count(db, NotificationModel) == len(SEED_NOTIFICATIONS)
 
 
@@ -503,7 +503,7 @@ def test_seed_restores_participants_changed_while_testing(
         assert (
             participants[maria.user_id].status == EventParticipantStatusEnum.CONFIRMED
         )
-        assert count(db, EventParticipantModel) == 12
+        assert count(db, EventParticipantModel) == 13
 
 
 def test_seed_recomputes_notification_dates_from_the_current_time(

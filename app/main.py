@@ -8,6 +8,7 @@ from app.presentation.routes import (
     cancel_participation_router,
     connection_router,
     events_router,
+    experiences_router,
     feed_router,
     following_router,
     health_router,
@@ -35,6 +36,7 @@ app.add_middleware(
 app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(events_router)
+app.include_router(experiences_router)
 app.include_router(cancel_participation_router)
 app.include_router(connection_router)
 app.include_router(businesses_router)
