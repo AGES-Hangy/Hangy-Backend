@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.domain.assemblers import UserEventsAssembler
@@ -9,12 +9,17 @@ from app.domain.assemblers.users import UsersAssembler
 from app.domain.entities import User
 from app.domain.services import (
     DEFAULT_USER_EVENTS_LIMIT,
+    BlockedUserNotFoundError,
+    BlockService,
+    CannotBlockSelfError,
     InvalidPaginationError,
     InvalidUserEventsTabError,
+    UserAlreadyBlockedError,
     UserEventsService,
 )
 from app.domain.services.users import UserNotFoundError, UsersService
 from app.infrastructure.repository import get_db
+from app.infrastructure.repository.block import SqlAlchemyBlockRepository
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
 from app.infrastructure.repository.user_events import SqlAlchemyUserEventsRepository
 from app.infrastructure.repository.user_profile import SqlAlchemyUserProfileRepository
@@ -25,13 +30,85 @@ from app.presentation.routes.auth import get_current_user
 router = APIRouter(tags=["Profile"])
 
 
+def get_block_service(db: Annotated[Session, Depends(get_db)]) -> BlockService:
+    return BlockService(
+        repository=SqlAlchemyBlockRepository(db),
+        user_repository=SqlAlchemyUserRepository(db),
+    )
+
+
 def get_user_events_service(
     db: Annotated[Session, Depends(get_db)],
+    block_service: Annotated[BlockService, Depends(get_block_service)],
 ) -> UserEventsService:
     return UserEventsService(
         repository=SqlAlchemyUserEventsRepository(db),
         user_repository=SqlAlchemyUserRepository(db),
+        block_checker=block_service,
     )
+
+
+@router.post(
+    "/users/{user_id}/block",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Users"],
+    summary="Bloquear um usuário",
+    description=(
+        "Bloqueia o usuário informado e desfaz, na mesma operação, a conexão "
+        "ou solicitação pendente entre os dois. O bloqueio é unilateral, mas "
+        "o efeito é mútuo: `GET /users/{user_id}` passa a devolver 404 para os "
+        "dois lados, nenhum dos dois consegue enviar solicitação de conexão "
+        "ao outro e os eventos de um deixam de aparecer no feed do outro. "
+        "Nenhuma notificação é enviada ao bloqueado."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "O usuário tentou bloquear a si mesmo.",
+            "content": {
+                "application/json": {"example": {"detail": "Cannot block yourself"}}
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Usuário a bloquear inexistente ou já excluído.",
+            "content": {"application/json": {"example": {"detail": "User not found"}}},
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "O usuário informado já está bloqueado.",
+            "content": {
+                "application/json": {"example": {"detail": "User already blocked"}}
+            },
+        },
+    },
+)
+def block_user(
+    user_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    block_service: Annotated[BlockService, Depends(get_block_service)],
+) -> Response:
+    assert current_user.user_id is not None
+    try:
+        block_service.block(current_user.user_id, user_id)
+    except CannotBlockSelfError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot block yourself"
+        ) from error
+    except BlockedUserNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        ) from error
+    except UserAlreadyBlockedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="User already blocked"
+        ) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(
@@ -96,8 +173,13 @@ def read_current_user_events(
     return UserEventsAssembler.to_dto(page)
 
 
-def get_users_service(db: Annotated[Session, Depends(get_db)]) -> UsersService:
-    return UsersService(repository=SqlAlchemyUserProfileRepository(db))
+def get_users_service(
+    db: Annotated[Session, Depends(get_db)],
+    block_service: Annotated[BlockService, Depends(get_block_service)],
+) -> UsersService:
+    return UsersService(
+        repository=SqlAlchemyUserProfileRepository(db), block_checker=block_service
+    )
 
 
 @router.get(
@@ -111,7 +193,10 @@ def get_users_service(db: Annotated[Session, Depends(get_db)]) -> UsersService:
     ),
     responses={
         status.HTTP_404_NOT_FOUND: {
-            "description": "Usuário não encontrado ou o usuário bloqueou o visitante",
+            "description": (
+                "Usuário não encontrado, ou existe bloqueio entre ele e o "
+                "visitante, em qualquer sentido (mesmo erro nos dois casos)."
+            ),
             "content": {"application/json": {"example": {"detail": "User not found"}}},
         },
     },
@@ -147,7 +232,8 @@ def get_user_profile(
         "estabelecimento no próprio perfil e qualquer um no perfil de outro "
         "veem `history` e `created`. No perfil de outro só entram eventos "
         "PUBLIC e `participation_status` é sempre `null`. Categoria não "
-        "permitida vem `null`; permitida e vazia vem com `items` vazio."
+        "permitida vem `null`; permitida e vazia vem com `items` vazio. Eventos "
+        "de um organizador com bloqueio entre ele e o solicitante não aparecem."
     ),
     responses={
         status.HTTP_400_BAD_REQUEST: {
@@ -174,8 +260,8 @@ def get_user_profile(
         },
         status.HTTP_404_NOT_FOUND: {
             "description": (
-                "O usuário não existe, a conta foi excluída ou ele bloqueou "
-                "o solicitante."
+                "O usuário não existe, a conta foi excluída ou há um bloqueio "
+                "entre ele e o solicitante, em qualquer direção."
             ),
             "content": {"application/json": {"example": {"detail": "User not found"}}},
         },
@@ -223,6 +309,8 @@ def list_user_events(
 
 
 __all__ = [
+    "block_user",
+    "get_block_service",
     "get_user_events_service",
     "get_user_profile",
     "get_users_service",

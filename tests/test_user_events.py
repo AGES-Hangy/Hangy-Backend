@@ -1150,13 +1150,35 @@ def test_user_who_blocked_the_viewer_returns_404(
 
     assert response.status_code == 404
     assert response.json() == {"detail": "User not found"}
-    # The block is one-sided: everyone else still sees the profile.
+    # Only the pair is affected: everyone else still sees the profile.
     body = _list(test_client, owner_id, other_viewer_id)
     assert _titles(body["created"]) == ["Pelada"]
 
 
-def test_events_of_an_organizer_who_blocked_the_viewer_are_hidden(
+def test_user_blocked_by_the_viewer_returns_404(
     events_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    test_client, session_factory = events_client
+    with session_factory() as db:
+        owner_id = _add_user(db, "Dona")
+        viewer_id = _add_user(db, "Bloqueou a dona")
+        _add_event(db, owner_id, "Pelada")
+        _block(db, blocker_id=viewer_id, blocked_id=owner_id)
+        db.commit()
+
+    response = test_client.get(
+        f"/users/{owner_id}/events", headers=make_token(viewer_id)
+    )
+
+    # Same as GET /users/{user_id}: the block hides both sides.
+    assert response.status_code == 404
+    assert response.json() == {"detail": "User not found"}
+
+
+@pytest.mark.parametrize("viewer_is_the_blocker", [False, True])
+def test_events_of_an_organizer_blocked_either_way_are_hidden(
+    events_client: tuple[TestClient, sessionmaker[Session]],
+    viewer_is_the_blocker: bool,
 ) -> None:
     test_client, session_factory = events_client
     with session_factory() as db:
@@ -1168,7 +1190,10 @@ def test_events_of_an_organizer_who_blocked_the_viewer_are_hidden(
         )
         _add_participant(db, hidden_id, owner_id)
         _add_event(db, owner_id, "Da dona", starts_at=PAST - DAY)
-        _block(db, blocker_id=organizer_id, blocked_id=viewer_id)
+        if viewer_is_the_blocker:
+            _block(db, blocker_id=viewer_id, blocked_id=organizer_id)
+        else:
+            _block(db, blocker_id=organizer_id, blocked_id=viewer_id)
         db.commit()
 
     assert _titles(_list(test_client, owner_id, viewer_id)["history"]) == ["Da dona"]

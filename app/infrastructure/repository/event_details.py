@@ -83,14 +83,14 @@ class SqlAlchemyEventDetailsRepository:
             model=model,
             viewer_participation_status=participation_status,
             confirmed_participants_count=participant_count,
-            organizer_blocked_viewer=self._organizer_blocked_viewer(
+            organizer_blocked_viewer=self.organizer_blocked_viewer(
                 organizer_id=model.event_creator_id,
                 viewer_id=viewer_id,
             ),
             viewer_favorited=favorited,
         )
 
-    def _organizer_blocked_viewer(self, organizer_id: UUID, viewer_id: UUID) -> bool:
+    def organizer_blocked_viewer(self, organizer_id: UUID, viewer_id: UUID) -> bool:
         return (
             self.db.scalar(
                 select(func.count())

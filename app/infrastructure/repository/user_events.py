@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import exists, or_, select
 from sqlalchemy.orm import Session
 
 from app.domain.entities import UserEvent
@@ -11,13 +11,11 @@ from app.domain.enums import (
     EventStatusEnum,
     UserEventsTabEnum,
 )
+from app.infrastructure.repository.block import block_exists_between
 from app.infrastructure.repository.models import (
     EventFavoriteModel,
     EventModel,
     EventParticipantModel,
-)
-from app.infrastructure.repository.models.user_block_model import (
-    UserBlockModel,
 )
 
 
@@ -28,19 +26,6 @@ def _now_utc() -> datetime:
 class SqlAlchemyUserEventsRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
-
-    def user_blocked_viewer(self, user_id: UUID, viewer_id: UUID) -> bool:
-        return (
-            self.db.scalar(
-                select(func.count())
-                .select_from(UserBlockModel)
-                .where(
-                    UserBlockModel.blocker_id == user_id,
-                    UserBlockModel.blocked_id == viewer_id,
-                )
-            )
-            > 0
-        )
 
     def list_for_user(
         self,
@@ -77,14 +62,9 @@ class SqlAlchemyUserEventsRepository:
 
         stmt = select(EventModel, is_confirmed.label("is_confirmed")).where(
             EventModel.deleted_at.is_(None),
-            # Same rule as GET /events/{id}: an organizer who blocked the
-            # viewer hides the event, so the card never leads to a 404.
-            ~exists()
-            .where(
-                UserBlockModel.blocker_id == EventModel.event_creator_id,
-                UserBlockModel.blocked_id == viewer_id,
-            )
-            .correlate(EventModel),
+            # Same rule as the feed: a block hides both sides from each other,
+            # so events created by someone the viewer blocked are dropped too.
+            ~block_exists_between(EventModel.event_creator_id, viewer_id),
         )
         if public_only:
             stmt = stmt.where(EventModel.event_privacy == EventPrivacyEnum.PUBLIC)

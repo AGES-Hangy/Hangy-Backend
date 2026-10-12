@@ -90,7 +90,7 @@ def test_seed_creates_the_sample_data_only_once(
         assert count(db, user_tag) == sum(
             len(tag_names) for tag_names in SEED_INTERESTS.values()
         )
-        assert count(db, EventParticipantModel) == 14
+        assert count(db, EventParticipantModel) == 15
         assert count(db, NotificationModel) == len(SEED_NOTIFICATIONS)
 
 
@@ -278,7 +278,10 @@ def test_seeded_business_user_has_an_empty_feed(
         (
             "user@hangy.com",
             {
-                "history": ["Sarau de teatro"],
+                "history": [
+                    "Evento encerrado para teste de experiência",
+                    "Sarau de teatro",
+                ],
                 "created": ["Corrida da Redenção"],
                 "interests": [
                     "Show de rock no Opinião",
@@ -292,7 +295,10 @@ def test_seeded_business_user_has_an_empty_feed(
         (
             "admin@hangy.com",
             {
-                "history": ["Pelada de ontem"],
+                "history": [
+                    "Pelada de ontem",
+                    "Evento encerrado para teste de experiência",
+                ],
                 "created": ["Pelada no Parcão", "Show de rock no Opinião"],
                 "interests": None,
                 "confirmed": None,
@@ -586,7 +592,7 @@ def test_seed_restores_participants_changed_while_testing(
         assert (
             participants[maria.user_id].status == EventParticipantStatusEnum.CONFIRMED
         )
-        assert count(db, EventParticipantModel) == 14
+        assert count(db, EventParticipantModel) == 15
 
 
 def test_seed_recomputes_notification_dates_from_the_current_time(

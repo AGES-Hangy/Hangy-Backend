@@ -20,6 +20,7 @@ from app.infrastructure.repository.models import (
     EventModel,
     EventParticipantModel,
     TagModel,
+    UserBlockModel,
     UserModel,
     event_tag,
     user_tag,
@@ -445,11 +446,45 @@ def test_newly_published_event_is_discoverable_with_appropriate_location(
     )
 
 
-@pytest.mark.skip(
-    reason=(
-        "USER_BLOCK does not exist in the schema yet; the feed query cannot "
-        "filter blocked creators until the blocking task lands."
-    )
-)
-def test_feed_hides_events_created_by_someone_who_blocked_the_user() -> None:
-    raise NotImplementedError
+def test_feed_hides_events_created_by_someone_who_blocked_the_user(
+    context: FeedContext,
+) -> None:
+    blocker_id = create_user(context.db, "blocker@hangy.com")
+    creator_id = create_user(context.db, "creator@hangy.com")
+    sports = create_tag(context.db, "Esportes")
+    add_interest(context.db, context.user_id, sports)
+    create_event(context.db, blocker_id, "Pelada de quem me bloqueou", (sports,))
+    create_event(context.db, creator_id, "Pelada liberada", (sports,))
+    context.db.add(UserBlockModel(blocker_id=blocker_id, blocked_id=context.user_id))
+    context.db.commit()
+
+    assert titles_by_tag(get_feed(context)) == {"Esportes": ["Pelada liberada"]}
+
+
+def test_feed_hides_events_created_by_someone_the_user_blocked(
+    context: FeedContext,
+) -> None:
+    blocked_id = create_user(context.db, "blocked@hangy.com")
+    creator_id = create_user(context.db, "creator@hangy.com")
+    sports = create_tag(context.db, "Esportes")
+    add_interest(context.db, context.user_id, sports)
+    create_event(context.db, blocked_id, "Pelada de quem bloqueei", (sports,))
+    create_event(context.db, creator_id, "Pelada liberada", (sports,))
+    context.db.add(UserBlockModel(blocker_id=context.user_id, blocked_id=blocked_id))
+    context.db.commit()
+
+    assert titles_by_tag(get_feed(context)) == {"Esportes": ["Pelada liberada"]}
+
+
+def test_feed_keeps_events_when_the_block_involves_other_users(
+    context: FeedContext,
+) -> None:
+    creator_id = create_user(context.db, "creator@hangy.com")
+    other_id = create_user(context.db, "other@hangy.com")
+    sports = create_tag(context.db, "Esportes")
+    add_interest(context.db, context.user_id, sports)
+    create_event(context.db, creator_id, "Pelada liberada", (sports,))
+    context.db.add(UserBlockModel(blocker_id=creator_id, blocked_id=other_id))
+    context.db.commit()
+
+    assert titles_by_tag(get_feed(context)) == {"Esportes": ["Pelada liberada"]}

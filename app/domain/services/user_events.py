@@ -6,7 +6,8 @@ from uuid import UUID
 from app.domain.entities import User, UserEvent, UserEventsPage, UserEventsTabs
 from app.domain.enums import UserEventsTabEnum, UserTypeEnum
 from app.domain.services.auth import UserRepository
-from app.domain.services.notification import (
+from app.domain.services.block import BlockChecker
+from app.domain.services.pagination import (
     InvalidPaginationError,
     decode_cursor,
     encode_cursor,
@@ -35,8 +36,6 @@ PERSONAL_OWNER_TABS = (
 
 
 class UserEventsRepository(Protocol):
-    def user_blocked_viewer(self, user_id: UUID, viewer_id: UUID) -> bool: ...
-
     def list_for_user(
         self,
         user_id: UUID,
@@ -59,9 +58,11 @@ class UserEventsService:
         self,
         repository: UserEventsRepository,
         user_repository: UserRepository,
+        block_checker: BlockChecker,
     ) -> None:
         self.repository = repository
         self.user_repository = user_repository
+        self.block_checker = block_checker
 
     def get_user_events(
         self,
@@ -137,12 +138,13 @@ class UserEventsService:
 
     def _get_visible_user(self, user_id: UUID, viewer_id: UUID) -> User:
         user = self.user_repository.get_by_id(user_id)
-        # A block answers exactly like a missing account: telling them apart
-        # would confirm to the blocked viewer that the profile exists.
+        # Same rule as GET /users/{user_id}: a block hides the profile from
+        # both sides, with the error of a missing account so neither can tell
+        # the two cases apart.
         if (
             user is None
             or user.deleted_at is not None
-            or self.repository.user_blocked_viewer(user_id, viewer_id)
+            or self.block_checker.is_blocked_between(user_id, viewer_id)
         ):
             raise UserNotFoundError
         return user

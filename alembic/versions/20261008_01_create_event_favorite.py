@@ -1,7 +1,7 @@
 """create_event_favorite
 
 Revision ID: 20261008_01
-Revises: 20261007_01
+Revises: 20261012_02
 Create Date: 2026-10-08 00:00:00.000000
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "20261008_01"
-down_revision: str | Sequence[str] | None = "20261007_01"
+down_revision: str | Sequence[str] | None = "20261012_02"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

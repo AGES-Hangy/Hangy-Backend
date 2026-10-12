@@ -3,6 +3,7 @@ from uuid import UUID
 
 from app.domain.entities import User, UserConnection
 from app.domain.enums import UserConnectionStatusEnum, UserTypeEnum
+from app.domain.services.block import BlockChecker
 
 
 class ConnectionRepository(Protocol):
@@ -19,8 +20,6 @@ class ConnectionRepository(Protocol):
     def find_active_between(
         self, user_a: UUID, user_b: UUID
     ) -> UserConnection | None: ...
-
-    def is_blocked(self, user_a: UUID, user_b: UUID) -> bool: ...
 
 
 class ConnectionNotFoundError(Exception):
@@ -40,7 +39,7 @@ class CannotConnectToSelfError(Exception):
 
 
 class ReceiverNotFoundError(Exception):
-    """Raised when the receiver does not exist, or has blocked the requester.
+    """Raised when the receiver does not exist, or a block exists between the pair.
 
     Both cases return the same error on purpose: the requester must not be
     able to tell a nonexistent user apart from one who blocked them.
@@ -52,8 +51,11 @@ class ConnectionAlreadyExistsError(Exception):
 
 
 class ConnectionService:
-    def __init__(self, repository: ConnectionRepository) -> None:
+    def __init__(
+        self, repository: ConnectionRepository, block_checker: BlockChecker
+    ) -> None:
         self.repository = repository
+        self.block_checker = block_checker
 
     def send_request(self, requester_id: UUID, receiver_id: UUID) -> UserConnection:
         if requester_id == receiver_id:
@@ -65,7 +67,7 @@ class ConnectionService:
         # receiver exists as a business account.
         if receiver is None or receiver.user_type is not UserTypeEnum.PERSONAL:
             raise ReceiverNotFoundError
-        if self.repository.is_blocked(requester_id, receiver_id):
+        if self.block_checker.is_blocked_between(requester_id, receiver_id):
             raise ReceiverNotFoundError
         if self.repository.find_active_between(requester_id, receiver_id) is not None:
             raise ConnectionAlreadyExistsError
