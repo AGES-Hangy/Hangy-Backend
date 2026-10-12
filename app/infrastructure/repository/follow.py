@@ -5,9 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domain.entities import BusinessProfile, User, UserFollow
-from app.infrastructure.repository.business_profile import (
-    SqlAlchemyBusinessRegistrationRepository,
-)
+from app.infrastructure.repository.business_profile import to_business_profile_entity
 from app.infrastructure.repository.models import (
     BusinessProfileModel,
     UserFollowModel,
@@ -37,7 +35,7 @@ class SqlAlchemyFollowRepository:
         )
         if model is None:
             return None
-        return SqlAlchemyBusinessRegistrationRepository._to_entity(model)
+        return to_business_profile_entity(model)
 
     def get_follow(
         self, follower_id: UUID, followed_business_id: UUID

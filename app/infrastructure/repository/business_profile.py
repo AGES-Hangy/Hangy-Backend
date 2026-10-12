@@ -11,6 +11,17 @@ from app.infrastructure.repository.models import BusinessProfileModel, UserModel
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
 
 
+def to_business_profile_entity(model: BusinessProfileModel) -> BusinessProfile:
+    return BusinessProfile(
+        user_id=model.user_id,
+        cnpj=model.cnpj,
+        address=model.address,
+        updated_at=model.updated_at,
+        business_latitude=model.business_latitude,
+        business_longitude=model.business_longitude,
+    )
+
+
 class SqlAlchemyBusinessRegistrationRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -28,7 +39,7 @@ class SqlAlchemyBusinessRegistrationRepository:
         model = self.db.scalar(
             select(BusinessProfileModel).where(BusinessProfileModel.cnpj == cnpj)
         )
-        return self._to_entity(model) if model is not None else None
+        return to_business_profile_entity(model) if model is not None else None
 
     def add(self, user: User, profile: BusinessProfile) -> User:
         user_model = UserModel(
@@ -67,16 +78,6 @@ class SqlAlchemyBusinessRegistrationRepository:
         self.db.refresh(user_model)
         return SqlAlchemyUserRepository._to_entity(user_model)
 
-    @staticmethod
-    def _to_entity(model: BusinessProfileModel) -> BusinessProfile:
-        return BusinessProfile(
-            user_id=model.user_id,
-            cnpj=model.cnpj,
-            address=model.address,
-            updated_at=model.updated_at,
-            business_latitude=model.business_latitude,
-            business_longitude=model.business_longitude,
-        )
 
 class SqlAlchemyBusinessProfileRepository:
     def __init__(self, db: Session) -> None:
@@ -88,4 +89,4 @@ class SqlAlchemyBusinessProfileRepository:
         )
         if model is None:
             return None
-        return SqlAlchemyBusinessRegistrationRepository._to_entity(model)
+        return to_business_profile_entity(model)
