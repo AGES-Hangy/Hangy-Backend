@@ -193,7 +193,10 @@ def test_deleted_photos_and_experiences_are_left_out(photos_client) -> None:
         add_photo(
             db, live, "https://img/deleted-photo.jpg", created_at=NOW, deleted_at=NOW
         )
-        removed = create_experience(db, me.user_id, event, deleted_at=NOW)
+        # One experience per participant is enforced, so the deleted one lives
+        # in another event.
+        other_event = create_event(db, me.user_id, "Outro evento")
+        removed = create_experience(db, me.user_id, other_event, deleted_at=NOW)
         add_photo(db, removed, "https://img/deleted-experience.jpg", created_at=NOW)
         db.commit()
         headers = make_token(me.user_id)
