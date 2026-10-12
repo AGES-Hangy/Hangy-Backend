@@ -42,7 +42,7 @@ def _parse_limit(value: str | int) -> int:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid pagination parameters",
         ) from error
-    
+
 
 def get_block_service(db: Annotated[Session, Depends(get_db)]) -> BlockService:
     return BlockService(
@@ -186,6 +186,7 @@ def read_current_user_events(
             detail="Invalid pagination parameters",
         ) from error
     return UserEventsAssembler.to_dto(page)
+
 
 @router.get(
     "/users/me/photos",
