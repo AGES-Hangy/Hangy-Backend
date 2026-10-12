@@ -11,6 +11,7 @@ from app.domain.enums import (
     EventPrivacyEnum,
     EventStatusEnum,
 )
+from app.infrastructure.repository.block import block_exists_between
 from app.infrastructure.repository.models import (
     EventModel,
     EventParticipantModel,
@@ -82,10 +83,10 @@ class SqlAlchemyFeedRepository:
                 EventModel.event_status == PUBLISHED_EVENT_STATUS,
                 EventModel.starts_at > reference_time,
                 EventModel.event_privacy.in_(DISCOVERABLE_PRIVACIES),
+                # A block hides both sides from each other, so events created
+                # by someone the viewer blocked are dropped too.
+                ~block_exists_between(EventModel.event_creator_id, viewer_id),
             )
-            # TODO(USER_BLOCK): `viewer_id` is kept for the filter that must drop
-            # events created by someone who blocked the viewer. The schema has no
-            # USER_BLOCK table yet, so there is nothing to join against.
             .order_by(EventModel.starts_at, EventModel.event_id)
             .limit(limit)
         ).all()

@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Column, MetaData, Table, Uuid, create_engine, select
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -22,6 +22,7 @@ from app.infrastructure.repository.models import (
     EventExperienceModel,
     EventModel,
     EventParticipantModel,
+    UserBlockModel,
     UserModel,
 )
 from app.main import app
@@ -253,18 +254,7 @@ def test_invite_only_event_is_hidden_from_nonparticipant(client) -> None:
 def test_event_is_hidden_when_organizer_blocked_the_participant(client) -> None:
     test_client, session_factory = client
     with session_factory() as db:
-        user_block = Table(
-            "user_block",
-            MetaData(),
-            Column("blocker_id", Uuid, nullable=False),
-            Column("blocked_id", Uuid, nullable=False),
-        )
-        user_block.create(db.get_bind())
-        db.execute(
-            user_block.insert().values(
-                blocker_id=ORGANIZER_ID, blocked_id=PARTICIPANT_ID
-            )
-        )
+        db.add(UserBlockModel(blocker_id=ORGANIZER_ID, blocked_id=PARTICIPANT_ID))
         db.commit()
 
     response = _post(test_client)
