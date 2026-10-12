@@ -48,15 +48,15 @@ class SqlAlchemyExperienceRepository:
 
         event_model, participant_model = row
         return EventExperienceAccess(
-            event=SqlAlchemyEventRepository._to_entity(event_model),
+            event=SqlAlchemyEventRepository.to_entity(event_model),
             participant=(
-                SqlAlchemyEventRepository._to_participant_entity(participant_model)
+                SqlAlchemyEventRepository.to_participant_entity(participant_model)
                 if participant_model is not None
                 else None
             ),
             organizer_blocked_viewer=SqlAlchemyEventDetailsRepository(
                 self.db
-            )._organizer_blocked_viewer(event_model.event_creator_id, user_id),
+            ).organizer_blocked_viewer(event_model.event_creator_id, user_id),
         )
 
     def add(
