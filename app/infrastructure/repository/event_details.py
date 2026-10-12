@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import Uuid, column, func, inspect, select, table
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.domain.entities import (
@@ -15,12 +15,8 @@ from app.infrastructure.repository.models import (
     EventModel,
     EventParticipantModel,
 )
-
-USER_BLOCK_TABLE_NAME = "user_block"
-user_block = table(
-    USER_BLOCK_TABLE_NAME,
-    column("blocker_id", Uuid),
-    column("blocked_id", Uuid),
+from app.infrastructure.repository.models.user_block_model import (
+    UserBlockModel,
 )
 
 
@@ -77,30 +73,20 @@ class SqlAlchemyEventDetailsRepository:
             model=model,
             viewer_participation_status=participation_status,
             confirmed_participants_count=participant_count,
-            organizer_blocked_viewer=self._organizer_blocked_viewer(
+            organizer_blocked_viewer=self.organizer_blocked_viewer(
                 organizer_id=model.event_creator_id,
                 viewer_id=viewer_id,
             ),
         )
 
-    def _organizer_blocked_viewer(self, organizer_id: UUID, viewer_id: UUID) -> bool:
-        """Read task 087's table without owning its model or migration.
-
-        The dependency is not yet present on ``develop``. A lightweight table
-        clause keeps this task migration-free and starts enforcing the rule as
-        soon as ``user_block`` lands.
-        """
-        bind = self.db.get_bind()
-        if not inspect(bind).has_table(USER_BLOCK_TABLE_NAME):
-            return False
-
+    def organizer_blocked_viewer(self, organizer_id: UUID, viewer_id: UUID) -> bool:
         return (
             self.db.scalar(
                 select(func.count())
-                .select_from(user_block)
+                .select_from(UserBlockModel)
                 .where(
-                    user_block.c.blocker_id == organizer_id,
-                    user_block.c.blocked_id == viewer_id,
+                    UserBlockModel.blocker_id == organizer_id,
+                    UserBlockModel.blocked_id == viewer_id,
                 )
             )
             > 0

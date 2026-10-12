@@ -26,7 +26,7 @@ class SqlAlchemyCancelParticipationRepository:
             .with_for_update()
             .execution_options(populate_existing=True)
         )
-        return SqlAlchemyEventRepository._to_entity(model) if model else None
+        return SqlAlchemyEventRepository.to_entity(model) if model else None
 
     def get_participant_for_update(
         self, event_id: UUID, user_id: UUID

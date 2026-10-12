@@ -114,6 +114,12 @@ volta a ficar não lida a cada execução do seed. A
 caso `403`. A collection `postman/tid219_patch_notifications_read.postman_collection.json`
 percorre todos os cenários.
 
+Para testar `PATCH /users/me/profile`, use qualquer usuário `PERSONAL` (por
+exemplo, `carla@hangy.com`) para o caso `200` e o `admin@hangy.com`, que é
+`BUSINESS`, para o caso `403`. Os usuários do seed começam sem bio. O seed não
+sobrescreve usuários que já existem, então as edições feitas pela rota continuam
+após reiniciar o contêiner.
+
 As tags de exemplo seguem a hierarquia macro → micro usada pelo feed:
 `Esportes` (Futebol, Corrida), `Música` (Rock, Samba, Sertanejo),
 `Gastronomia` (Churrasco, Culinária Italiana, Confeitaria) e `Arte e Cultura`
@@ -234,8 +240,8 @@ Eventos `INVITE_ONLY` não aparecem. Nos eventos `PRIVATE`, `event_date` e
 A contagem de participantes inclui somente os confirmados.
 
 Sem interesses, a resposta é `{"sections": []}`. O feed padrão para esse
-caso ainda depende de definição de produto. O filtro de criadores que
-bloquearam o usuário depende da implementação de `USER_BLOCK`.
+caso ainda depende de definição de produto. Eventos criados por alguém
+que bloqueou o usuário, ou que o usuário bloqueou, não aparecem.
 
 Os eventos de desenvolvimento usam IDs determinísticos para que o seed
 não altere eventos de usuários com o mesmo título. Dados gerados pela versão

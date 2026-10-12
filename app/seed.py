@@ -280,6 +280,16 @@ SEED_EVENTS = (
         creator_email="admin@hangy.com",
         starts_in_days=-1,
     ),
+    # A finished event with a confirmed demo participant for testing
+    # POST /events/{event_id}/experiences.
+    SeedEvent(
+        title="Evento encerrado para teste de experiência",
+        location_name="Parque Moinhos de Vento (Parcão)",
+        tag_name="Futebol",
+        creator_email="admin@hangy.com",
+        starts_in_days=-2,
+        confirmed_emails=("user@hangy.com",),
+    ),
     SeedEvent(
         title="Pelada em rascunho",
         location_name="Parque Moinhos de Vento (Parcão)",

@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, create_engine, event, insert
+from sqlalchemy import Engine, create_engine, event, insert, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -190,14 +190,20 @@ def _add_photo(
     deleted_at: datetime | None = None,
     experience_deleted_at: datetime | None = None,
 ) -> None:
-    experience = EventExperienceModel(
-        experience_id=uuid4(),
-        event_participant_id=participant_id,
-        description="nice event",
-        deleted_at=experience_deleted_at,
+    experience = db.scalar(
+        select(EventExperienceModel).where(
+            EventExperienceModel.event_participant_id == participant_id
+        )
     )
-    db.add(experience)
-    db.flush()
+    if experience is None:
+        experience = EventExperienceModel(
+            experience_id=uuid4(),
+            event_participant_id=participant_id,
+            description="nice event",
+            deleted_at=experience_deleted_at,
+        )
+        db.add(experience)
+        db.flush()
     db.add(
         ExperienceImagesModel(
             photo_id=uuid4(),
@@ -484,10 +490,14 @@ def test_photos_count_only_active_images_of_the_user(ctx: Context) -> None:
     event_id = _ended_event(ctx.db, user_id).event_id
     mine = _participate(ctx.db, user_id, event_id)
     theirs = _participate(ctx.db, other.user_id, event_id)
+    deleted_event_id = _ended_event(ctx.db, user_id).event_id
+    mine_with_deleted_experience = _participate(ctx.db, user_id, deleted_event_id)
     _add_photo(ctx.db, mine.participant_id)
     _add_photo(ctx.db, mine.participant_id)
     _add_photo(ctx.db, mine.participant_id, deleted_at=NOW)
-    _add_photo(ctx.db, mine.participant_id, experience_deleted_at=NOW)
+    _add_photo(
+        ctx.db, mine_with_deleted_experience.participant_id, experience_deleted_at=NOW
+    )
     _add_photo(ctx.db, theirs.participant_id)
     ctx.db.commit()
 

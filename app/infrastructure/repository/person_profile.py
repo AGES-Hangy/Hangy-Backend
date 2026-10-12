@@ -24,7 +24,12 @@ class SqlAlchemyPersonRegistrationRepository:
 
     def get_by_cpf(self, cpf: str) -> PersonProfile | None:
         model = self.db.scalar(
-            select(PersonProfileModel).where(PersonProfileModel.cpf == cpf)
+            select(PersonProfileModel)
+            .join(UserModel, UserModel.user_id == PersonProfileModel.user_id)
+            .where(
+                PersonProfileModel.cpf == cpf,
+                UserModel.deleted_at.is_(None),
+            )
         )
         return self._to_entity(model) if model is not None else None
 
