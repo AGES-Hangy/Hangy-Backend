@@ -43,6 +43,7 @@ class EventDetailsViewerOutput(BaseModel):
     participation_status: EventParticipantStatusEnum | None
     can_see_participants: bool
     available_action: EventAvailableActionEnum
+    is_favorited: bool
 
 
 class EventParticipantsPreviewOutput(BaseModel):

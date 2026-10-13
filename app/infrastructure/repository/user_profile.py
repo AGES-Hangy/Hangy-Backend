@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.domain.entities import (
@@ -78,11 +78,28 @@ class SqlAlchemyUserProfileRepository:
         confirmed = confirmed_participations(
             EventModel.event_status == EventStatusEnum.PUBLISHED, ~is_over
         )
-        past = confirmed_participations(
-            EventModel.event_status.in_(
-                (EventStatusEnum.PUBLISHED, EventStatusEnum.FINISHED)
-            ),
-            is_over,
+        # Same rule as the `history` tab of GET /users/{user_id}/events: over
+        # events the user created count too, once even if they also attended.
+        past = (
+            select(func.count())
+            .select_from(EventModel)
+            .where(
+                EventModel.deleted_at.is_(None),
+                EventModel.event_status.in_(
+                    (EventStatusEnum.PUBLISHED, EventStatusEnum.FINISHED)
+                ),
+                is_over,
+                or_(
+                    EventModel.event_creator_id == user_id,
+                    exists().where(
+                        EventParticipantModel.event_id == EventModel.event_id,
+                        EventParticipantModel.user_id == user_id,
+                        EventParticipantModel.status
+                        == EventParticipantStatusEnum.CONFIRMED,
+                    ),
+                ),
+            )
+            .scalar_subquery()
         )
         photos = (
             select(func.count())

@@ -90,7 +90,7 @@ def test_seed_creates_the_sample_data_only_once(
         assert count(db, user_tag) == sum(
             len(tag_names) for tag_names in SEED_INTERESTS.values()
         )
-        assert count(db, EventParticipantModel) == 13
+        assert count(db, EventParticipantModel) == 15
         assert count(db, NotificationModel) == len(SEED_NOTIFICATIONS)
 
 
@@ -268,6 +268,95 @@ def test_seeded_business_user_has_an_empty_feed(
     app.dependency_overrides.clear()
 
     assert response.json() == {"sections": []}
+
+
+@pytest.mark.parametrize(
+    ("profile_email", "expected"),
+    [
+        # user@hangy.com's own profile: every tab, PRIVATE events included.
+        # The CANCELLED "Pelada" they had confirmed is in none of them.
+        (
+            "user@hangy.com",
+            {
+                "history": [
+                    "Evento encerrado para teste de experiência",
+                    "Sarau de teatro",
+                ],
+                "created": ["Corrida da Redenção"],
+                "interests": [
+                    "Show de rock no Opinião",
+                    "Roda de samba na Cidade Baixa",
+                ],
+                "confirmed": ["Pelada no Parcão", "Aniversário da Maria"],
+            },
+        ),
+        # A business agenda seen by a visitor: PUBLIC only, so the PRIVATE,
+        # INVITE_ONLY, DRAFT and CANCELLED events stay out.
+        (
+            "admin@hangy.com",
+            {
+                "history": [
+                    "Pelada de ontem",
+                    "Evento encerrado para teste de experiência",
+                ],
+                "created": ["Pelada no Parcão", "Show de rock no Opinião"],
+                "interests": None,
+                "confirmed": None,
+            },
+        ),
+        # "Aniversário da Maria" is PRIVATE, and what she is going to
+        # ("Pelada no Parcão") is not shown to visitors.
+        (
+            "maria@hangy.com",
+            {
+                "history": ["Sarau de teatro"],
+                "created": ["Roda de samba na Cidade Baixa"],
+                "interests": None,
+                "confirmed": None,
+            },
+        ),
+        # Her only participation was cancelled: allowed tabs, but empty.
+        (
+            "ana@hangy.com",
+            {"history": [], "created": [], "interests": None, "confirmed": None},
+        ),
+    ],
+)
+def test_seeded_user_events_match_the_documented_sample(
+    session_factory: sessionmaker[Session],
+    profile_email: str,
+    expected: dict[str, list[str] | None],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        # Twice, to show the favorites are not duplicated by a restart.
+        seed_everything(db)
+        profile_id = db.scalar(
+            select(UserModel.user_id).where(UserModel.email == profile_email)
+        )
+
+    def override_get_db() -> Iterator[Session]:
+        with session_factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as client:
+        login = client.post(
+            "/auth/login",
+            json={"email": "user@hangy.com", "password": "user-password"},
+        )
+        response = client.get(
+            f"/users/{profile_id}/events",
+            headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    titles = {
+        tab: [item["title"] for item in page["items"]] if page is not None else None
+        for tab, page in response.json().items()
+    }
+    assert titles == expected
 
 
 @pytest.mark.parametrize(
@@ -503,7 +592,7 @@ def test_seed_restores_participants_changed_while_testing(
         assert (
             participants[maria.user_id].status == EventParticipantStatusEnum.CONFIRMED
         )
-        assert count(db, EventParticipantModel) == 13
+        assert count(db, EventParticipantModel) == 15
 
 
 def test_seed_recomputes_notification_dates_from_the_current_time(
