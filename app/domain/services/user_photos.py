@@ -3,7 +3,7 @@ from typing import Protocol
 from uuid import UUID
 
 from app.domain.entities import UserPhoto, UserPhotosPage
-from app.domain.services.notification import (
+from app.domain.services.pagination import (
     InvalidPaginationError,
     decode_cursor,
     encode_cursor,
