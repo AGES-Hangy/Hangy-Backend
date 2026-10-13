@@ -173,6 +173,7 @@ def test_public_event_returns_all_details_and_confirmed_participants(
         "participation_status": None,
         "can_see_participants": True,
         "available_action": "CONFIRM",
+        "is_favorited": False,
     }
     assert body["participants_preview"]["count"] == 1
     assert [item["user_id"] for item in body["participants_preview"]["items"]] == [
@@ -201,6 +202,7 @@ def test_private_event_hides_participants_from_a_non_participant(
         "participation_status": None,
         "can_see_participants": False,
         "available_action": "REQUEST",
+        "is_favorited": False,
     }
 
 

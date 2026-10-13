@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.domain.entities import (
@@ -12,6 +12,7 @@ from app.domain.entities import (
 )
 from app.domain.enums import EventParticipantStatusEnum
 from app.infrastructure.repository.models import (
+    EventFavoriteModel,
     EventModel,
     EventParticipantModel,
 )
@@ -43,12 +44,21 @@ class SqlAlchemyEventDetailsRepository:
             .correlate(EventModel)
             .scalar_subquery()
         )
+        viewer_favorited = (
+            exists()
+            .where(
+                EventFavoriteModel.event_id == EventModel.event_id,
+                EventFavoriteModel.user_id == viewer_id,
+            )
+            .correlate(EventModel)
+        )
         row = (
             self.db.execute(
                 select(
                     EventModel,
                     confirmed_count.label("confirmed_count"),
                     viewer_participation_status.label("viewer_participation_status"),
+                    viewer_favorited.label("viewer_favorited"),
                 )
                 .where(
                     EventModel.event_id == event_id,
@@ -68,18 +78,19 @@ class SqlAlchemyEventDetailsRepository:
         if row is None:
             return None
 
-        model, participant_count, participation_status = row
+        model, participant_count, participation_status, favorited = row
         return self._to_entity(
             model=model,
             viewer_participation_status=participation_status,
             confirmed_participants_count=participant_count,
-            organizer_blocked_viewer=self._organizer_blocked_viewer(
+            organizer_blocked_viewer=self.organizer_blocked_viewer(
                 organizer_id=model.event_creator_id,
                 viewer_id=viewer_id,
             ),
+            viewer_favorited=favorited,
         )
 
-    def _organizer_blocked_viewer(self, organizer_id: UUID, viewer_id: UUID) -> bool:
+    def organizer_blocked_viewer(self, organizer_id: UUID, viewer_id: UUID) -> bool:
         return (
             self.db.scalar(
                 select(func.count())
@@ -98,6 +109,7 @@ class SqlAlchemyEventDetailsRepository:
         viewer_participation_status: EventParticipantStatusEnum | None,
         confirmed_participants_count: int,
         organizer_blocked_viewer: bool,
+        viewer_favorited: bool,
     ) -> EventDetailsData:
         participants = tuple(
             sorted(
@@ -138,6 +150,7 @@ class SqlAlchemyEventDetailsRepository:
             confirmed_participants_count=confirmed_participants_count,
             confirmed_participants=participants,
             organizer_blocked_viewer=organizer_blocked_viewer,
+            viewer_favorited=viewer_favorited,
         )
 
     @staticmethod

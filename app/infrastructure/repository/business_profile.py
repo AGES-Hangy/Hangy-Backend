@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -7,6 +9,17 @@ from app.domain.services.auth import DuplicateEmailError
 from app.domain.services.register_business import DuplicateCnpjError
 from app.infrastructure.repository.models import BusinessProfileModel, UserModel
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
+
+
+def to_business_profile_entity(model: BusinessProfileModel) -> BusinessProfile:
+    return BusinessProfile(
+        user_id=model.user_id,
+        cnpj=model.cnpj,
+        address=model.address,
+        updated_at=model.updated_at,
+        business_latitude=model.business_latitude,
+        business_longitude=model.business_longitude,
+    )
 
 
 class SqlAlchemyBusinessRegistrationRepository:
@@ -31,7 +44,7 @@ class SqlAlchemyBusinessRegistrationRepository:
                 UserModel.deleted_at.is_(None),
             )
         )
-        return self._to_entity(model) if model is not None else None
+        return to_business_profile_entity(model) if model is not None else None
 
     def add(self, user: User, profile: BusinessProfile) -> User:
         user_model = UserModel(
@@ -70,13 +83,15 @@ class SqlAlchemyBusinessRegistrationRepository:
         self.db.refresh(user_model)
         return SqlAlchemyUserRepository._to_entity(user_model)
 
-    @staticmethod
-    def _to_entity(model: BusinessProfileModel) -> BusinessProfile:
-        return BusinessProfile(
-            user_id=model.user_id,
-            cnpj=model.cnpj,
-            address=model.address,
-            updated_at=model.updated_at,
-            business_latitude=model.business_latitude,
-            business_longitude=model.business_longitude,
+
+class SqlAlchemyBusinessProfileRepository:
+    def __init__(self, db: Session) -> None:
+        self.db = db
+
+    def get_by_user_id(self, user_id: UUID) -> BusinessProfile | None:
+        model = self.db.scalar(
+            select(BusinessProfileModel).where(BusinessProfileModel.user_id == user_id)
         )
+        if model is None:
+            return None
+        return to_business_profile_entity(model)

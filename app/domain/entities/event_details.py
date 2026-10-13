@@ -40,6 +40,7 @@ class EventDetailsData:
     confirmed_participants_count: int
     confirmed_participants: tuple[EventDetailsParticipant, ...]
     organizer_blocked_viewer: bool
+    viewer_favorited: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +49,7 @@ class EventDetailsViewer:
     participation_status: EventParticipantStatusEnum | None
     can_see_participants: bool
     available_action: EventAvailableActionEnum
+    is_favorited: bool = False
 
 
 @dataclass(frozen=True, slots=True)
