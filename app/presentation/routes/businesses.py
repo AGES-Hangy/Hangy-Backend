@@ -4,9 +4,13 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
-from app.domain.assemblers import FollowAssembler
+from app.domain.assemblers import BusinessProfileAssembler, FollowAssembler
 from app.domain.entities import User
 from app.domain.services import InvalidPaginationError
+from app.domain.services.business_profile import (
+    BusinessProfileService,
+    NotBusinessProfileError,
+)
 from app.domain.services.follow import (
     DEFAULT_FOLLOWING_LIMIT,
     BusinessNotFoundError,
@@ -14,17 +18,64 @@ from app.domain.services.follow import (
     TargetNotBusinessError,
 )
 from app.infrastructure.repository import get_db
+from app.infrastructure.repository.business_profile import (
+    SqlAlchemyBusinessProfileRepository,
+)
 from app.infrastructure.repository.follow import SqlAlchemyFollowRepository
-from app.presentation.dtos import FollowingOutput
+from app.presentation.dtos import BusinessMeOutput, FollowingOutput
 from app.presentation.routes.auth import credentials_exception, get_current_user
 
 router = APIRouter(prefix="/businesses", tags=["Businesses"])
-# The path lives under /users/me, so it cannot use the /businesses prefix.
 following_router = APIRouter(tags=["Businesses"])
 
 
 def get_follow_service(db: Annotated[Session, Depends(get_db)]) -> FollowService:
     return FollowService(SqlAlchemyFollowRepository(db))
+
+
+def get_business_profile_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> BusinessProfileService:
+    return BusinessProfileService(SqlAlchemyBusinessProfileRepository(db))
+
+
+@router.get(
+    "/me",
+    response_model=BusinessMeOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Ver o perfil do estabelecimento autenticado",
+    description=(
+        "Devolve os dados do perfil comercial do próprio usuário autenticado. "
+        "`location` é `null` quando o estabelecimento não tem coordenadas."
+    ),
+    responses={
+        401: {
+            "description": "Token ausente, expirado ou inválido.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        403: {
+            "description": "Usuário pessoal chamando o endpoint.",
+            "content": {
+                "application/json": {"example": {"detail": "Not a business profile"}}
+            },
+        },
+    },
+)
+def read_current_business_profile(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[BusinessProfileService, Depends(get_business_profile_service)],
+) -> BusinessMeOutput:
+    try:
+        profile = service.get_own_profile(current_user)
+    except NotBusinessProfileError as error:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Not a business profile"
+        ) from error
+    return BusinessProfileAssembler.to_dto(profile)
 
 
 @router.post(
