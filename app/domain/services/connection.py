@@ -1,9 +1,19 @@
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
-from app.domain.entities import User, UserConnection
+from app.domain.entities import ConnectionsPage, ConnectionSummary, User, UserConnection
 from app.domain.enums import UserConnectionStatusEnum, UserTypeEnum
 from app.domain.services.block import BlockChecker
+from app.domain.services.pagination import (
+    InvalidPaginationError,
+    decode_cursor,
+    encode_cursor,
+)
+
+DEFAULT_CONNECTIONS_LIMIT = 20
+MIN_CONNECTIONS_LIMIT = 1
+MAX_CONNECTIONS_LIMIT = 100
 
 
 class ConnectionRepository(Protocol):
@@ -20,6 +30,16 @@ class ConnectionRepository(Protocol):
     def find_active_between(
         self, user_a: UUID, user_b: UUID
     ) -> UserConnection | None: ...
+
+    def list_confirmed(
+        self,
+        user_id: UUID,
+        *,
+        search: str | None,
+        limit: int,
+        cursor_connected_at: datetime | None,
+        cursor_other_user_id: UUID | None,
+    ) -> list[ConnectionSummary]: ...
 
 
 class ConnectionNotFoundError(Exception):
@@ -95,3 +115,39 @@ class ConnectionService:
         if connection.status is not UserConnectionStatusEnum.PENDING:
             raise InvalidConnectionStatusTransitionError
         return self.repository.reject(connection_id)
+
+    def list_connections(
+        self,
+        user_id: UUID,
+        *,
+        search: str | None = None,
+        limit: int = DEFAULT_CONNECTIONS_LIMIT,
+        cursor: str | None = None,
+    ) -> ConnectionsPage:
+        if not MIN_CONNECTIONS_LIMIT <= limit <= MAX_CONNECTIONS_LIMIT:
+            raise InvalidPaginationError(
+                f"limit must be between {MIN_CONNECTIONS_LIMIT} "
+                f"and {MAX_CONNECTIONS_LIMIT}"
+            )
+
+        cursor_connected_at: datetime | None = None
+        cursor_other_user_id: UUID | None = None
+        if cursor:
+            cursor_connected_at, cursor_other_user_id = decode_cursor(cursor)
+
+        items = self.repository.list_confirmed(
+            user_id,
+            search=search,
+            limit=limit + 1,
+            cursor_connected_at=cursor_connected_at,
+            cursor_other_user_id=cursor_other_user_id,
+        )
+
+        has_more = len(items) > limit
+        items = items[:limit]
+        next_cursor = None
+        if has_more:
+            last = items[-1]
+            next_cursor = encode_cursor(last.connected_at, last.user_id)
+
+        return ConnectionsPage(items=tuple(items), next_cursor=next_cursor)
