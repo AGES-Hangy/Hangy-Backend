@@ -22,7 +22,7 @@ from app.infrastructure.storage import s3 as module
 from app.presentation.mappers import read_image_upload
 
 LIMIT = 5242880
-BASE = "https://images.hangy.test/media"
+BASE = "https://hangy-test-images.s3.us-east-1.amazonaws.com"
 
 
 def stored_images(storage, prefix):
@@ -115,7 +115,6 @@ def s3_storage(monkeypatch):
         replace(
             module.settings,
             aws_s3_bucket="hangy-test-images",
-            s3_public_base_url=BASE + "/",
             aws_region="us-east-1",
         ),
     )
@@ -242,20 +241,20 @@ def test_dependency_uses_fake(image_storage):
 
 
 @pytest.mark.parametrize("bucket", ["", "   ", " images-test "])
-@pytest.mark.parametrize("public_base", ["", "   ", " https://cdn.test/media/ "])
-def test_configuration_trims_values_and_derives_public_url(
-    monkeypatch, bucket, public_base
-):
+@pytest.mark.parametrize("region", [" us-east-2 ", " eu-west-1 "])
+def test_configuration_trims_values_and_derives_public_url(monkeypatch, bucket, region):
     monkeypatch.setattr("dotenv.load_dotenv", lambda: None)
     monkeypatch.setenv("AWS_S3_BUCKET", bucket)
-    monkeypatch.setenv("AWS_REGION", " us-east-2 ")
-    monkeypatch.setenv("S3_PUBLIC_BASE_URL", public_base)
+    monkeypatch.setenv("AWS_REGION", region)
+    monkeypatch.setenv("S3_PUBLIC_BASE_URL", "https://ignored.test/media")
     monkeypatch.setenv("IMAGE_MAX_SIZE_BYTES", "1024")
     configured = runpy.run_path("app/config.py")["settings"]
     assert configured.aws_s3_bucket == bucket.strip()
     assert configured.image_max_size_bytes == 1024
-    expected = public_base.strip().rstrip("/") or (
-        f"https://{bucket.strip()}.s3.us-east-2.amazonaws.com" if bucket.strip() else ""
+    expected = (
+        f"https://{bucket.strip()}.s3.{region.strip()}.amazonaws.com"
+        if bucket.strip()
+        else ""
     )
     assert configured.s3_public_base_url == expected
 
@@ -265,7 +264,6 @@ def test_image_configuration_defaults(monkeypatch):
     for name in (
         "AWS_S3_BUCKET",
         "AWS_REGION",
-        "S3_PUBLIC_BASE_URL",
         "IMAGE_MAX_SIZE_BYTES",
     ):
         monkeypatch.delenv(name, raising=False)
