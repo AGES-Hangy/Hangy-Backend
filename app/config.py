@@ -40,8 +40,17 @@ class Settings:
         os.getenv("PRIVATE_EVENT_AREA_RADIUS_M", "500")
     )
     expo_access_token: str | None = os.getenv("EXPO_ACCESS_TOKEN")
-    aws_region: str = os.getenv("AWS_REGION", "us-east-2").strip()
+    aws_region: str = os.getenv("AWS_REGION", "us-east-1").strip()
     s3_bucket_name: str = os.getenv("S3_BUCKET_NAME", "").strip()
+    aws_s3_bucket: str = os.getenv("AWS_S3_BUCKET", "").strip()
+    s3_public_base_url: str = os.getenv("S3_PUBLIC_BASE_URL", "").strip().rstrip(
+        "/"
+    ) or (
+        f"https://{aws_s3_bucket}.s3.{aws_region}.amazonaws.com"
+        if aws_s3_bucket
+        else ""
+    )
+    image_max_size_bytes: int = int(os.getenv("IMAGE_MAX_SIZE_BYTES", "5242880"))
     terms_version: str = os.getenv("TERMS_VERSION", "2026-08-01")
     terms_published_at: str = os.getenv("TERMS_PUBLISHED_AT", "2026-08-01T00:00:00Z")
     terms_url: str = os.getenv("TERMS_URL", "https://hangy.app/termos/2026-08-01")

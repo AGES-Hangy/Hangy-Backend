@@ -137,7 +137,7 @@ remover os dados locais, execute
 
 ## Deploy na AWS
 
-Para usar o armazenamento privado no backend, consulte o
+Para usar o armazenamento de imagens e o módulo privado no backend, consulte o
 [módulo S3 e suas variáveis de ambiente](docs/s3.md).
 
 O desenvolvimento e os merges acontecem no GitHub. O espelhamento sobrescreve

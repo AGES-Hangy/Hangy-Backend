@@ -139,7 +139,7 @@ def test_missing_configuration_fails_before_client_creation(monkeypatch, field):
     def unexpected_client(*args, **kwargs):
         pytest.fail("Must validate configuration before contacting AWS")
 
-    monkeypatch.setattr(module.boto3, "client", unexpected_client)
+    monkeypatch.setattr(module, "_create_s3_client", unexpected_client)
     with pytest.raises(StorageError, match="Configure"):
         S3Storage()
 

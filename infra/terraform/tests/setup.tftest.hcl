@@ -137,7 +137,7 @@ run "s3_runtime_access" {
     error_message = "Docker must be able to retrieve role credentials using IMDSv2."
   }
   assert {
-    condition     = jsondecode(aws_secretsmanager_secret_version.app.secret_string).S3_BUCKET_NAME == aws_s3_bucket.app.bucket && jsondecode(aws_secretsmanager_secret_version.app.secret_string).AWS_REGION == var.aws_region
+    condition     = jsondecode(aws_secretsmanager_secret_version.app.secret_string).S3_BUCKET_NAME == aws_s3_bucket.app.bucket && jsondecode(aws_secretsmanager_secret_version.app.secret_string).AWS_S3_BUCKET == aws_s3_bucket.app.bucket && jsondecode(aws_secretsmanager_secret_version.app.secret_string).AWS_REGION == var.aws_region
     error_message = "The runtime environment must reference the managed bucket and region."
   }
   assert {

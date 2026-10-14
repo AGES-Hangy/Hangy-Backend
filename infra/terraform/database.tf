@@ -88,5 +88,6 @@ resource "aws_secretsmanager_secret_version" "app" {
     INVITE_LINK_BASE_URL        = "hangy://invite/"
     AWS_REGION                  = var.aws_region
     S3_BUCKET_NAME              = aws_s3_bucket.app.bucket
+    AWS_S3_BUCKET               = aws_s3_bucket.app.bucket
   })
 }

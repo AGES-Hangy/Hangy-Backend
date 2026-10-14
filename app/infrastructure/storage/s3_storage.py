@@ -5,12 +5,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import BinaryIO
 
-import boto3
 from boto3.exceptions import S3UploadFailedError
-from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError
 
 from app.config import settings
+from app.infrastructure.storage.s3 import _create_s3_client
 
 
 class StorageError(RuntimeError):
@@ -57,16 +56,7 @@ class S3Storage:
         if not self.bucket_name or not settings.aws_region:
             raise StorageError("Configure S3_BUCKET_NAME and AWS_REGION")
         with _storage_operation():
-            self._client = boto3.client(
-                "s3",
-                region_name=settings.aws_region,
-                config=Config(
-                    signature_version="s3v4",
-                    connect_timeout=5,
-                    read_timeout=30,
-                    retries={"mode": "standard", "total_max_attempts": 3},
-                ),
-            )
+            self._client = _create_s3_client(settings.aws_region)
 
     def upload_file(
         self,
