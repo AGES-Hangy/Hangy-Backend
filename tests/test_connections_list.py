@@ -65,13 +65,8 @@ def make_token(user_id: UUID) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-_cpf_counter = 0
-
-
 def _next_cpf() -> str:
-    global _cpf_counter
-    _cpf_counter += 1
-    return f"{_cpf_counter:011d}"
+    return str(uuid4()).replace("-", "")[:11]
 
 
 def create_user(db: Session, *, name: str = "Test User") -> UserModel:

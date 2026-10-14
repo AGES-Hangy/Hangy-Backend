@@ -150,7 +150,6 @@ def list_my_connections(
         str | None, Query(description="Cursor opaco de paginação")
     ] = None,
 ) -> ConnectionsOutput:
-    assert current_user.user_id is not None
     try:
         page = connection_service.list_connections(
             current_user.user_id, search=q, limit=limit, cursor=cursor
