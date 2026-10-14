@@ -2,13 +2,15 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import BeforeValidator
 from sqlalchemy.orm import Session
 
-from app.domain.assemblers import UserEventsAssembler
+from app.domain.assemblers import UserEventsAssembler, UserPhotosAssembler
 from app.domain.assemblers.users import UsersAssembler
 from app.domain.entities import User
 from app.domain.services import (
     DEFAULT_USER_EVENTS_LIMIT,
+    DEFAULT_USER_PHOTOS_LIMIT,
     BlockedUserNotFoundError,
     BlockService,
     CannotBlockSelfError,
@@ -16,18 +18,34 @@ from app.domain.services import (
     InvalidUserEventsTabError,
     UserAlreadyBlockedError,
     UserEventsService,
+    UserPhotosService,
 )
 from app.domain.services.users import UserNotFoundError, UsersService
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.block import SqlAlchemyBlockRepository
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
 from app.infrastructure.repository.user_events import SqlAlchemyUserEventsRepository
+from app.infrastructure.repository.user_photos import SqlAlchemyUserPhotosRepository
 from app.infrastructure.repository.user_profile import SqlAlchemyUserProfileRepository
-from app.presentation.dtos import UserEventsOutput, UserEventsTabsOutput
+from app.presentation.dtos import (
+    UserEventsOutput,
+    UserEventsTabsOutput,
+    UserPhotosOutput,
+)
 from app.presentation.dtos.users import UserProfileDTO
 from app.presentation.routes.auth import get_current_user
 
 router = APIRouter(tags=["Profile"])
+
+
+def _parse_limit(value: str | int) -> int:
+    try:
+        return int(value)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters",
+        ) from error
 
 
 def get_block_service(db: Annotated[Session, Depends(get_db)]) -> BlockService:
@@ -46,6 +64,12 @@ def get_user_events_service(
         user_repository=SqlAlchemyUserRepository(db),
         block_checker=block_service,
     )
+
+
+def get_user_photos_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> UserPhotosService:
+    return UserPhotosService(repository=SqlAlchemyUserPhotosRepository(db))
 
 
 @router.post(
@@ -171,6 +195,67 @@ def read_current_user_events(
             detail="Invalid pagination parameters",
         ) from error
     return UserEventsAssembler.to_dto(page)
+
+
+@router.get(
+    "/users/me/photos",
+    response_model=UserPhotosOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Listar as fotos publicadas pelo usuário (aba Fotos do perfil)",
+    description=(
+        "Lista as fotos que o próprio usuário publicou nas experiências de "
+        "eventos, da mais recente para a mais antiga. Fotos e experiências "
+        "excluídas não entram. As regras são as mesmas do contador `photos` "
+        "de `GET /users/me/profile`."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "`limit` ou `cursor` inválido.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid pagination parameters"}
+                }
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "A conta associada ao token foi excluída.",
+            "content": {
+                "application/json": {"example": {"detail": "Account has been deleted"}}
+            },
+        },
+    },
+)
+def read_current_user_photos(
+    current_user: Annotated[User, Depends(get_current_user)],
+    user_photos_service: Annotated[UserPhotosService, Depends(get_user_photos_service)],
+    limit: Annotated[
+        int,
+        BeforeValidator(_parse_limit),
+        Query(description="Tamanho da página (1–100)."),
+    ] = DEFAULT_USER_PHOTOS_LIMIT,
+    cursor: Annotated[
+        str | None, Query(description="Cursor opaco de paginação.")
+    ] = None,
+) -> UserPhotosOutput:
+    assert current_user.user_id is not None
+    try:
+        page = user_photos_service.get_user_photos(
+            current_user.user_id, limit=limit, cursor=cursor
+        )
+    except InvalidPaginationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters",
+        ) from error
+    return UserPhotosAssembler.to_dto(page)
 
 
 def get_users_service(
@@ -312,9 +397,11 @@ __all__ = [
     "block_user",
     "get_block_service",
     "get_user_events_service",
+    "get_user_photos_service",
     "get_user_profile",
     "get_users_service",
     "list_user_events",
     "read_current_user_events",
+    "read_current_user_photos",
     "router",
 ]
