@@ -4,13 +4,13 @@ from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.domain.entities import (
-    Event,
     EventDetailsData,
     EventDetailsOrganizer,
     EventDetailsParticipant,
     Tag,
 )
 from app.domain.enums import EventParticipantStatusEnum
+from app.infrastructure.repository.event import SqlAlchemyEventRepository
 from app.infrastructure.repository.models import (
     EventFavoriteModel,
     EventModel,
@@ -125,7 +125,7 @@ class SqlAlchemyEventDetailsRepository:
             )
         )
         return EventDetailsData(
-            event=SqlAlchemyEventDetailsRepository._to_event_entity(model),
+            event=SqlAlchemyEventRepository.to_entity(model),
             tags=tuple(
                 Tag(
                     tag_id=tag.tag_id,
@@ -165,25 +165,4 @@ class SqlAlchemyEventDetailsRepository:
             avatar_url=model.user.profile_photo_url,
             status=model.status,
             requested_at=model.joined_at,
-        )
-
-    @staticmethod
-    def _to_event_entity(model: EventModel) -> Event:
-        return Event(
-            event_id=model.event_id,
-            event_creator_id=model.event_creator_id,
-            event_title=model.event_title,
-            event_latitude=model.event_latitude,
-            event_longitude=model.event_longitude,
-            starts_at=model.starts_at,
-            ends_at=model.ends_at,
-            event_status=model.event_status,
-            event_privacy=model.event_privacy,
-            created_at=model.created_at,
-            updated_at=model.updated_at,
-            event_description=model.event_description,
-            location_name=model.location_name,
-            max_participants=model.max_participants,
-            cover_photo_url=model.cover_photo_url,
-            deleted_at=model.deleted_at,
         )

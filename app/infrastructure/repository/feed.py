@@ -2,16 +2,17 @@ from collections.abc import Collection
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import func, select
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy import and_, func, select
+from sqlalchemy.orm import Session, aliased, selectinload
 
-from app.domain.entities import FeedItem, Tag
+from app.domain.entities import FeedEvent, Tag
 from app.domain.enums import (
     EventParticipantStatusEnum,
     EventPrivacyEnum,
     EventStatusEnum,
 )
 from app.infrastructure.repository.block import block_exists_between
+from app.infrastructure.repository.event import SqlAlchemyEventRepository
 from app.infrastructure.repository.models import (
     EventModel,
     EventParticipantModel,
@@ -58,7 +59,7 @@ class SqlAlchemyFeedRepository:
         tag_ids: Collection[UUID],
         reference_time: datetime,
         limit: int,
-    ) -> list[FeedItem]:
+    ) -> list[FeedEvent]:
         if not tag_ids or limit <= 0:
             return []
 
@@ -71,11 +72,22 @@ class SqlAlchemyFeedRepository:
             )
             .scalar_subquery()
         )
+        # Aliased so it does not capture the participant count subquery above.
+        viewer_participation = aliased(EventParticipantModel)
         tagged_events = select(event_tag.c.event_id).where(
             event_tag.c.tag_id.in_(tag_ids)
         )
         rows = self.db.execute(
-            select(EventModel, participants_count)
+            select(EventModel, participants_count, viewer_participation.status)
+            # Joined here, not fetched per card: a user has at most one
+            # participation per event, so the join never multiplies rows.
+            .outerjoin(
+                viewer_participation,
+                and_(
+                    viewer_participation.event_id == EventModel.event_id,
+                    viewer_participation.user_id == viewer_id,
+                ),
+            )
             .options(selectinload(EventModel.tags))
             .where(
                 EventModel.event_id.in_(tagged_events),
@@ -91,20 +103,22 @@ class SqlAlchemyFeedRepository:
             .limit(limit)
         ).all()
         matched_tag_ids = set(tag_ids)
-        return [self._to_entity(model, count, matched_tag_ids) for model, count in rows]
+        return [
+            self._to_entity(model, count, participation_status, matched_tag_ids)
+            for model, count, participation_status in rows
+        ]
 
     @staticmethod
     def _to_entity(
-        model: EventModel, participants_count: int, matched_tag_ids: set[UUID]
-    ) -> FeedItem:
-        return FeedItem(
-            event_id=model.event_id,
-            title=model.event_title,
-            event_date=model.starts_at,
-            location_name=model.location_name,
-            cover_photo_url=model.cover_photo_url,
-            privacy=model.event_privacy,
+        model: EventModel,
+        participants_count: int,
+        viewer_participation_status: EventParticipantStatusEnum | None,
+        matched_tag_ids: set[UUID],
+    ) -> FeedEvent:
+        return FeedEvent(
+            event=SqlAlchemyEventRepository.to_entity(model),
             participants_count=participants_count,
+            viewer_participation_status=viewer_participation_status,
             # Only the tag(s) that matched this section — an event tagged
             # `Futebol` and `Rock` shows just `Futebol` under Esportes.
             tags=tuple(

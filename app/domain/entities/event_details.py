@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from app.domain.entities.event import Event
+from app.domain.entities.event import Event, EventLocationView
 from app.domain.entities.tag import Tag
 from app.domain.enums import (
     EventAvailableActionEnum,
@@ -61,6 +61,8 @@ class EventParticipantsPreview:
 @dataclass(frozen=True, slots=True)
 class EventDetails:
     event: Event
+    # The location this viewer may see; never read it straight from `event`.
+    location: EventLocationView
     tags: tuple[Tag, ...]
     organizer: EventDetailsOrganizer
     viewer: EventDetailsViewer

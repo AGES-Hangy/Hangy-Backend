@@ -120,7 +120,7 @@ Variáveis opcionais, também com escopo `production`:
 | `TF_STATE_KEY` | `<CI_PROJECT_PATH>/production.tfstate`; informe a chave anterior se a infraestrutura já foi criada pelo GitHub |
 
 O caminho do projeto é obtido automaticamente do GitLab. Senha do PostgreSQL,
-chave JWT e `DATABASE_URL` são gerados pelo Terraform e guardados no Secrets
+chave JWT, `LOCATION_OBFUSCATION_SECRET` e `DATABASE_URL` são gerados pelo Terraform e guardados no Secrets
 Manager. Não é necessário cadastrá-los nas variáveis do GitLab.
 
 `FRONTEND_BASE_URL` é o endereço do frontend usado para gerar `web_url` nos
