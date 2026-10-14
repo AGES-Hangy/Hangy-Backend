@@ -16,3 +16,16 @@ class SendConnectionRequestOutput(BaseModel):
     receiver_id: UUID
     status: UserConnectionStatusEnum
     created_at: datetime
+
+
+class ConnectionSummaryOutput(BaseModel):
+    user_id: UUID
+    name: str | None
+    photo_url: str | None
+    city: str | None
+    connected_at: datetime
+
+
+class ConnectionsOutput(BaseModel):
+    items: list[ConnectionSummaryOutput]
+    next_cursor: str | None

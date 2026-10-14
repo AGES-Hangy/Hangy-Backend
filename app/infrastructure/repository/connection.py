@@ -1,14 +1,19 @@
+from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.domain.entities import User, UserConnection
+from app.domain.entities import ConnectionSummary, User, UserConnection
 from app.domain.enums import NotificationTypeEnum, UserConnectionStatusEnum
 from app.domain.services.connection import ConnectionAlreadyExistsError
 from app.domain.services.notification_dispatcher import NotificationDispatcher
-from app.infrastructure.repository.models import UserConnectionModel, UserModel
+from app.infrastructure.repository.models import (
+    PersonProfileModel,
+    UserConnectionModel,
+    UserModel,
+)
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
 
 
@@ -61,6 +66,76 @@ class SqlAlchemyConnectionRepository:
     def find_active_between(self, user_a: UUID, user_b: UUID) -> UserConnection | None:
         model = self.db.scalar(select_active_between(self.db, user_a, user_b))
         return self._to_entity(model) if model is not None else None
+
+    def list_confirmed(
+        self,
+        user_id: UUID,
+        *,
+        search: str | None,
+        limit: int,
+        cursor_connected_at: datetime | None,
+        cursor_other_user_id: UUID | None,
+    ) -> list[ConnectionSummary]:
+        # Deferred import: app.infrastructure.repository.block imports
+        # select_active_between from this module at module level, so a
+        # top-level import here would be circular.
+        from app.infrastructure.repository.block import block_exists_between
+
+        other_user_id = case(
+            (
+                UserConnectionModel.requester_id == user_id,
+                UserConnectionModel.receiver_id,
+            ),
+            else_=UserConnectionModel.requester_id,
+        )
+        stmt = (
+            select(
+                other_user_id.label("user_id"),
+                UserModel.name.label("name"),
+                UserModel.profile_photo_url.label("photo_url"),
+                PersonProfileModel.city.label("city"),
+                UserConnectionModel.updated_at.label("connected_at"),
+            )
+            .join(UserModel, UserModel.user_id == other_user_id)
+            .outerjoin(PersonProfileModel, PersonProfileModel.user_id == other_user_id)
+            .where(
+                or_(
+                    UserConnectionModel.requester_id == user_id,
+                    UserConnectionModel.receiver_id == user_id,
+                ),
+                UserConnectionModel.status == UserConnectionStatusEnum.CONFIRMED,
+                UserConnectionModel.deleted_at.is_(None),
+                UserModel.deleted_at.is_(None),
+                ~block_exists_between(other_user_id, user_id),
+            )
+            .order_by(UserConnectionModel.updated_at.desc(), other_user_id.desc())
+        )
+        if search:
+            # Escape SQL LIKE wildcards in the raw input so a literal "_" or
+            # "%" in the query matches itself instead of any/many characters.
+            escaped_search = (
+                search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
+            stmt = stmt.where(UserModel.name.ilike(f"%{escaped_search}%", escape="\\"))
+        if cursor_connected_at is not None and cursor_other_user_id is not None:
+            stmt = stmt.where(
+                or_(
+                    UserConnectionModel.updated_at < cursor_connected_at,
+                    (UserConnectionModel.updated_at == cursor_connected_at)
+                    & (other_user_id < cursor_other_user_id),
+                )
+            )
+        rows = self.db.execute(stmt.limit(limit)).all()
+        return [
+            ConnectionSummary(
+                user_id=row.user_id,
+                name=row.name,
+                photo_url=row.photo_url,
+                city=row.city,
+                connected_at=row.connected_at,
+            )
+            for row in rows
+        ]
 
     def create(self, requester_id: UUID, receiver_id: UUID) -> UserConnection:
         model = UserConnectionModel(
