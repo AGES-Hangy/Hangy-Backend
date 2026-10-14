@@ -304,3 +304,166 @@ def test_block_creates_no_notification_for_the_blocked_user(
         db_generator.close()
 
     assert notifications == []
+
+
+def test_unblock_removes_the_block_row_and_returns_204(client: TestClient) -> None:
+    register_user(client, USER_A_EMAIL, "52998224725")
+    user_b_id = register_user(client, USER_B_EMAIL, "11144477735")
+    token_a = login(client, USER_A_EMAIL)
+    blocked = client.post(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+    assert blocked.status_code == 204
+
+    response = client.delete(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+
+    assert response.status_code == 204
+    assert response.content == b""
+
+    db_generator = db_session()
+    db = next(db_generator)
+    try:
+        blocks = db.scalars(select(UserBlockModel)).all()
+    finally:
+        db_generator.close()
+
+    assert blocks == []
+
+
+def test_unblock_makes_the_profile_visible_again_for_both_sides(
+    client: TestClient,
+) -> None:
+    user_a_id = register_user(client, USER_A_EMAIL, "52998224725")
+    user_b_id = register_user(client, USER_B_EMAIL, "11144477735")
+    token_a = login(client, USER_A_EMAIL)
+    token_b = login(client, USER_B_EMAIL)
+    client.post(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+    hidden = client.get(f"/users/{user_b_id}", headers=auth_headers(token_a))
+    assert hidden.status_code == 404
+
+    response = client.delete(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+    assert response.status_code == 204
+
+    blocker_view = client.get(f"/users/{user_b_id}", headers=auth_headers(token_a))
+    blocked_view = client.get(f"/users/{user_a_id}", headers=auth_headers(token_b))
+
+    assert blocker_view.status_code == 200
+    assert blocked_view.status_code == 200
+
+
+def test_unblock_does_not_restore_the_connection(client: TestClient) -> None:
+    user_a_id = register_user(client, USER_A_EMAIL, "52998224725")
+    user_b_id = register_user(client, USER_B_EMAIL, "11144477735")
+    token_a = login(client, USER_A_EMAIL)
+
+    db_generator = db_session()
+    db = next(db_generator)
+    try:
+        db.add(
+            UserConnectionModel(
+                requester_id=UUID(user_a_id),
+                receiver_id=UUID(user_b_id),
+                status=UserConnectionStatusEnum.CONFIRMED,
+            )
+        )
+        db.commit()
+    finally:
+        db_generator.close()
+
+    blocked = client.post(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+    assert blocked.status_code == 204
+
+    response = client.delete(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+    assert response.status_code == 204
+
+    db_generator = db_session()
+    db = next(db_generator)
+    try:
+        connections = db.scalars(select(UserConnectionModel)).all()
+    finally:
+        db_generator.close()
+
+    assert len(connections) == 1
+    assert connections[0].deleted_at is not None
+
+
+def test_unblock_a_user_who_is_not_blocked_returns_404(client: TestClient) -> None:
+    register_user(client, USER_A_EMAIL, "52998224725")
+    user_b_id = register_user(client, USER_B_EMAIL, "11144477735")
+    token_a = login(client, USER_A_EMAIL)
+
+    response = client.delete(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "User not found"}
+
+
+def test_unblock_nonexistent_user_returns_404(client: TestClient) -> None:
+    register_user(client, USER_A_EMAIL, "52998224725")
+    token_a = login(client, USER_A_EMAIL)
+
+    response = client.delete(
+        "/users/00000000-0000-0000-0000-000000000000/block",
+        headers=auth_headers(token_a),
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "User not found"}
+
+
+def test_unblock_cannot_remove_a_block_placed_by_the_other_user(
+    client: TestClient,
+) -> None:
+    user_a_id = register_user(client, USER_A_EMAIL, "52998224725")
+    user_b_id = register_user(client, USER_B_EMAIL, "11144477735")
+    token_a = login(client, USER_A_EMAIL)
+    token_b = login(client, USER_B_EMAIL)
+    blocked = client.post(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+    assert blocked.status_code == 204
+
+    response = client.delete(f"/users/{user_a_id}/block", headers=auth_headers(token_b))
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "User not found"}
+
+    still_hidden = client.get(f"/users/{user_b_id}", headers=auth_headers(token_a))
+    assert still_hidden.status_code == 404
+
+
+def test_unblock_without_token_returns_401(client: TestClient) -> None:
+    user_id = register_user(client, USER_A_EMAIL, "52998224725")
+
+    response = client.delete(f"/users/{user_id}/block")
+
+    assert response.status_code == 401
+
+
+def test_block_again_after_unblock_returns_204(client: TestClient) -> None:
+    register_user(client, USER_A_EMAIL, "52998224725")
+    user_b_id = register_user(client, USER_B_EMAIL, "11144477735")
+    token_a = login(client, USER_A_EMAIL)
+    client.post(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+    client.delete(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+
+    response = client.post(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+
+    assert response.status_code == 204
+
+
+def test_unblock_creates_no_notification_for_the_unblocked_user(
+    client: TestClient,
+) -> None:
+    register_user(client, USER_A_EMAIL, "52998224725")
+    user_b_id = register_user(client, USER_B_EMAIL, "11144477735")
+    token_a = login(client, USER_A_EMAIL)
+    client.post(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+
+    response = client.delete(f"/users/{user_b_id}/block", headers=auth_headers(token_a))
+    assert response.status_code == 204
+
+    db_generator = db_session()
+    db = next(db_generator)
+    try:
+        notifications = db.scalars(select(NotificationModel)).all()
+    finally:
+        db_generator.close()
+
+    assert notifications == []
