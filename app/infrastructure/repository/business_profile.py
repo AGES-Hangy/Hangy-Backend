@@ -1,14 +1,20 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.domain.entities import BusinessProfile, User
+from app.domain.entities import BusinessProfile, EditedBusinessProfile, User
 from app.domain.services.auth import DuplicateEmailError
 from app.domain.services.register_business import DuplicateCnpjError
 from app.infrastructure.repository.models import BusinessProfileModel, UserModel
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
+
+__all__ = [
+    "SqlAlchemyBusinessProfileRepository",
+    "SqlAlchemyBusinessRegistrationRepository",
+    "to_business_profile_entity",
+]
 
 
 def to_business_profile_entity(model: BusinessProfileModel) -> BusinessProfile:
@@ -88,10 +94,48 @@ class SqlAlchemyBusinessProfileRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
+    @staticmethod
+    def _to_entity(model: BusinessProfileModel) -> BusinessProfile:
+        return to_business_profile_entity(model)
+
     def get_by_user_id(self, user_id: UUID) -> BusinessProfile | None:
         model = self.db.scalar(
-            select(BusinessProfileModel).where(BusinessProfileModel.user_id == user_id)
+            select(BusinessProfileModel)
+            .join(UserModel, UserModel.user_id == BusinessProfileModel.user_id)
+            .where(
+                BusinessProfileModel.user_id == user_id,
+                UserModel.deleted_at.is_(None),
+            )
         )
         if model is None:
             return None
-        return to_business_profile_entity(model)
+        return self._to_entity(model)
+
+    def update_profile(self, profile: EditedBusinessProfile) -> EditedBusinessProfile:
+        self.db.execute(
+            update(UserModel)
+            .where(
+                UserModel.user_id == profile.user_id,
+                UserModel.deleted_at.is_(None),
+            )
+            .values(
+                name=profile.business_name,
+                description=profile.description,
+                updated_at=profile.updated_at,
+            )
+        )
+        self.db.execute(
+            update(BusinessProfileModel)
+            .where(
+                BusinessProfileModel.user_id == profile.user_id,
+                BusinessProfileModel.user.has(UserModel.deleted_at.is_(None)),
+            )
+            .values(
+                address=profile.address,
+                business_latitude=profile.latitude,
+                business_longitude=profile.longitude,
+                updated_at=profile.updated_at,
+            )
+        )
+        self.db.commit()
+        return profile

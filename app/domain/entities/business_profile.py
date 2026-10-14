@@ -2,6 +2,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
+from app.domain.entities.person_profile_update import Unset
+
+__all__ = [
+    "BusinessProfile",
+    "BusinessProfileLocation",
+    "BusinessProfileUpdate",
+    "BusinessRegistration",
+    "EditedBusinessProfile",
+    "OwnBusinessProfile",
+]
+
 
 @dataclass(frozen=True, slots=True)
 class BusinessRegistration:
@@ -25,6 +36,31 @@ class BusinessProfile:
     updated_at: datetime
     business_latitude: float | None = None
     business_longitude: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class BusinessProfileLocation:
+    latitude: float
+    longitude: float
+
+
+@dataclass(frozen=True, slots=True)
+class BusinessProfileUpdate:
+    business_name: str | Unset = Unset.UNSET
+    description: str | None | Unset = Unset.UNSET
+    address: str | Unset = Unset.UNSET
+    location: BusinessProfileLocation | None | Unset = Unset.UNSET
+
+
+@dataclass(frozen=True, slots=True)
+class EditedBusinessProfile:
+    user_id: UUID
+    business_name: str | None
+    description: str | None
+    address: str
+    latitude: float | None
+    longitude: float | None
+    updated_at: datetime
 
 
 @dataclass(frozen=True, slots=True)

@@ -4,11 +4,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.domain.assemblers import BusinessProfileAssembler, FollowAssembler
 from app.domain.entities import User
-from app.domain.services import InvalidPaginationError
-from app.domain.services.business_profile import (
+from app.domain.services import (
     BusinessProfileService,
+    DescriptionTooLongError,
+    InvalidCoordinatesError,
+    InvalidPaginationError,
     NotBusinessProfileError,
 )
 from app.domain.services.follow import (
@@ -22,7 +25,13 @@ from app.infrastructure.repository.business_profile import (
     SqlAlchemyBusinessProfileRepository,
 )
 from app.infrastructure.repository.follow import SqlAlchemyFollowRepository
-from app.presentation.dtos import BusinessMeOutput, FollowingOutput
+from app.presentation.dtos import (
+    BusinessMeOutput,
+    BusinessProfileUpdateInput,
+    BusinessProfileUpdateOutput,
+    FollowingOutput,
+)
+from app.presentation.mappers.business_profile import BusinessProfileMapper
 from app.presentation.routes.auth import credentials_exception, get_current_user
 
 router = APIRouter(prefix="/businesses", tags=["Businesses"])
@@ -36,7 +45,10 @@ def get_follow_service(db: Annotated[Session, Depends(get_db)]) -> FollowService
 def get_business_profile_service(
     db: Annotated[Session, Depends(get_db)],
 ) -> BusinessProfileService:
-    return BusinessProfileService(SqlAlchemyBusinessProfileRepository(db))
+    return BusinessProfileService(
+        SqlAlchemyBusinessProfileRepository(db),
+        description_max_length=settings.profile_description_max_length,
+    )
 
 
 @router.get(
@@ -76,6 +88,82 @@ def read_current_business_profile(
             status.HTTP_403_FORBIDDEN, "Not a business profile"
         ) from error
     return BusinessProfileAssembler.to_dto(profile)
+
+
+@router.patch(
+    "/me",
+    response_model=BusinessProfileUpdateOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Editar dados do perfil comercial autenticado",
+    description=(
+        "Atualiza nome, descrição, endereço e localização do estabelecimento. "
+        "Apenas contas BUSINESS ativas possuem perfil comercial. "
+        "Campos não enviados não são alterados. CNPJ não é editável e é ignorado "
+        "se enviado no corpo da requisição. `updated_at` é atualizado a cada alteração."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": (
+                "Coordenadas fora dos limites válidos ou descrição longa demais."
+            ),
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "invalid_coordinates": {
+                            "summary": "Coordenadas inválidas",
+                            "value": {"detail": "Invalid coordinates"},
+                        },
+                        "description_too_long": {
+                            "summary": "Descrição longa demais",
+                            "value": {"detail": "Description exceeds maximum length"},
+                        },
+                    }
+                }
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": (
+                "A conta é pessoal (`Not a business profile`) ou foi "
+                "excluída (`Account has been deleted`)."
+            ),
+            "content": {
+                "application/json": {"example": {"detail": "Not a business profile"}}
+            },
+        },
+    },
+)
+def update_current_business_profile(
+    payload: BusinessProfileUpdateInput,
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[BusinessProfileService, Depends(get_business_profile_service)],
+) -> BusinessProfileUpdateOutput:
+    update = BusinessProfileMapper.to_update(payload)
+    try:
+        profile = service.update_profile(current_user, update)
+    except NotBusinessProfileError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a business profile",
+        ) from error
+    except InvalidCoordinatesError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid coordinates",
+        ) from error
+    except DescriptionTooLongError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Description exceeds maximum length",
+        ) from error
+    return BusinessProfileAssembler.to_update_dto(profile)
 
 
 @router.post(
