@@ -1,5 +1,14 @@
-from app.domain.entities import UserConnection
-from app.presentation.dtos import SendConnectionRequestOutput
+from app.domain.entities import (
+    PendingConnection,
+    PendingConnectionsPage,
+    UserConnection,
+)
+from app.presentation.dtos import (
+    PendingConnectionOutput,
+    PendingConnectionsOutput,
+    PendingConnectionUserOutput,
+    SendConnectionRequestOutput,
+)
 
 
 class ConnectionAssembler:
@@ -13,4 +22,25 @@ class ConnectionAssembler:
             receiver_id=connection.receiver_id,
             status=connection.status,
             created_at=connection.created_at,
+        )
+
+    @staticmethod
+    def to_pending_dto(page: PendingConnectionsPage) -> PendingConnectionsOutput:
+        return PendingConnectionsOutput(
+            items=[
+                ConnectionAssembler._to_pending_item_dto(item) for item in page.items
+            ],
+            next_cursor=page.next_cursor,
+        )
+
+    @staticmethod
+    def _to_pending_item_dto(item: PendingConnection) -> PendingConnectionOutput:
+        return PendingConnectionOutput(
+            connection_id=item.connection_id,
+            user=PendingConnectionUserOutput(
+                id=item.requester_id,
+                name=item.requester_name,
+                photo_url=item.requester_photo_url,
+            ),
+            created_at=item.created_at,
         )
