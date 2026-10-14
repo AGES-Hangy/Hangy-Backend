@@ -49,9 +49,10 @@ resource "aws_instance" "api" {
   }
 
   metadata_options {
-    http_endpoint               = "enabled"
-    http_tokens                 = "required"
-    http_put_response_hop_limit = 1
+    http_endpoint = "enabled"
+    http_tokens   = "required"
+    # Allow the application in Docker's bridge network to obtain role credentials.
+    http_put_response_hop_limit = 2
   }
 
   tags = { Name = var.name }

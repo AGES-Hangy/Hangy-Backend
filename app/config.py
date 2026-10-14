@@ -30,6 +30,8 @@ class Settings:
     invite_link_base_url: str = os.getenv("INVITE_LINK_BASE_URL", "hangy://invite/")
     frontend_base_url: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:8081")
     expo_access_token: str | None = os.getenv("EXPO_ACCESS_TOKEN")
+    aws_region: str = os.getenv("AWS_REGION", "us-east-2").strip()
+    s3_bucket_name: str = os.getenv("S3_BUCKET_NAME", "").strip()
     terms_version: str = os.getenv("TERMS_VERSION", "2026-08-01")
     terms_published_at: str = os.getenv("TERMS_PUBLISHED_AT", "2026-08-01T00:00:00Z")
     terms_url: str = os.getenv("TERMS_URL", "https://hangy.app/termos/2026-08-01")

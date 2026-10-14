@@ -80,5 +80,7 @@ resource "aws_secretsmanager_secret_version" "app" {
     CORS_ORIGINS                = join(",", length(var.cors_origins) > 0 ? var.cors_origins : [trimsuffix(var.frontend_base_url, "/")])
     FRONTEND_BASE_URL           = var.frontend_base_url
     INVITE_LINK_BASE_URL        = "hangy://invite/"
+    AWS_REGION                  = var.aws_region
+    S3_BUCKET_NAME              = aws_s3_bucket.app.bucket
   })
 }

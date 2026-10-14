@@ -25,6 +25,12 @@ mock_provider "aws" {
   mock_resource "aws_s3_bucket" {
     defaults = { arn = "arn:aws:s3:::hangy-production-123456789012-us-east-2" }
   }
+  mock_resource "aws_ecr_repository" {
+    defaults = { arn = "arn:aws:ecr:us-east-2:123456789012:repository/hangy-production" }
+  }
+  mock_resource "aws_secretsmanager_secret" {
+    defaults = { arn = "arn:aws:secretsmanager:us-east-2:123456789012:secret:hangy-production/app-test" }
+  }
 }
 
 mock_provider "random" {
@@ -120,6 +126,26 @@ run "estimate_settings" {
   assert {
     condition     = jsondecode(aws_s3_bucket_policy.app.policy).Statement[0].Condition.Bool["aws:SecureTransport"] == "false" && jsondecode(aws_s3_bucket_policy.app.policy).Statement[0].Effect == "Deny"
     error_message = "O bucket deve recusar transporte sem TLS."
+  }
+}
+
+run "s3_runtime_access" {
+  command = plan
+
+  assert {
+    condition     = aws_instance.api.metadata_options[0].http_tokens == "required" && aws_instance.api.metadata_options[0].http_put_response_hop_limit == 2
+    error_message = "Docker must be able to retrieve role credentials using IMDSv2."
+  }
+  assert {
+    condition     = jsondecode(aws_secretsmanager_secret_version.app.secret_string).S3_BUCKET_NAME == aws_s3_bucket.app.bucket && jsondecode(aws_secretsmanager_secret_version.app.secret_string).AWS_REGION == var.aws_region
+    error_message = "The runtime environment must reference the managed bucket and region."
+  }
+  assert {
+    condition = toset([for statement in jsondecode(aws_iam_role_policy.ec2.policy).Statement : jsonencode(statement) if startswith(statement.Action[0], "s3:")]) == toset([
+      jsonencode({ Effect = "Allow", Action = ["s3:ListBucket"], Resource = aws_s3_bucket.app.arn }),
+      jsonencode({ Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"], Resource = "${aws_s3_bucket.app.arn}/*" }),
+    ])
+    error_message = "Runtime S3 access must be limited to the application bucket and supported operations."
   }
 }
 
