@@ -17,6 +17,11 @@ class EventPrivacyEnum(StrEnum):
     INVITE_ONLY = "INVITE_ONLY"
 
 
+class LocationPrecisionEnum(StrEnum):
+    APPROXIMATE = "APPROXIMATE"
+    EXACT = "EXACT"
+
+
 class EventStatusEnum(StrEnum):
     DRAFT = "DRAFT"
     # The Figma flow publishes straight away; DRAFT has no screen yet.
