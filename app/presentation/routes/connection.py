@@ -164,7 +164,6 @@ def list_pending_connection_requests(
         str | None, Query(description="Cursor opaco de paginação.")
     ] = None,
 ) -> PendingConnectionsOutput:
-    assert current_user.user_id is not None
     try:
         page = connection_service.get_pending_requests(
             current_user.user_id, limit=limit, cursor=cursor

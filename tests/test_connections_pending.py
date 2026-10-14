@@ -29,7 +29,7 @@ from app.infrastructure.repository.models import (
 from app.main import app
 
 URL = "/users/me/connections/pending"
-NOW = datetime.now(UTC)
+NOW = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
 @pytest.fixture
