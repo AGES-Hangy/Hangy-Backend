@@ -2,11 +2,12 @@ import runpy
 from dataclasses import replace
 from io import BytesIO
 from urllib.parse import parse_qs, urlparse
+from urllib.request import urlopen
 
+import boto3
 import pytest
 from botocore.exceptions import ClientError, NoCredentialsError
 from botocore.stub import Stubber
-from moto import mock_aws
 
 from app.infrastructure.storage import S3Storage, StorageError, StorageNotFoundError
 from app.infrastructure.storage import s3_storage as module
@@ -21,61 +22,83 @@ def storage(monkeypatch):
         "settings",
         replace(module.settings, s3_bucket_name=BUCKET, aws_region="us-east-2"),
     )
-    with mock_aws():
-        adapter = S3Storage()
-        adapter._client.create_bucket(
-            Bucket=BUCKET,
-            CreateBucketConfiguration={"LocationConstraint": "us-east-2"},
-        )
-        yield adapter
+    monkeypatch.setattr(
+        module,
+        "_create_s3_client",
+        lambda region: boto3.client(
+            "s3",
+            region_name=region,
+            aws_access_key_id="testing",
+            aws_secret_access_key="testing",
+        ),
+    )
+    return S3Storage()
 
 
-def test_upload_download_delete_and_missing_object(storage):
-    storage.upload_file("users/a/photo", BytesIO(b"photo"), content_type="image/png")
-    metadata = storage._client.head_object(Bucket=BUCKET, Key="users/a/photo")
+def test_upload_download_delete_and_missing_object(live_storage):
+    storage, prefix = live_storage
+    storage.upload_file(
+        prefix + "users/a/photo", BytesIO(b"photo"), content_type="image/png"
+    )
+    metadata = storage._client.head_object(
+        Bucket=storage.bucket_name, Key=prefix + "users/a/photo"
+    )
     assert metadata["ContentType"] == "image/png"
     output = BytesIO()
-    storage.download_file("users/a/photo", output)
+    storage.download_file(prefix + "users/a/photo", output)
     assert output.getvalue() == b"photo"
-    storage.delete_file("users/a/photo")
-    storage.delete_file("users/a/photo")
+    storage.delete_file(prefix + "users/a/photo")
+    storage.delete_file(prefix + "users/a/photo")
     with pytest.raises(StorageNotFoundError):
-        storage.download_file("users/a/photo", BytesIO())
+        storage.download_file(prefix + "users/a/photo", BytesIO())
 
 
-def test_multipart_upload(storage):
+def test_multipart_upload(live_storage):
+    storage, prefix = live_storage
     content = b"x" * (9 * 1024 * 1024)
-    storage.upload_file("large", BytesIO(content))
+    storage.upload_file(prefix + "large", BytesIO(content))
     output = BytesIO()
-    storage.download_file("large", output)
+    storage.download_file(prefix + "large", output)
     assert output.getvalue() == content
 
 
-def test_list_is_paginated_and_filters_prefix_without_caching(storage):
-    for key in ("users/a/1", "users/a/2", "users/b/1"):
+def test_list_is_paginated_and_filters_prefix_without_caching(live_storage):
+    storage, prefix = live_storage
+    for key in (prefix + "users/a/1", prefix + "users/a/2", prefix + "users/b/1"):
         storage.upload_file(key, BytesIO(b"data"))
-    first = storage.list_files(prefix="users/a/", limit=1)
-    assert first.keys == ("users/a/1",)
+    first = storage.list_files(prefix=prefix + "users/a/", limit=1)
+    assert first.keys == (prefix + "users/a/1",)
     assert first.next_token
     second = storage.list_files(
-        prefix="users/a/", limit=1, continuation_token=first.next_token
+        prefix=prefix + "users/a/", limit=1, continuation_token=first.next_token
     )
-    assert second.keys == ("users/a/2",)
+    assert second.keys == (prefix + "users/a/2",)
     assert second.next_token is None
-    storage.delete_file("users/a/1")
-    assert storage.list_files(prefix="users/a/").keys == ("users/a/2",)
-    assert storage.list_files(prefix="missing/").keys == ()
+    storage.delete_file(prefix + "users/a/1")
+    assert storage.list_files(prefix=prefix + "users/a/").keys == (
+        prefix + "users/a/2",
+    )
+    assert storage.list_files(prefix=prefix + "missing/").keys == ()
 
 
-def test_signed_url_uses_sigv4_bucket_region_and_expiration(storage):
-    url = urlparse(storage.generate_download_url("users/a/photo name", expires_in=60))
+def test_signed_url_uses_sigv4_bucket_region_and_expiration(live_storage):
+    storage, prefix = live_storage
+    key = prefix + "users/a/photo name"
+    storage.upload_file(key, BytesIO(b"signed download"))
+    signed_url = storage.generate_download_url(key, expires_in=60)
+    with urlopen(signed_url, timeout=30) as response:
+        assert response.status == 200
+        assert response.read() == b"signed download"
+    url = urlparse(signed_url)
     query = parse_qs(url.query)
     assert url.scheme == "https"
-    assert url.hostname == f"{BUCKET}.s3.amazonaws.com"
-    assert url.path == "/users/a/photo%20name"
+    assert storage.bucket_name in url.hostname
+    assert url.path == f"/{prefix}users/a/photo%20name"
     assert query["X-Amz-Expires"] == ["60"]
     assert query["X-Amz-Algorithm"] == ["AWS4-HMAC-SHA256"]
-    assert "/us-east-2/s3/aws4_request" in query["X-Amz-Credential"][0]
+    assert (
+        f"/{module.settings.aws_region}/s3/aws4_request" in query["X-Amz-Credential"][0]
+    )
 
 
 @pytest.mark.parametrize("key", ["", "a" * 1025, "é" * 513])

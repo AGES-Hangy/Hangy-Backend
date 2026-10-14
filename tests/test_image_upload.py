@@ -5,6 +5,7 @@ from io import BytesIO
 from unittest.mock import AsyncMock
 from uuid import UUID
 
+import boto3
 import pytest
 from botocore.exceptions import EndpointConnectionError, NoCredentialsError
 from botocore.stub import Stubber
@@ -24,6 +25,22 @@ LIMIT = 5242880
 BASE = "https://images.hangy.test/media"
 
 
+def stored_images(storage, prefix):
+    client = storage._get_client()
+    objects = {}
+    for page in client.get_paginator("list_objects_v2").paginate(
+        Bucket=storage.bucket_name, Prefix=prefix
+    ):
+        for obj in page.get("Contents", []):
+            response = client.get_object(Bucket=storage.bucket_name, Key=obj["Key"])
+            with response["Body"] as body:
+                objects[f"{storage.public_base_url}/{obj['Key']}"] = (
+                    body.read(),
+                    response["ContentType"],
+                )
+    return objects
+
+
 @pytest.mark.parametrize(
     ("content", "header", "extension", "mime", "folder"),
     [
@@ -32,44 +49,51 @@ BASE = "https://images.hangy.test/media"
     ],
 )
 def test_upload_detects_content_and_generates_uuid_key(
-    image_storage, content, header, extension, mime, folder
+    live_image_storage, content, header, extension, mime, folder
 ):
-    service = ImageUploadService(image_storage)
+    storage, prefix = live_image_storage
+    service = ImageUploadService(storage)
+    folder = prefix + folder
     url = service.upload(folder, content, header)
-    assert url.startswith(f"{image_storage.base_url}/{folder}/")
+    assert url.startswith(f"{storage.public_base_url}/{folder}/")
     name = url.rsplit("/", 1)[1]
     assert name.endswith("." + extension)
     assert UUID(name.split(".")[0]).version == 4
-    assert image_storage.objects == {url: (content, mime)}
+    assert stored_images(storage, prefix) == {url: (content, mime)}
     assert service.owns(url)
     assert not service.owns("https://external.test/photo.png")
     service.delete(url)
     service.delete(url)
-    assert image_storage.objects == {}
+    assert stored_images(storage, prefix) == {}
 
 
 @pytest.mark.parametrize("content", [b"", b"text renamed to .png", b"GIF89a"])
-def test_invalid_content_does_not_write(image_storage, content):
+def test_invalid_content_does_not_write(live_image_storage, content):
+    storage, prefix = live_image_storage
     with pytest.raises(UnsupportedImageTypeError, match="Unsupported image type"):
-        ImageUploadService(image_storage).upload("events/covers", content, "image/png")
-    assert image_storage.objects == {}
+        ImageUploadService(storage).upload(
+            prefix + "events/covers", content, "image/png"
+        )
+    assert stored_images(storage, prefix) == {}
 
 
-def test_size_boundary_and_no_write_above_limit(image_storage):
-    service = ImageUploadService(image_storage)
+def test_size_boundary_and_no_write_above_limit(live_image_storage):
+    storage, prefix = live_image_storage
+    service = ImageUploadService(storage, max_size_bytes=LIMIT)
     content = b"\x89PNG" + bytes(LIMIT - 4)
-    url = service.upload("events/covers", content, "image/png")
-    assert image_storage.objects[url] == (content, "image/png")
+    url = service.upload(prefix + "events/covers", content, "image/png")
+    assert stored_images(storage, prefix)[url] == (content, "image/png")
     with pytest.raises(ImageTooLargeError, match="Image too large"):
-        service.upload("events/covers", content + b"x", "image/png")
-    assert len(image_storage.objects) == 1
+        service.upload(prefix + "events/covers", content + b"x", "image/png")
+    assert len(stored_images(storage, prefix)) == 1
 
 
-def test_read_helper_bounds_memory_and_ignores_filename(image_storage):
+def test_read_helper_bounds_memory_and_ignores_filename(live_image_storage):
+    storage, prefix = live_image_storage
     upload = UploadFile(filename="untrusted-name.txt", file=BytesIO(b"\x89PNGimage"))
     content = asyncio.run(read_image_upload(upload))
-    url = ImageUploadService(image_storage).upload(
-        "events/covers", content, "text/plain"
+    url = ImageUploadService(storage).upload(
+        prefix + "events/covers", content, "text/plain"
     )
     assert upload.filename not in url
     upload.read = AsyncMock(return_value=b"x" * 11)
@@ -95,29 +119,28 @@ def s3_storage(monkeypatch):
             aws_region="us-east-1",
         ),
     )
+
+    def unit_client(region):
+        return boto3.client(
+            "s3",
+            region_name=region,
+            aws_access_key_id="testing",
+            aws_secret_access_key="testing",
+        )
+
+    monkeypatch.setattr(module, "_create_s3_client", unit_client)
     return S3ImageStorage()
 
 
-def test_s3_upload_and_idempotent_delete(s3_storage):
-    with Stubber(s3_storage._get_client()) as stub:
-        stub.add_response(
-            "put_object",
-            {},
-            {
-                "Bucket": "hangy-test-images",
-                "Key": "events/covers/image.png",
-                "Body": b"\x89PNG",
-                "ContentType": "image/png",
-            },
-        )
-        url = s3_storage.upload("events/covers/image.png", b"\x89PNG", "image/png")
-        assert url == BASE + "/events/covers/image.png"
-        params = {"Bucket": "hangy-test-images", "Key": "events/covers/image.png"}
-        stub.add_response("delete_object", {}, params)
-        stub.add_response("delete_object", {}, params)
-        s3_storage.delete(url)
-        s3_storage.delete(url)
-        stub.assert_no_pending_responses()
+def test_s3_upload_and_idempotent_delete(live_image_storage):
+    storage, prefix = live_image_storage
+    key = prefix + "events/covers/image.png"
+    url = storage.upload(key, b"\x89PNG", "image/png")
+    assert url == f"{storage.public_base_url}/{key}"
+    assert stored_images(storage, prefix) == {url: (b"\x89PNG", "image/png")}
+    storage.delete(url)
+    storage.delete(url)
+    assert stored_images(storage, prefix) == {}
 
 
 @pytest.mark.parametrize(
