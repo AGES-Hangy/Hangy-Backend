@@ -3,6 +3,8 @@ from typing import Protocol
 from uuid import UUID
 
 from app.domain.entities import (
+    ConnectionsPage,
+    ConnectionSummary,
     PendingConnection,
     PendingConnectionsPage,
     User,
@@ -16,9 +18,9 @@ from app.domain.services.pagination import (
     encode_cursor,
 )
 
-DEFAULT_PENDING_CONNECTIONS_LIMIT = 20
-MIN_PENDING_CONNECTIONS_LIMIT = 1
-MAX_PENDING_CONNECTIONS_LIMIT = 100
+DEFAULT_CONNECTIONS_LIMIT = 20
+MIN_CONNECTIONS_LIMIT = 1
+MAX_CONNECTIONS_LIMIT = 100
 
 
 class ConnectionRepository(Protocol):
@@ -44,6 +46,16 @@ class ConnectionRepository(Protocol):
         cursor_created_at: datetime | None,
         cursor_connection_id: UUID | None,
     ) -> list[PendingConnection]: ...
+
+    def list_confirmed(
+        self,
+        user_id: UUID,
+        *,
+        search: str | None,
+        limit: int,
+        cursor_connected_at: datetime | None,
+        cursor_other_user_id: UUID | None,
+    ) -> list[ConnectionSummary]: ...
 
 
 class ConnectionNotFoundError(Exception):
@@ -124,13 +136,13 @@ class ConnectionService:
         self,
         user_id: UUID,
         *,
-        limit: int = DEFAULT_PENDING_CONNECTIONS_LIMIT,
+        limit: int = DEFAULT_CONNECTIONS_LIMIT,
         cursor: str | None = None,
     ) -> PendingConnectionsPage:
-        if not MIN_PENDING_CONNECTIONS_LIMIT <= limit <= MAX_PENDING_CONNECTIONS_LIMIT:
+        if not MIN_CONNECTIONS_LIMIT <= limit <= MAX_CONNECTIONS_LIMIT:
             raise InvalidPaginationError(
-                f"limit must be between {MIN_PENDING_CONNECTIONS_LIMIT} "
-                f"and {MAX_PENDING_CONNECTIONS_LIMIT}"
+                f"limit must be between {MIN_CONNECTIONS_LIMIT} "
+                f"and {MAX_CONNECTIONS_LIMIT}"
             )
 
         cursor_created_at: datetime | None = None
@@ -153,3 +165,39 @@ class ConnectionService:
             next_cursor = encode_cursor(last.created_at, last.connection_id)
 
         return PendingConnectionsPage(items=tuple(items), next_cursor=next_cursor)
+
+    def list_connections(
+        self,
+        user_id: UUID,
+        *,
+        search: str | None = None,
+        limit: int = DEFAULT_CONNECTIONS_LIMIT,
+        cursor: str | None = None,
+    ) -> ConnectionsPage:
+        if not MIN_CONNECTIONS_LIMIT <= limit <= MAX_CONNECTIONS_LIMIT:
+            raise InvalidPaginationError(
+                f"limit must be between {MIN_CONNECTIONS_LIMIT} "
+                f"and {MAX_CONNECTIONS_LIMIT}"
+            )
+
+        cursor_connected_at: datetime | None = None
+        cursor_other_user_id: UUID | None = None
+        if cursor:
+            cursor_connected_at, cursor_other_user_id = decode_cursor(cursor)
+
+        items = self.repository.list_confirmed(
+            user_id,
+            search=search,
+            limit=limit + 1,
+            cursor_connected_at=cursor_connected_at,
+            cursor_other_user_id=cursor_other_user_id,
+        )
+
+        has_more = len(items) > limit
+        items = items[:limit]
+        next_cursor = None
+        if has_more:
+            last = items[-1]
+            next_cursor = encode_cursor(last.connected_at, last.user_id)
+
+        return ConnectionsPage(items=tuple(items), next_cursor=next_cursor)

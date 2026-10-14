@@ -1,9 +1,13 @@
 from app.domain.entities import (
+    ConnectionsPage,
+    ConnectionSummary,
     PendingConnection,
     PendingConnectionsPage,
     UserConnection,
 )
 from app.presentation.dtos import (
+    ConnectionsOutput,
+    ConnectionSummaryOutput,
     PendingConnectionOutput,
     PendingConnectionsOutput,
     PendingConnectionUserOutput,
@@ -43,4 +47,21 @@ class ConnectionAssembler:
                 photo_url=item.requester_photo_url,
             ),
             created_at=item.created_at,
+        )
+
+    @staticmethod
+    def to_connections_dto(page: ConnectionsPage) -> ConnectionsOutput:
+        return ConnectionsOutput(
+            items=[ConnectionAssembler._to_summary_dto(item) for item in page.items],
+            next_cursor=page.next_cursor,
+        )
+
+    @staticmethod
+    def _to_summary_dto(summary: ConnectionSummary) -> ConnectionSummaryOutput:
+        return ConnectionSummaryOutput(
+            user_id=summary.user_id,
+            name=summary.name,
+            photo_url=summary.photo_url,
+            city=summary.city,
+            connected_at=summary.connected_at,
         )
