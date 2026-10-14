@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, and_, exists, or_, select
+from sqlalchemy import ColumnElement, and_, delete, exists, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -94,6 +94,16 @@ class SqlAlchemyBlockRepository:
             )
         rows = self.db.execute(query).all()
         return [self._to_blocked_user(block, user) for block, user in rows]
+
+    def delete(self, blocker_id: UUID, blocked_id: UUID) -> bool:
+        result = self.db.execute(
+            delete(UserBlockModel).where(
+                UserBlockModel.blocker_id == blocker_id,
+                UserBlockModel.blocked_id == blocked_id,
+            )
+        )
+        self.db.commit()
+        return result.rowcount > 0
 
     @staticmethod
     def _to_blocked_user(block: UserBlockModel, user: UserModel) -> BlockedUser:
