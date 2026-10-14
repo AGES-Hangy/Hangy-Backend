@@ -1,3 +1,4 @@
+
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -95,6 +96,15 @@ class SqlAlchemyBlockRepository:
         rows = self.db.execute(query).all()
         return [self._to_blocked_user(block, user) for block, user in rows]
 
+    @staticmethod
+    def _to_blocked_user(block: UserBlockModel, user: UserModel) -> BlockedUser:
+        return BlockedUser(
+            user_id=user.user_id,
+            name=user.name,
+            photo_url=user.profile_photo_url,
+            blocked_at=block.created_at,
+        )
+
     def delete(self, blocker_id: UUID, blocked_id: UUID) -> bool:
         result = self.db.execute(
             delete(UserBlockModel).where(
@@ -104,15 +114,6 @@ class SqlAlchemyBlockRepository:
         )
         self.db.commit()
         return result.rowcount > 0
-
-    @staticmethod
-    def _to_blocked_user(block: UserBlockModel, user: UserModel) -> BlockedUser:
-        return BlockedUser(
-            user_id=user.user_id,
-            name=user.name,
-            photo_url=user.profile_photo_url,
-            blocked_at=block.created_at,
-        )
 
     @staticmethod
     def _to_entity(model: UserBlockModel) -> UserBlock:
