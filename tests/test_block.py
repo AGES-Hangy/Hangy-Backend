@@ -305,6 +305,7 @@ def test_block_creates_no_notification_for_the_blocked_user(
 
     assert notifications == []
 
+
 def test_unblock_removes_the_block_row_and_returns_204(client: TestClient) -> None:
     register_user(client, USER_A_EMAIL, "52998224725")
     user_b_id = register_user(client, USER_B_EMAIL, "11144477735")

@@ -135,6 +135,7 @@ def block_user(
         ) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+
 @router.delete(
     "/users/{user_id}/block",
     status_code=status.HTTP_204_NO_CONTENT,

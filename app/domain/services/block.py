@@ -28,6 +28,7 @@ class BlockedUserNotFoundError(Exception):
 class UserAlreadyBlockedError(Exception):
     """Raised when the blocker has already blocked the same user."""
 
+
 class UserNotBlockedError(Exception):
     """Raised when the user to unblock is not blocked by the requester."""
 
