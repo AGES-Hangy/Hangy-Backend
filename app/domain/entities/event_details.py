@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from app.domain.entities.event import Event
+from app.domain.entities.event import Event, EventLocationView
 from app.domain.entities.tag import Tag
 from app.domain.enums import (
     EventAvailableActionEnum,
@@ -40,6 +40,7 @@ class EventDetailsData:
     confirmed_participants_count: int
     confirmed_participants: tuple[EventDetailsParticipant, ...]
     organizer_blocked_viewer: bool
+    viewer_favorited: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +49,7 @@ class EventDetailsViewer:
     participation_status: EventParticipantStatusEnum | None
     can_see_participants: bool
     available_action: EventAvailableActionEnum
+    is_favorited: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +61,8 @@ class EventParticipantsPreview:
 @dataclass(frozen=True, slots=True)
 class EventDetails:
     event: Event
+    # The location this viewer may see; never read it straight from `event`.
+    location: EventLocationView
     tags: tuple[Tag, ...]
     organizer: EventDetailsOrganizer
     viewer: EventDetailsViewer

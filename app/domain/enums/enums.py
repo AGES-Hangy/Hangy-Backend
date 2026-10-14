@@ -25,6 +25,11 @@ class EventStatusEnum(StrEnum):
     FINISHED = "FINISHED"
 
 
+class LocationPrecisionEnum(StrEnum):
+    EXACT = "EXACT"
+    APPROXIMATE = "APPROXIMATE"
+
+
 class EventParticipantStatusEnum(StrEnum):
     PENDING = "PENDING"
     CONFIRMED = "CONFIRMED"

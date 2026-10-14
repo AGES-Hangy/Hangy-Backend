@@ -42,10 +42,12 @@ class EventDetailsAssembler:
             event_date=event.starts_at,
             end_date=event.ends_at,
             location=EventDetailsLocationOutput(
-                latitude=event.event_latitude,
-                longitude=event.event_longitude,
+                latitude=details.location.latitude,
+                longitude=details.location.longitude,
             ),
-            location_name=event.location_name,
+            location_name=details.location.label,
+            location_precision=details.location.precision,
+            location_radius_m=details.location.radius_m,
             privacy=event.event_privacy,
             status=event.event_status,
             cover_photo_url=event.cover_photo_url,
@@ -64,6 +66,7 @@ class EventDetailsAssembler:
                 participation_status=details.viewer.participation_status,
                 can_see_participants=details.viewer.can_see_participants,
                 available_action=details.viewer.available_action,
+                is_favorited=details.viewer.is_favorited,
             ),
             participants_preview=preview,
         )

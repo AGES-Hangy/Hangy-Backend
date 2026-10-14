@@ -126,7 +126,8 @@ docker buildx build --platform linux/arm64 --load --tag "$image" .
 # Allow slower ARM64 emulation on local runners without changing production checks.
 docker run --platform linux/arm64 -d --name hangy-smoke \
   --health-timeout=30s --health-start-period=120s \
-  -e DATABASE_URL=sqlite:// -e JWT_SECRET_KEY=smoke-test-only "$image"
+  -e DATABASE_URL=sqlite:// -e JWT_SECRET_KEY=smoke-test-only \
+  -e LOCATION_OBFUSCATION_SECRET=smoke-test-only "$image"
 healthy=false
 for attempt in {1..150}; do
   if [[ "$(docker inspect --format '{{.State.Health.Status}}' hangy-smoke)" == healthy ]]; then

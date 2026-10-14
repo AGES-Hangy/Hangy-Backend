@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app.domain.assemblers import ConnectionAssembler
 from app.domain.entities import User
 from app.domain.services import (
+    BlockService,
     CannotConnectToSelfError,
     ConnectionAlreadyExistsError,
     ConnectionService,
@@ -21,6 +22,7 @@ from app.presentation.dtos import (
 from app.presentation.mappers import ConnectionMapper
 from app.presentation.routes.auth import get_current_user
 from app.presentation.routes.events import get_notification_dispatcher
+from app.presentation.routes.users import get_block_service
 
 router = APIRouter(tags=["Connections"])
 
@@ -28,8 +30,12 @@ router = APIRouter(tags=["Connections"])
 def get_connection_service(
     db: Annotated[Session, Depends(get_db)],
     dispatcher: Annotated[NotificationDispatcher, Depends(get_notification_dispatcher)],
+    block_service: Annotated[BlockService, Depends(get_block_service)],
 ) -> ConnectionService:
-    return ConnectionService(repository=SqlAlchemyConnectionRepository(db, dispatcher))
+    return ConnectionService(
+        repository=SqlAlchemyConnectionRepository(db, dispatcher),
+        block_checker=block_service,
+    )
 
 
 @router.post(
@@ -55,7 +61,7 @@ def get_connection_service(
         },
         status.HTTP_404_NOT_FOUND: {
             "description": (
-                "O destinatário não existe, ou bloqueou o solicitante "
+                "O destinatário não existe, ou há bloqueio entre os dois "
                 "(mesmo erro nos dois casos, de propósito)."
             ),
             "content": {"application/json": {"example": {"detail": "User not found"}}},

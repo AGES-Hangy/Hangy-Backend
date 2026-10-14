@@ -1,6 +1,7 @@
 from app.domain.entities import (
     Event,
     EventInviteLink,
+    EventInvitePreview,
     EventParticipant,
     EventShare,
     User,
@@ -77,7 +78,7 @@ class EventAssembler:
             web_url=share.web_url,
             title=share.title,
             event_date=share.event_date,
-            location_name=share.location_name,
+            location_name=share.location.label,
             cover_photo_url=share.cover_photo_url,
         )
 
@@ -94,14 +95,15 @@ class EventAssembler:
         )
 
     @staticmethod
-    def to_invite_preview_dto(event: Event) -> EventInvitePreviewOutput:
+    def to_invite_preview_dto(preview: EventInvitePreview) -> EventInvitePreviewOutput:
+        event = preview.event
         if event.event_id is None:
             raise ValueError("A persisted event must have an id")
         return EventInvitePreviewOutput(
             event_id=event.event_id,
             title=event.event_title,
             event_date=event.starts_at,
-            location_name=event.location_name,
+            location_name=preview.location.label,
             cover_photo_url=event.cover_photo_url,
             privacy=event.event_privacy,
             requires_login=True,

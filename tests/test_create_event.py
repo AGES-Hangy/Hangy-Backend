@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.config import settings
 from app.domain.enums import UserRoleEnum, UserTypeEnum
+from app.domain.services.event_location import approximate_point
 from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import EventModel, TagModel, UserModel
 from app.main import app
@@ -277,3 +278,76 @@ def test_openapi_documents_the_event_creation(
     assert operation["responses"]["201"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/CreateEventOutput"
     }
+
+
+def test_an_event_is_saved_with_its_neighborhood_and_city(
+    client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    test_client, session_factory = client
+
+    response = test_client.post(
+        "/events",
+        json=payload(
+            location_neighborhood="  Moinhos de Vento ",
+            location_city="Porto Alegre",
+            privacy="PRIVATE",
+        ),
+        headers=auth_header(),
+    )
+
+    assert response.status_code == 201
+    # The response contract did not change: the labels are only persisted.
+    assert set(response.json()) == {
+        "event_id",
+        "title",
+        "status",
+        "privacy",
+        "event_date",
+        "creator",
+    }
+    with session_factory() as db:
+        event = db.get(EventModel, UUID(response.json()["event_id"]))
+        assert event is not None
+        assert event.location_neighborhood == "Moinhos de Vento"
+        assert event.location_city == "Porto Alegre"
+        assert event.location_name == "Parcao"
+
+
+@pytest.mark.parametrize("privacy", ["PUBLIC", "PRIVATE", "INVITE_ONLY"])
+def test_every_event_is_saved_with_an_approximate_point_of_its_own_id(
+    client: tuple[TestClient, sessionmaker[Session]],
+    privacy: str,
+) -> None:
+    test_client, session_factory = client
+
+    response = test_client.post(
+        "/events", json=payload(privacy=privacy), headers=auth_header()
+    )
+
+    assert response.status_code == 201
+    with session_factory() as db:
+        event = db.get(EventModel, UUID(response.json()["event_id"]))
+        assert event is not None
+        assert event.location_neighborhood is None
+        assert event.location_city is None
+        assert (event.event_latitude, event.event_longitude) == (-30.0277, -51.2287)
+        assert (event.approx_latitude, event.approx_longitude) == approximate_point(
+            event.event_id, -30.0277, -51.2287
+        )
+        assert (event.approx_latitude, event.approx_longitude) != (-30.0277, -51.2287)
+
+
+@pytest.mark.parametrize("field", ["location_neighborhood", "location_city"])
+def test_a_neighborhood_or_city_longer_than_120_characters_returns_422(
+    client: tuple[TestClient, sessionmaker[Session]],
+    field: str,
+) -> None:
+    test_client, session_factory = client
+
+    response = test_client.post(
+        "/events", json=payload(**{field: "a" * 121}), headers=auth_header()
+    )
+
+    assert response.status_code == 422
+    with session_factory() as db:
+        assert db.scalars(select(EventModel)).all() == []

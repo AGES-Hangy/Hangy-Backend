@@ -5,7 +5,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, create_engine, event, insert
+from sqlalchemy import Engine, create_engine, event, insert, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -190,14 +190,20 @@ def _add_photo(
     deleted_at: datetime | None = None,
     experience_deleted_at: datetime | None = None,
 ) -> None:
-    experience = EventExperienceModel(
-        experience_id=uuid4(),
-        event_participant_id=participant_id,
-        description="nice event",
-        deleted_at=experience_deleted_at,
+    experience = db.scalar(
+        select(EventExperienceModel).where(
+            EventExperienceModel.event_participant_id == participant_id
+        )
     )
-    db.add(experience)
-    db.flush()
+    if experience is None:
+        experience = EventExperienceModel(
+            experience_id=uuid4(),
+            event_participant_id=participant_id,
+            description="nice event",
+            deleted_at=experience_deleted_at,
+        )
+        db.add(experience)
+        db.flush()
     db.add(
         ExperienceImagesModel(
             photo_id=uuid4(),
@@ -459,8 +465,10 @@ def test_only_confirmed_participations_are_counted(
     ctx: Context, participant_status: EventParticipantStatusEnum
 ) -> None:
     user_id, headers = register_and_login(ctx.client)
-    future = _future_event(ctx.db, user_id)
-    ended = _ended_event(ctx.db, user_id)
+    # Someone else's events: an ended event the user created counts on its own.
+    organizer = _add_user(ctx.db, "organizer@hangy.com")
+    future = _future_event(ctx.db, organizer.user_id)
+    ended = _ended_event(ctx.db, organizer.user_id)
     _participate(ctx.db, user_id, future.event_id, participant_status)
     _participate(ctx.db, user_id, ended.event_id, participant_status)
     ctx.db.commit()
@@ -469,13 +477,28 @@ def test_only_confirmed_participations_are_counted(
 
 
 def test_other_users_participations_are_not_counted(ctx: Context) -> None:
-    user_id, headers = register_and_login(ctx.client)
+    _, headers = register_and_login(ctx.client)
     other = _add_user(ctx.db, "other@hangy.com")
-    _participate(ctx.db, other.user_id, _future_event(ctx.db, user_id).event_id)
-    _participate(ctx.db, other.user_id, _ended_event(ctx.db, user_id).event_id)
+    organizer = _add_user(ctx.db, "organizer@hangy.com")
+    future = _future_event(ctx.db, organizer.user_id)
+    ended = _ended_event(ctx.db, organizer.user_id)
+    _participate(ctx.db, other.user_id, future.event_id)
+    _participate(ctx.db, other.user_id, ended.event_id)
     ctx.db.commit()
 
     assert get_counts(ctx.client, headers) == {"past": 0, "confirmed": 0, "photos": 0}
+
+
+def test_past_counts_ended_events_the_user_created_once(ctx: Context) -> None:
+    user_id, headers = register_and_login(ctx.client)
+    # Created and attended: still a single event on the history tab.
+    _participate(ctx.db, user_id, _ended_event(ctx.db, user_id).event_id)
+    _ended_event(ctx.db, user_id)
+    # An upcoming event the user created belongs to `created`, not `past`.
+    _future_event(ctx.db, user_id)
+    ctx.db.commit()
+
+    assert get_counts(ctx.client, headers) == {"past": 2, "confirmed": 0, "photos": 0}
 
 
 def test_photos_count_only_active_images_of_the_user(ctx: Context) -> None:
@@ -484,10 +507,14 @@ def test_photos_count_only_active_images_of_the_user(ctx: Context) -> None:
     event_id = _ended_event(ctx.db, user_id).event_id
     mine = _participate(ctx.db, user_id, event_id)
     theirs = _participate(ctx.db, other.user_id, event_id)
+    deleted_event_id = _ended_event(ctx.db, user_id).event_id
+    mine_with_deleted_experience = _participate(ctx.db, user_id, deleted_event_id)
     _add_photo(ctx.db, mine.participant_id)
     _add_photo(ctx.db, mine.participant_id)
     _add_photo(ctx.db, mine.participant_id, deleted_at=NOW)
-    _add_photo(ctx.db, mine.participant_id, experience_deleted_at=NOW)
+    _add_photo(
+        ctx.db, mine_with_deleted_experience.participant_id, experience_deleted_at=NOW
+    )
     _add_photo(ctx.db, theirs.participant_id)
     ctx.db.commit()
 

@@ -67,6 +67,8 @@ def _create_event(
     db: Session,
     privacy: EventPrivacyEnum = EventPrivacyEnum.PUBLIC,
     status: EventStatusEnum = EventStatusEnum.PUBLISHED,
+    neighborhood: str | None = None,
+    city: str | None = None,
 ) -> tuple[UUID, UUID]:
     organizer_id = uuid4()
     event_id = uuid4()
@@ -89,6 +91,8 @@ def _create_event(
             event_latitude=-30.0277,
             event_longitude=-51.2287,
             location_name="Parcao",
+            location_neighborhood=neighborhood,
+            location_city=city,
             starts_at=now + timedelta(days=1),
             ends_at=now + timedelta(days=1, hours=2),
             event_status=status,
@@ -233,3 +237,26 @@ def test_openapi_documents_event_share(
     assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/EventShareOutput"
     }
+
+
+def test_private_event_preview_shows_the_neighborhood_not_the_address(
+    share_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    client, session_factory = share_client
+    with session_factory() as db:
+        event_id, organizer_id = _create_event(
+            db,
+            EventPrivacyEnum.PRIVATE,
+            neighborhood="Moinhos de Vento",
+            city="Porto Alegre",
+        )
+
+    # Even for the organizer: the preview is what whoever gets the link sees.
+    response = client.get(
+        f"/events/{event_id}/share",
+        headers=_authorization(organizer_id),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["location_name"] == "Moinhos de Vento, Porto Alegre"
+    assert response.json()["event_date"] is None

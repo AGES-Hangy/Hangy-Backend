@@ -1,23 +1,23 @@
 from __future__ import annotations
 
-import base64
-import uuid
 from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
 from app.domain.entities import Notification, UnreadNotificationCount
+from app.domain.services.pagination import (
+    InvalidPaginationError,
+    decode_cursor,
+    encode_cursor,
+)
 
 """NotificationService — list, count and mark notifications for a user."""
 
 __all__ = [
-    "InvalidPaginationError",
     "NotificationNotFoundError",
     "NotificationNotOwnedError",
     "NotificationRepository",
     "NotificationService",
-    "decode_cursor",
-    "encode_cursor",
 ]
 
 # ---------------------------------------------------------------------------
@@ -50,31 +50,6 @@ class NotificationNotFoundError(Exception):
 
 class NotificationNotOwnedError(Exception):
     """Raised when the notification belongs to another user."""
-
-
-class InvalidPaginationError(Exception):
-    """Raised when limit is out of bounds or cursor is malformed."""
-
-
-# ---------------------------------------------------------------------------
-# Cursor helpers (opaque base64 string encoding created_at + id)
-# ---------------------------------------------------------------------------
-
-_CURSOR_SEP = "|"
-
-
-def encode_cursor(created_at: datetime, notification_id: UUID) -> str:
-    raw = f"{created_at.isoformat()}{_CURSOR_SEP}{notification_id}"
-    return base64.urlsafe_b64encode(raw.encode()).decode()
-
-
-def decode_cursor(cursor: str) -> tuple[datetime, UUID]:
-    try:
-        raw = base64.urlsafe_b64decode(cursor.encode()).decode()
-        ts_part, id_part = raw.split(_CURSOR_SEP, 1)
-        return datetime.fromisoformat(ts_part), uuid.UUID(id_part)
-    except Exception as exc:
-        raise InvalidPaginationError("Malformed cursor") from exc
 
 
 # ---------------------------------------------------------------------------

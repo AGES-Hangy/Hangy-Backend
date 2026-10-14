@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import Uuid, and_, column, func, inspect, or_, select, table
+from sqlalchemy import Select, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -11,12 +11,29 @@ from app.domain.services.notification_dispatcher import NotificationDispatcher
 from app.infrastructure.repository.models import UserConnectionModel, UserModel
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
 
-USER_BLOCK_TABLE_NAME = "user_block"
-user_block = table(
-    USER_BLOCK_TABLE_NAME,
-    column("blocker_id", Uuid),
-    column("blocked_id", Uuid),
-)
+
+def select_active_between(
+    db: Session, user_a: UUID, user_b: UUID
+) -> Select[tuple[UserConnectionModel]]:
+    """Select the non-deleted connection of a pair, whoever requested it.
+
+    Matches the shape of the uq_user_connection_active_pair partial index
+    (LEAST/GREATEST on Postgres) so the lookup can use it, instead of an
+    OR'd pair of ANDs that the planner can't.
+    """
+    low_id, high_id = sorted((user_a, user_b))
+    # Postgres has no multi-arg min/max; SQLite has no least/greatest.
+    if db.get_bind().dialect.name == "postgresql":
+        least_fn, greatest_fn = func.least, func.greatest
+    else:
+        least_fn, greatest_fn = func.min, func.max
+    return select(UserConnectionModel).where(
+        UserConnectionModel.deleted_at.is_(None),
+        least_fn(UserConnectionModel.requester_id, UserConnectionModel.receiver_id)
+        == low_id,
+        greatest_fn(UserConnectionModel.requester_id, UserConnectionModel.receiver_id)
+        == high_id,
+    )
 
 
 class SqlAlchemyConnectionRepository:
@@ -42,63 +59,8 @@ class SqlAlchemyConnectionRepository:
         return SqlAlchemyUserRepository._to_entity(model) if model is not None else None
 
     def find_active_between(self, user_a: UUID, user_b: UUID) -> UserConnection | None:
-        # Matches the shape of the uq_user_connection_active_pair partial
-        # index (LEAST/GREATEST on Postgres) so the lookup can use it,
-        # instead of an OR'd pair of ANDs that the planner can't.
-        low_id, high_id = sorted((user_a, user_b))
-        least_fn, greatest_fn = self._pair_functions()
-        model = self.db.scalar(
-            select(UserConnectionModel).where(
-                UserConnectionModel.deleted_at.is_(None),
-                least_fn(
-                    UserConnectionModel.requester_id, UserConnectionModel.receiver_id
-                )
-                == low_id,
-                greatest_fn(
-                    UserConnectionModel.requester_id, UserConnectionModel.receiver_id
-                )
-                == high_id,
-            )
-        )
+        model = self.db.scalar(select_active_between(self.db, user_a, user_b))
         return self._to_entity(model) if model is not None else None
-
-    def _pair_functions(self):
-        """Postgres has no multi-arg min/max; SQLite has no least/greatest."""
-        if self.db.get_bind().dialect.name == "postgresql":
-            return func.least, func.greatest
-        return func.min, func.max
-
-    def is_blocked(self, user_a: UUID, user_b: UUID) -> bool:
-        """Read task 087's table without owning its model or migration.
-
-        The dependency is not yet present on ``develop``. A lightweight table
-        clause keeps this task migration-free and starts enforcing the rule
-        as soon as ``user_block`` lands. Checked both ways: either side
-        having blocked the other hides the receiver from the requester.
-        """
-        bind = self.db.get_bind()
-        if not inspect(bind).has_table(USER_BLOCK_TABLE_NAME):
-            return False
-
-        return (
-            self.db.scalar(
-                select(func.count())
-                .select_from(user_block)
-                .where(
-                    or_(
-                        and_(
-                            user_block.c.blocker_id == user_a,
-                            user_block.c.blocked_id == user_b,
-                        ),
-                        and_(
-                            user_block.c.blocker_id == user_b,
-                            user_block.c.blocked_id == user_a,
-                        ),
-                    )
-                )
-            )
-            > 0
-        )
 
     def create(self, requester_id: UUID, receiver_id: UUID) -> UserConnection:
         model = UserConnectionModel(

@@ -1,26 +1,23 @@
 from uuid import UUID
 
-from sqlalchemy import Uuid, column, func, inspect, select, table
+from sqlalchemy import exists, func, select
 from sqlalchemy.orm import Session, joinedload
 
 from app.domain.entities import (
-    Event,
     EventDetailsData,
     EventDetailsOrganizer,
     EventDetailsParticipant,
     Tag,
 )
 from app.domain.enums import EventParticipantStatusEnum
+from app.infrastructure.repository.event import SqlAlchemyEventRepository
 from app.infrastructure.repository.models import (
+    EventFavoriteModel,
     EventModel,
     EventParticipantModel,
 )
-
-USER_BLOCK_TABLE_NAME = "user_block"
-user_block = table(
-    USER_BLOCK_TABLE_NAME,
-    column("blocker_id", Uuid),
-    column("blocked_id", Uuid),
+from app.infrastructure.repository.models.user_block_model import (
+    UserBlockModel,
 )
 
 
@@ -47,12 +44,21 @@ class SqlAlchemyEventDetailsRepository:
             .correlate(EventModel)
             .scalar_subquery()
         )
+        viewer_favorited = (
+            exists()
+            .where(
+                EventFavoriteModel.event_id == EventModel.event_id,
+                EventFavoriteModel.user_id == viewer_id,
+            )
+            .correlate(EventModel)
+        )
         row = (
             self.db.execute(
                 select(
                     EventModel,
                     confirmed_count.label("confirmed_count"),
                     viewer_participation_status.label("viewer_participation_status"),
+                    viewer_favorited.label("viewer_favorited"),
                 )
                 .where(
                     EventModel.event_id == event_id,
@@ -72,35 +78,26 @@ class SqlAlchemyEventDetailsRepository:
         if row is None:
             return None
 
-        model, participant_count, participation_status = row
+        model, participant_count, participation_status, favorited = row
         return self._to_entity(
             model=model,
             viewer_participation_status=participation_status,
             confirmed_participants_count=participant_count,
-            organizer_blocked_viewer=self._organizer_blocked_viewer(
+            organizer_blocked_viewer=self.organizer_blocked_viewer(
                 organizer_id=model.event_creator_id,
                 viewer_id=viewer_id,
             ),
+            viewer_favorited=favorited,
         )
 
-    def _organizer_blocked_viewer(self, organizer_id: UUID, viewer_id: UUID) -> bool:
-        """Read task 087's table without owning its model or migration.
-
-        The dependency is not yet present on ``develop``. A lightweight table
-        clause keeps this task migration-free and starts enforcing the rule as
-        soon as ``user_block`` lands.
-        """
-        bind = self.db.get_bind()
-        if not inspect(bind).has_table(USER_BLOCK_TABLE_NAME):
-            return False
-
+    def organizer_blocked_viewer(self, organizer_id: UUID, viewer_id: UUID) -> bool:
         return (
             self.db.scalar(
                 select(func.count())
-                .select_from(user_block)
+                .select_from(UserBlockModel)
                 .where(
-                    user_block.c.blocker_id == organizer_id,
-                    user_block.c.blocked_id == viewer_id,
+                    UserBlockModel.blocker_id == organizer_id,
+                    UserBlockModel.blocked_id == viewer_id,
                 )
             )
             > 0
@@ -112,6 +109,7 @@ class SqlAlchemyEventDetailsRepository:
         viewer_participation_status: EventParticipantStatusEnum | None,
         confirmed_participants_count: int,
         organizer_blocked_viewer: bool,
+        viewer_favorited: bool,
     ) -> EventDetailsData:
         participants = tuple(
             sorted(
@@ -127,7 +125,7 @@ class SqlAlchemyEventDetailsRepository:
             )
         )
         return EventDetailsData(
-            event=SqlAlchemyEventDetailsRepository._to_event_entity(model),
+            event=SqlAlchemyEventRepository.to_entity(model),
             tags=tuple(
                 Tag(
                     tag_id=tag.tag_id,
@@ -152,6 +150,7 @@ class SqlAlchemyEventDetailsRepository:
             confirmed_participants_count=confirmed_participants_count,
             confirmed_participants=participants,
             organizer_blocked_viewer=organizer_blocked_viewer,
+            viewer_favorited=viewer_favorited,
         )
 
     @staticmethod
@@ -166,25 +165,4 @@ class SqlAlchemyEventDetailsRepository:
             avatar_url=model.user.profile_photo_url,
             status=model.status,
             requested_at=model.joined_at,
-        )
-
-    @staticmethod
-    def _to_event_entity(model: EventModel) -> Event:
-        return Event(
-            event_id=model.event_id,
-            event_creator_id=model.event_creator_id,
-            event_title=model.event_title,
-            event_latitude=model.event_latitude,
-            event_longitude=model.event_longitude,
-            starts_at=model.starts_at,
-            ends_at=model.ends_at,
-            event_status=model.event_status,
-            event_privacy=model.event_privacy,
-            created_at=model.created_at,
-            updated_at=model.updated_at,
-            event_description=model.event_description,
-            location_name=model.location_name,
-            max_participants=model.max_participants,
-            cover_photo_url=model.cover_photo_url,
-            deleted_at=model.deleted_at,
         )

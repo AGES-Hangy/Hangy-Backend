@@ -18,6 +18,8 @@ class EventMapper:
             event_privacy=dto.privacy,
             event_description=dto.description,
             location_name=dto.location_name,
+            location_neighborhood=dto.location_neighborhood,
+            location_city=dto.location_city,
             max_participants=dto.max_participants,
             cover_photo_url=dto.cover_photo_url,
             # dict.fromkeys drops duplicates without losing the client's order.
@@ -36,6 +38,8 @@ class EventMapper:
                 dto.location.longitude if dto.location is not None else None
             ),
             location_name=dto.location_name,
+            location_neighborhood=dto.location_neighborhood,
+            location_city=dto.location_city,
             starts_at=(
                 EventMapper._as_utc(dto.event_date)
                 if dto.event_date is not None
