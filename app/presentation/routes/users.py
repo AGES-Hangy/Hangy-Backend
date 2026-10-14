@@ -18,6 +18,7 @@ from app.domain.services import (
     InvalidUserEventsTabError,
     UserAlreadyBlockedError,
     UserEventsService,
+    UserNotBlockedError,
     UserPhotosService,
 )
 from app.domain.services.users import UserNotFoundError, UsersService
@@ -131,6 +132,49 @@ def block_user(
     except UserAlreadyBlockedError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail="User already blocked"
+        ) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.delete(
+    "/users/{user_id}/block",
+    status_code=status.HTTP_204_NO_CONTENT,
+    tags=["Users"],
+    summary="Desbloquear um usuário",
+    description=(
+        "Remove o bloqueio que o usuário logado fez ao usuário informado. O "
+        "desbloqueio não restaura a conexão desfeita pelo bloqueio: ela "
+        "precisa ser refeita pelo usuário. Um bloqueio feito pelo outro "
+        "usuário não pode ser removido por aqui. Nenhuma notificação é enviada."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": (
+                "Usuário inexistente ou não estava bloqueado pelo usuário logado."
+            ),
+            "content": {"application/json": {"example": {"detail": "User not found"}}},
+        },
+    },
+)
+def unblock_user(
+    user_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    block_service: Annotated[BlockService, Depends(get_block_service)],
+) -> Response:
+    assert current_user.user_id is not None
+    try:
+        block_service.unblock(current_user.user_id, user_id)
+    except UserNotBlockedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         ) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -404,4 +448,5 @@ __all__ = [
     "read_current_user_events",
     "read_current_user_photos",
     "router",
+    "unblock_user",
 ]
