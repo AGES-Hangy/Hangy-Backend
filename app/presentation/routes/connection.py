@@ -227,6 +227,7 @@ def list_my_connections(
         ) from exc
     return ConnectionAssembler.to_connections_dto(page)
 
+
 @router.delete(
     "/connections/{connection_id}",
     status_code=status.HTTP_204_NO_CONTENT,

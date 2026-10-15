@@ -215,6 +215,7 @@ def test_send_connection_request_to_blocked_user_returns_404(
     assert response.status_code == 404
     assert response.json() == {"detail": "User not found"}
 
+
 def open_db() -> AbstractContextManager[Session]:
     # Reuses the in-memory session factory the `client` fixture installed.
     return contextmanager(app.dependency_overrides[get_db])()

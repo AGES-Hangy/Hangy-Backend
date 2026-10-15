@@ -67,6 +67,7 @@ class ConnectionNotFoundError(Exception):
 class NotConnectionReceiverError(Exception):
     """Raised when someone other than the receiver tries to accept or reject."""
 
+
 class NotConnectionParticipantError(Exception):
     """Raised when someone who is neither requester nor receiver undoes it."""
 
