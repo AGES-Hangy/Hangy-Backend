@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import Select, case, func, or_, select
@@ -54,7 +54,10 @@ class SqlAlchemyConnectionRepository:
     def get_by_id_for_update(self, connection_id: UUID) -> UserConnection | None:
         model = self.db.scalar(
             select(UserConnectionModel)
-            .where(UserConnectionModel.connection_id == connection_id)
+            .where(
+                UserConnectionModel.connection_id == connection_id,
+                UserConnectionModel.deleted_at.is_(None),
+            )
             .with_for_update()
         )
         return self._to_entity(model) if model is not None else None
@@ -249,6 +252,18 @@ class SqlAlchemyConnectionRepository:
         self.db.commit()
         self.db.refresh(model)
         return self._to_entity(model)
+
+    def soft_delete(self, connection_id: UUID) -> None:
+        model = self.db.scalar(
+            select(UserConnectionModel).where(
+                UserConnectionModel.connection_id == connection_id,
+                UserConnectionModel.deleted_at.is_(None),
+            )
+        )
+        if model is None:
+            raise ValueError("A connection validated by the service must exist")
+        model.deleted_at = datetime.now(UTC)
+        self.db.commit()
 
     @staticmethod
     def _to_entity(model: UserConnectionModel) -> UserConnection:
