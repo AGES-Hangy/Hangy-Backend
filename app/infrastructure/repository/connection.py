@@ -5,7 +5,12 @@ from sqlalchemy import Select, case, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.domain.entities import ConnectionSummary, User, UserConnection
+from app.domain.entities import (
+    ConnectionSummary,
+    PendingConnection,
+    User,
+    UserConnection,
+)
 from app.domain.enums import NotificationTypeEnum, UserConnectionStatusEnum
 from app.domain.services.connection import ConnectionAlreadyExistsError
 from app.domain.services.notification_dispatcher import NotificationDispatcher
@@ -66,6 +71,60 @@ class SqlAlchemyConnectionRepository:
     def find_active_between(self, user_a: UUID, user_b: UUID) -> UserConnection | None:
         model = self.db.scalar(select_active_between(self.db, user_a, user_b))
         return self._to_entity(model) if model is not None else None
+
+    def list_pending_received(
+        self,
+        receiver_id: UUID,
+        *,
+        limit: int,
+        cursor_created_at: datetime | None,
+        cursor_connection_id: UUID | None,
+    ) -> list[PendingConnection]:
+        """List the unanswered requests the user received, newest first.
+
+        Requests from deleted accounts or from a user on either side of a
+        block are left out, so the list never offers a request that can't be
+        acted on.
+        """
+        # Imported here: block.py already imports this module at load time.
+        from app.infrastructure.repository.block import block_exists_between
+
+        stmt = (
+            select(UserConnectionModel, UserModel.name, UserModel.profile_photo_url)
+            .join(UserModel, UserModel.user_id == UserConnectionModel.requester_id)
+            .where(
+                UserConnectionModel.receiver_id == receiver_id,
+                UserConnectionModel.status == UserConnectionStatusEnum.PENDING,
+                UserConnectionModel.deleted_at.is_(None),
+                UserModel.deleted_at.is_(None),
+                ~block_exists_between(UserConnectionModel.requester_id, receiver_id),
+            )
+            .order_by(
+                UserConnectionModel.created_at.desc(),
+                UserConnectionModel.connection_id.desc(),
+            )
+        )
+
+        if cursor_created_at is not None and cursor_connection_id is not None:
+            stmt = stmt.where(
+                or_(
+                    UserConnectionModel.created_at < cursor_created_at,
+                    (UserConnectionModel.created_at == cursor_created_at)
+                    & (UserConnectionModel.connection_id < cursor_connection_id),
+                )
+            )
+
+        rows = self.db.execute(stmt.limit(limit)).all()
+        return [
+            PendingConnection(
+                connection_id=connection.connection_id,
+                requester_id=connection.requester_id,
+                requester_name=name,
+                requester_photo_url=photo_url,
+                created_at=connection.created_at,
+            )
+            for connection, name, photo_url in rows
+        ]
 
     def list_confirmed(
         self,

@@ -2,7 +2,14 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
-from app.domain.entities import ConnectionsPage, ConnectionSummary, User, UserConnection
+from app.domain.entities import (
+    ConnectionsPage,
+    ConnectionSummary,
+    PendingConnection,
+    PendingConnectionsPage,
+    User,
+    UserConnection,
+)
 from app.domain.enums import UserConnectionStatusEnum, UserTypeEnum
 from app.domain.services.block import BlockChecker
 from app.domain.services.pagination import (
@@ -30,6 +37,15 @@ class ConnectionRepository(Protocol):
     def find_active_between(
         self, user_a: UUID, user_b: UUID
     ) -> UserConnection | None: ...
+
+    def list_pending_received(
+        self,
+        receiver_id: UUID,
+        *,
+        limit: int,
+        cursor_created_at: datetime | None,
+        cursor_connection_id: UUID | None,
+    ) -> list[PendingConnection]: ...
 
     def list_confirmed(
         self,
@@ -115,6 +131,40 @@ class ConnectionService:
         if connection.status is not UserConnectionStatusEnum.PENDING:
             raise InvalidConnectionStatusTransitionError
         return self.repository.reject(connection_id)
+
+    def get_pending_requests(
+        self,
+        user_id: UUID,
+        *,
+        limit: int = DEFAULT_CONNECTIONS_LIMIT,
+        cursor: str | None = None,
+    ) -> PendingConnectionsPage:
+        if not MIN_CONNECTIONS_LIMIT <= limit <= MAX_CONNECTIONS_LIMIT:
+            raise InvalidPaginationError(
+                f"limit must be between {MIN_CONNECTIONS_LIMIT} "
+                f"and {MAX_CONNECTIONS_LIMIT}"
+            )
+
+        cursor_created_at: datetime | None = None
+        cursor_connection_id: UUID | None = None
+        if cursor:
+            cursor_created_at, cursor_connection_id = decode_cursor(cursor)
+
+        requests = self.repository.list_pending_received(
+            user_id,
+            limit=limit + 1,
+            cursor_created_at=cursor_created_at,
+            cursor_connection_id=cursor_connection_id,
+        )
+
+        has_more = len(requests) > limit
+        items = requests[:limit]
+        next_cursor = None
+        if has_more:
+            last = items[-1]
+            next_cursor = encode_cursor(last.created_at, last.connection_id)
+
+        return PendingConnectionsPage(items=tuple(items), next_cursor=next_cursor)
 
     def list_connections(
         self,

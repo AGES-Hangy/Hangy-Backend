@@ -20,6 +20,7 @@ from app.infrastructure.repository import get_db
 from app.infrastructure.repository.connection import SqlAlchemyConnectionRepository
 from app.presentation.dtos import (
     ConnectionsOutput,
+    PendingConnectionsOutput,
     SendConnectionRequestInput,
     SendConnectionRequestOutput,
 )
@@ -112,6 +113,68 @@ def send_connection_request(
             detail="Connection already exists",
         ) from error
     return ConnectionAssembler.to_created_dto(connection)
+
+
+@router.get(
+    "/users/me/connections/pending",
+    response_model=PendingConnectionsOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Listar as solicitações de conexão recebidas e não respondidas",
+    description=(
+        "Lista as solicitações de conexão PENDING em que o usuário autenticado "
+        "é o destinatário, da mais recente para a mais antiga, para a central "
+        "de notificações. `user` é sempre quem enviou a solicitação. "
+        "Solicitações desfeitas, de contas excluídas ou entre usuários com "
+        "bloqueio (em qualquer direção) não aparecem. Paginação por cursor "
+        "opaco (`next_cursor`)."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "`limit` ou `cursor` inválido.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid pagination parameters"}
+                }
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "A conta associada ao token foi excluída.",
+            "content": {
+                "application/json": {"example": {"detail": "Account has been deleted"}}
+            },
+        },
+    },
+)
+def list_pending_connection_requests(
+    current_user: Annotated[User, Depends(get_current_user)],
+    connection_service: Annotated[ConnectionService, Depends(get_connection_service)],
+    limit: Annotated[
+        int,
+        BeforeValidator(_parse_limit),
+        Query(description="Tamanho da página (1–100)."),
+    ] = DEFAULT_CONNECTIONS_LIMIT,
+    cursor: Annotated[
+        str | None, Query(description="Cursor opaco de paginação.")
+    ] = None,
+) -> PendingConnectionsOutput:
+    try:
+        page = connection_service.get_pending_requests(
+            current_user.user_id, limit=limit, cursor=cursor
+        )
+    except InvalidPaginationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters",
+        ) from error
+    return ConnectionAssembler.to_pending_dto(page)
 
 
 @router.get(

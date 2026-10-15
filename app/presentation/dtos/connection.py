@@ -18,6 +18,23 @@ class SendConnectionRequestOutput(BaseModel):
     created_at: datetime
 
 
+class PendingConnectionUserOutput(BaseModel):
+    id: UUID
+    name: str | None
+    photo_url: str | None
+
+
+class PendingConnectionOutput(BaseModel):
+    connection_id: UUID
+    user: PendingConnectionUserOutput
+    created_at: datetime
+
+
+class PendingConnectionsOutput(BaseModel):
+    items: list[PendingConnectionOutput]
+    next_cursor: str | None
+
+
 class ConnectionSummaryOutput(BaseModel):
     user_id: UUID
     name: str | None
