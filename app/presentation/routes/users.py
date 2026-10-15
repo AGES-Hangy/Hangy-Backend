@@ -5,10 +5,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BeforeValidator
 from sqlalchemy.orm import Session
 
-from app.domain.assemblers import UserEventsAssembler, UserPhotosAssembler
+from app.domain.assemblers import (
+    BlockAssembler,
+    UserEventsAssembler,
+    UserPhotosAssembler,
+)
 from app.domain.assemblers.users import UsersAssembler
 from app.domain.entities import User
 from app.domain.services import (
+    DEFAULT_BLOCKED_USERS_LIMIT,
     DEFAULT_USER_EVENTS_LIMIT,
     DEFAULT_USER_PHOTOS_LIMIT,
     BlockedUserNotFoundError,
@@ -29,6 +34,7 @@ from app.infrastructure.repository.user_events import SqlAlchemyUserEventsReposi
 from app.infrastructure.repository.user_photos import SqlAlchemyUserPhotosRepository
 from app.infrastructure.repository.user_profile import SqlAlchemyUserProfileRepository
 from app.presentation.dtos import (
+    BlockedUsersOutput,
     UserEventsOutput,
     UserEventsTabsOutput,
     UserPhotosOutput,
@@ -177,6 +183,62 @@ def unblock_user(
             status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
         ) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/users/me/blocked",
+    response_model=BlockedUsersOutput,
+    status_code=status.HTTP_200_OK,
+    tags=["Users"],
+    summary="Listar os usuários bloqueados pelo usuário autenticado",
+    description=(
+        "Lista, do bloqueio mais recente para o mais antigo, os usuários que o "
+        "usuário autenticado bloqueou, para a tela de gerenciamento de "
+        "bloqueios. Quem bloqueou o usuário autenticado não aparece aqui. "
+        "Contas excluídas não entram."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "`limit` ou `cursor` inválido.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid pagination parameters"}
+                }
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+    },
+)
+def read_blocked_users(
+    current_user: Annotated[User, Depends(get_current_user)],
+    block_service: Annotated[BlockService, Depends(get_block_service)],
+    limit: Annotated[
+        int,
+        BeforeValidator(_parse_limit),
+        Query(description="Tamanho da página (1–100)."),
+    ] = DEFAULT_BLOCKED_USERS_LIMIT,
+    cursor: Annotated[
+        str | None, Query(description="Cursor opaco de paginação.")
+    ] = None,
+) -> BlockedUsersOutput:
+    assert current_user.user_id is not None
+    try:
+        page = block_service.list_blocked(
+            current_user.user_id, limit=limit, cursor=cursor
+        )
+    except InvalidPaginationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters",
+        ) from error
+    return BlockAssembler.to_blocked_users_dto(page)
 
 
 @router.get(
@@ -445,6 +507,7 @@ __all__ = [
     "get_user_profile",
     "get_users_service",
     "list_user_events",
+    "read_blocked_users",
     "read_current_user_events",
     "read_current_user_photos",
     "router",
