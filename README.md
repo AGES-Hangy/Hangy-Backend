@@ -137,6 +137,9 @@ remover os dados locais, execute
 
 ## Deploy na AWS
 
+Para usar o armazenamento de imagens e o módulo privado no backend, consulte o
+[módulo S3 e suas variáveis de ambiente](docs/s3.md).
+
 O desenvolvimento e os merges acontecem no GitHub. O espelhamento sobrescreve
 `main`, `develop` e tags no GitLab com force push. Quando a `main` protegida de
 `2026-2/2jk-4jk/hangy/hangy-backend` na AGES é atualizada, o

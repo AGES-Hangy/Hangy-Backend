@@ -59,6 +59,16 @@ resource "aws_iam_role_policy" "ec2" {
         Action   = ["secretsmanager:GetSecretValue"]
         Resource = aws_secretsmanager_secret.app.arn
       },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = aws_s3_bucket.app.arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"]
+        Resource = "${aws_s3_bucket.app.arn}/*"
+      },
     ]
   })
 }
