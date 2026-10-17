@@ -1,4 +1,5 @@
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BeforeValidator
@@ -6,12 +7,16 @@ from sqlalchemy.orm import Session
 
 from app.domain.assemblers import ConnectionAssembler
 from app.domain.entities import User
+from app.domain.enums import UserConnectionStatusEnum
 from app.domain.services import (
     BlockService,
     CannotConnectToSelfError,
     ConnectionAlreadyExistsError,
+    ConnectionNotFoundError,
     ConnectionService,
+    InvalidConnectionStatusTransitionError,
     InvalidPaginationError,
+    NotConnectionReceiverError,
     NotificationDispatcher,
     ReceiverNotFoundError,
 )
@@ -19,6 +24,8 @@ from app.domain.services.connection import DEFAULT_CONNECTIONS_LIMIT
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.connection import SqlAlchemyConnectionRepository
 from app.presentation.dtos import (
+    AnswerConnectionRequestInput,
+    AnswerConnectionRequestOutput,
     ConnectionsOutput,
     PendingConnectionsOutput,
     SendConnectionRequestInput,
@@ -113,6 +120,70 @@ def send_connection_request(
             detail="Connection already exists",
         ) from error
     return ConnectionAssembler.to_created_dto(connection)
+
+
+@router.patch(
+    "/connections/{connection_id}",
+    response_model=AnswerConnectionRequestOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Aceitar ou recusar uma solicitação de conexão recebida",
+    description=(
+        "Responde a uma solicitação PENDING em que o usuário autenticado é o "
+        "destinatário. Aceitar notifica o solicitante; recusar não gera "
+        "notificação."
+    ),
+    responses={
+        status.HTTP_403_FORBIDDEN: {
+            "description": "O usuário autenticado não é o destinatário da conexão.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Only the receiver can answer"}
+                }
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Conexão não encontrada.",
+            "content": {
+                "application/json": {"example": {"detail": "Connection not found"}}
+            },
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": (
+                "A conexão já foi respondida ou desfeita (não está PENDING)."
+            ),
+            "content": {
+                "application/json": {"example": {"detail": "Connection is not pending"}}
+            },
+        },
+    },
+)
+def answer_connection_request(
+    connection_id: UUID,
+    payload: AnswerConnectionRequestInput,
+    current_user: Annotated[User, Depends(get_current_user)],
+    connection_service: Annotated[ConnectionService, Depends(get_connection_service)],
+) -> AnswerConnectionRequestOutput:
+    try:
+        if payload.status is UserConnectionStatusEnum.CONFIRMED:
+            connection = connection_service.accept(connection_id, current_user.user_id)
+        else:
+            connection = connection_service.reject(connection_id, current_user.user_id)
+    except ConnectionNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Connection not found",
+        ) from error
+    except NotConnectionReceiverError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the receiver can answer",
+        ) from error
+    except InvalidConnectionStatusTransitionError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Connection is not pending",
+        ) from error
+    return ConnectionAssembler.to_answered_dto(connection)
 
 
 @router.get(

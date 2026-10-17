@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -16,6 +17,20 @@ class SendConnectionRequestOutput(BaseModel):
     receiver_id: UUID
     status: UserConnectionStatusEnum
     created_at: datetime
+
+
+class AnswerConnectionRequestInput(BaseModel):
+    status: Literal[
+        UserConnectionStatusEnum.CONFIRMED, UserConnectionStatusEnum.REJECTED
+    ]
+
+
+class AnswerConnectionRequestOutput(BaseModel):
+    connection_id: UUID
+    requester_id: UUID
+    receiver_id: UUID
+    status: UserConnectionStatusEnum
+    updated_at: datetime
 
 
 class PendingConnectionUserOutput(BaseModel):
