@@ -113,6 +113,7 @@ def create_experience(
         ) from error
     return ExperienceAssembler.to_created_dto(experience, event_id)
 
+
 @router.get(
     "/{event_id}/photos",
     response_model=EventPhotosOutput,
