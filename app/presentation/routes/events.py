@@ -29,7 +29,9 @@ from app.domain.services import (
     EventStartsInThePastError,
     EventTagNotFoundError,
     FavoriteEventNotFoundError,
+    ImageUploadService,
     InvalidAccessTokenError,
+    InvalidCoverPhotoUrlError,
     InvalidEventCoordinatesError,
     InvalidParticipantStatusTransitionError,
     NotEventOrganizerError,
@@ -117,10 +119,15 @@ from app.presentation.routes.auth import (
     get_auth_service,
     get_current_user,
 )
+from app.presentation.routes.uploads import get_image_upload_service
 
 router = APIRouter(prefix="/events", tags=["Events"])
 
 BAD_REQUEST_EXAMPLES = {
+    "invalid_cover": {
+        "summary": "Capa fora do bucket do projeto",
+        "value": {"detail": "Invalid cover photo URL"},
+    },
     "past_date": {
         "summary": "Data no passado",
         "value": {"detail": "Event date must be in the future"},
@@ -158,8 +165,14 @@ def get_notification_dispatcher(
 def get_events_service(
     dispatcher: Annotated[NotificationDispatcher, Depends(get_notification_dispatcher)],
     db: Annotated[Session, Depends(get_db)],
+    image_upload_service: Annotated[
+        ImageUploadService, Depends(get_image_upload_service)
+    ],
 ) -> EventsService:
-    return EventsService(repository=SqlAlchemyEventRepository(db, dispatcher))
+    return EventsService(
+        repository=SqlAlchemyEventRepository(db, dispatcher),
+        image_upload_service=image_upload_service,
+    )
 
 
 def get_event_details_service(
@@ -253,6 +266,10 @@ def create_event(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid event coordinates",
+        ) from error
+    except InvalidCoverPhotoUrlError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cover photo URL"
         ) from error
     except TooManyEventTagsError as error:
         raise HTTPException(
@@ -759,7 +776,8 @@ def update_event_participant(
     summary="Editar um evento",
     responses={
         status.HTTP_400_BAD_REQUEST: {
-            "description": "A nova data, horario ou local e invalido.",
+            "description": "A nova data, horario, local ou capa e invalido.",
+            "content": {"application/json": {"examples": BAD_REQUEST_EXAMPLES}},
         },
         status.HTTP_403_FORBIDDEN: {
             "description": "Apenas o organizador pode editar o evento.",
@@ -806,6 +824,10 @@ def update_event(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid event coordinates",
+        ) from error
+    except InvalidCoverPhotoUrlError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cover photo URL"
         ) from error
     except TooManyEventTagsError as error:
         raise HTTPException(
