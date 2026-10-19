@@ -28,7 +28,6 @@ class SqlAlchemyNearbyRepository:
         latitude: float,
         longitude: float,
         radius_m: int,
-        limit: int,
     ) -> list[NearbyEventCandidate]:
         latitude_delta = radius_m / METERS_PER_DEGREE
         min_latitude = max(-90.0, latitude - latitude_delta)

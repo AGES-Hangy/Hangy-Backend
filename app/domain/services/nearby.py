@@ -22,7 +22,6 @@ class NearbyRepository(Protocol):
         latitude: float,
         longitude: float,
         radius_m: int,
-        limit: int,
     ) -> Sequence[NearbyEventCandidate]: ...
 
 
@@ -64,7 +63,6 @@ class NearbyService:
             latitude=latitude,
             longitude=longitude,
             radius_m=radius_m,
-            limit=limit,
         )
         nearby: list[NearbyEvent] = []
         for candidate in candidates:

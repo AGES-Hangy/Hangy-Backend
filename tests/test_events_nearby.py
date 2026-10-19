@@ -202,12 +202,12 @@ def test_nearby_hides_private_location_until_confirmation(
     item = response.json()["items"][0]
     assert item["privacy"] == "PRIVATE"
     assert item["location_precision"] == "APPROXIMATE"
-    assert item["location_radius_m"] is not None
+    assert item["location_radius_m"] == 500
     assert item["distance_m"] % 100 == 0
     assert item["location_name"] == "Centro, Porto Alegre"
-    assert (item["location"]["latitude"], item["location"]["longitude"]) != (
-        *real_coordinates,
-    )
+    assert item["location"]["latitude"] != real_coordinates[0]
+    assert item["location"]["longitude"] != real_coordinates[1]
+    assert "Endereco real" not in response.text
     assert item["participants_count"] is None
 
 
@@ -460,3 +460,124 @@ def test_nearby_rejects_invalid_coordinates_and_radius(
     assert invalid_coordinates.json() == {"detail": "Invalid coordinates"}
     assert excessive_radius.status_code == 400
     assert excessive_radius.json() == {"detail": "Radius exceeds maximum"}
+
+
+def _add_user(db: Session, user_id) -> None:
+    db.add(
+        UserModel(
+            user_id=user_id,
+            user_type=UserTypeEnum.PERSONAL,
+            role=UserRoleEnum.USER,
+            email=f"{user_id}@hangy.test",
+            password_hash="hash",
+        )
+    )
+
+
+def test_nearby_filters_private_event_by_approximate_point(
+    events_client: tuple[TestClient, object],
+) -> None:
+    client, session_factory = events_client
+    viewer_id = uuid4()
+    organizer_id = uuid4()
+    with session_factory() as db:
+        _add_user(db, viewer_id)
+        _add_user(db, organizer_id)
+        event = _add_event(
+            db,
+            organizer_id,
+            longitude=10,
+            latitude=10,
+            privacy=EventPrivacyEnum.PRIVATE,
+        )
+        db.commit()
+        event_id = event.event_id
+        approximate_point = (event.approx_latitude, event.approx_longitude)
+
+    headers = {"Authorization": f"Bearer {_token_for(viewer_id)}"}
+    # The approximate point is 150-350 m away from the real one, so a 100 m
+    # radius around one of them never reaches the other.
+    around_real_point = client.get(
+        "/events/nearby",
+        params={"latitude": 10, "longitude": 10, "radius_m": 100},
+        headers=headers,
+    )
+    around_approximate_point = client.get(
+        "/events/nearby",
+        params={
+            "latitude": approximate_point[0],
+            "longitude": approximate_point[1],
+            "radius_m": 100,
+        },
+        headers=headers,
+    )
+
+    assert around_real_point.status_code == 200
+    assert around_real_point.json() == {"items": []}
+    assert around_approximate_point.status_code == 200
+    assert [item["event_id"] for item in around_approximate_point.json()["items"]] == [
+        str(event_id)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("search_latitude", "search_longitude", "event_latitude", "event_longitude"),
+    [
+        (0, -179.995, 0, 179.995),
+        (0, 179.995, 0, -179.995),
+        (89.95, 0, 89.95, 90),
+    ],
+    ids=["west-of-antimeridian", "east-of-antimeridian", "near-pole"],
+)
+def test_nearby_finds_events_across_bounding_box_edges(
+    events_client: tuple[TestClient, object],
+    search_latitude: float,
+    search_longitude: float,
+    event_latitude: float,
+    event_longitude: float,
+) -> None:
+    client, session_factory = events_client
+    viewer_id = uuid4()
+    organizer_id = uuid4()
+    with session_factory() as db:
+        _add_user(db, viewer_id)
+        _add_user(db, organizer_id)
+        event = _add_event(
+            db, organizer_id, longitude=event_longitude, latitude=event_latitude
+        )
+        db.commit()
+        event_id = event.event_id
+
+    response = client.get(
+        "/events/nearby",
+        params={
+            "latitude": search_latitude,
+            "longitude": search_longitude,
+            "radius_m": 10_000,
+        },
+        headers={"Authorization": f"Bearer {_token_for(viewer_id)}"},
+    )
+
+    assert response.status_code == 200
+    assert [item["event_id"] for item in response.json()["items"]] == [str(event_id)]
+
+
+@pytest.mark.parametrize("limit", [0, 101])
+def test_nearby_rejects_limit_out_of_bounds(
+    events_client: tuple[TestClient, object],
+    limit: int,
+) -> None:
+    client, session_factory = events_client
+    viewer_id = uuid4()
+    with session_factory() as db:
+        _add_user(db, viewer_id)
+        db.commit()
+
+    response = client.get(
+        "/events/nearby",
+        params={"latitude": 0, "longitude": 0, "radius_m": 100, "limit": limit},
+        headers={"Authorization": f"Bearer {_token_for(viewer_id)}"},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid limit"}
