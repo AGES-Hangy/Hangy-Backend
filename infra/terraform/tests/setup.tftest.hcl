@@ -116,15 +116,24 @@ run "estimate_settings" {
     error_message = "O bucket deve ter nome específico da conta/região e preservar objetos na exclusão."
   }
   assert {
-    condition     = aws_s3_bucket_public_access_block.app.block_public_acls && aws_s3_bucket_public_access_block.app.block_public_policy && aws_s3_bucket_public_access_block.app.ignore_public_acls && aws_s3_bucket_public_access_block.app.restrict_public_buckets
-    error_message = "O bucket de armazenamento deve permanecer privado."
+    condition     = aws_s3_bucket_public_access_block.app.block_public_acls && !aws_s3_bucket_public_access_block.app.block_public_policy && aws_s3_bucket_public_access_block.app.ignore_public_acls && !aws_s3_bucket_public_access_block.app.restrict_public_buckets
+    error_message = "O bucket deve permitir a policy pública de imagens, mantendo ACLs públicas bloqueadas e ignoradas."
   }
   assert {
     condition     = one(one(aws_s3_bucket_server_side_encryption_configuration.app.rule).apply_server_side_encryption_by_default).sse_algorithm == "AES256" && aws_s3_bucket_ownership_controls.app.rule[0].object_ownership == "BucketOwnerEnforced"
     error_message = "O bucket deve criptografar objetos com SSE-S3 e desabilitar ACLs."
   }
   assert {
-    condition     = jsondecode(aws_s3_bucket_policy.app.policy).Statement[0].Condition.Bool["aws:SecureTransport"] == "false" && jsondecode(aws_s3_bucket_policy.app.policy).Statement[0].Effect == "Deny"
+    condition = toset([for statement in jsondecode(aws_s3_bucket_policy.app.policy).Statement : jsonencode(statement) if statement.Sid == "RequireTLS"]) == toset([
+      jsonencode({
+        Sid       = "RequireTLS"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource  = [aws_s3_bucket.app.arn, "${aws_s3_bucket.app.arn}/*"]
+        Condition = { Bool = { "aws:SecureTransport" = "false" } }
+      }),
+    ])
     error_message = "O bucket deve recusar transporte sem TLS."
   }
 }
@@ -141,11 +150,33 @@ run "s3_runtime_access" {
     error_message = "The runtime environment must reference the managed bucket and region."
   }
   assert {
-    condition = toset([for statement in jsondecode(aws_iam_role_policy.ec2.policy).Statement : jsonencode(statement) if startswith(statement.Action[0], "s3:")]) == toset([
-      jsonencode({ Effect = "Allow", Action = ["s3:ListBucket"], Resource = aws_s3_bucket.app.arn }),
-      jsonencode({ Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"], Resource = "${aws_s3_bucket.app.arn}/*" }),
+    condition = toset([for statement in jsondecode(aws_iam_role_policy.ec2.policy).Statement : jsonencode(statement) if anytrue([for action in statement.Action : startswith(action, "s3:") || action == "*"])]) == toset([
+      jsonencode({
+        Sid    = "WriteImages"
+        Effect = "Allow"
+        Action = ["s3:PutObject", "s3:DeleteObject"]
+        Resource = [
+          "${aws_s3_bucket.app.arn}/events/covers/*",
+          "${aws_s3_bucket.app.arn}/experiences/*",
+        ]
+      }),
     ])
-    error_message = "Runtime S3 access must be limited to the application bucket and supported operations."
+    error_message = "A role da EC2 deve apenas gravar e apagar nos dois prefixos de imagens, sem listar o bucket ou acessar outros prefixos."
+  }
+  assert {
+    condition = length(jsondecode(aws_s3_bucket_policy.app.policy).Statement) == 2 && toset([for statement in jsondecode(aws_s3_bucket_policy.app.policy).Statement : jsonencode(statement) if statement.Sid != "RequireTLS"]) == toset([
+      jsonencode({
+        Sid       = "PublicReadImages"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = "s3:GetObject"
+        Resource = [
+          "${aws_s3_bucket.app.arn}/events/covers/*",
+          "${aws_s3_bucket.app.arn}/experiences/*",
+        ]
+      }),
+    ])
+    error_message = "Além de RequireTLS, a policy deve permitir somente leitura pública nos dois prefixos de imagens, sem escrita ou listagem pública."
   }
 }
 

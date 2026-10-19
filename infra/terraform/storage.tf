@@ -8,9 +8,9 @@ resource "aws_s3_bucket" "app" {
 resource "aws_s3_bucket_public_access_block" "app" {
   bucket                  = aws_s3_bucket.app.id
   block_public_acls       = true
-  block_public_policy     = true
+  block_public_policy     = false
   ignore_public_acls      = true
-  restrict_public_buckets = true
+  restrict_public_buckets = false
 }
 
 resource "aws_s3_bucket_ownership_controls" "app" {
@@ -30,18 +30,33 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "app" {
 }
 
 resource "aws_s3_bucket_policy" "app" {
+  # PublicReadImages must be installed after bucket-level policy blocking is off.
+  depends_on = [aws_s3_bucket_public_access_block.app]
+
   bucket = aws_s3_bucket.app.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Sid       = "RequireTLS"
-      Effect    = "Deny"
-      Principal = "*"
-      Action    = "s3:*"
-      Resource  = [aws_s3_bucket.app.arn, "${aws_s3_bucket.app.arn}/*"]
-      Condition = {
-        Bool = { "aws:SecureTransport" = "false" }
-      }
-    }]
+    Statement = [
+      {
+        Sid       = "RequireTLS"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource  = [aws_s3_bucket.app.arn, "${aws_s3_bucket.app.arn}/*"]
+        Condition = {
+          Bool = { "aws:SecureTransport" = "false" }
+        }
+      },
+      {
+        Sid       = "PublicReadImages"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = "s3:GetObject"
+        Resource = [
+          "${aws_s3_bucket.app.arn}/events/covers/*",
+          "${aws_s3_bucket.app.arn}/experiences/*",
+        ]
+      },
+    ]
   })
 }
