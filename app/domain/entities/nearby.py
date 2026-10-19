@@ -2,7 +2,19 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-from app.domain.enums import EventPrivacyEnum, LocationPrecisionEnum
+from app.domain.entities.event import Event
+from app.domain.enums import (
+    EventParticipantStatusEnum,
+    EventPrivacyEnum,
+    LocationPrecisionEnum,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class NearbyEventCandidate:
+    event: Event
+    participants_count: int
+    viewer_participation_status: EventParticipantStatusEnum | None
 
 
 @dataclass(frozen=True, slots=True)

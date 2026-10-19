@@ -14,6 +14,7 @@ from app.domain.assemblers import (
 )
 from app.domain.entities import User
 from app.domain.services import (
+    DEFAULT_NEARBY_LIMIT,
     AuthService,
     EventAlreadyFinishedError,
     EventCancelledError,
@@ -315,7 +316,7 @@ def get_nearby_events(
     latitude: float,
     longitude: float,
     radius_m: int,
-    limit: int = 50,
+    limit: int = DEFAULT_NEARBY_LIMIT,
     *,
     token: Annotated[str, Depends(get_access_token)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
