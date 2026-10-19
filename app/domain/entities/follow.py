@@ -2,7 +2,14 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
-__all__ = ["FollowedBusiness", "FollowedBusinessesPage", "UserFollow"]
+__all__ = [
+    "BusinessFollower",
+    "BusinessFollowerTag",
+    "BusinessFollowersPage",
+    "FollowedBusiness",
+    "FollowedBusinessesPage",
+    "UserFollow",
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,4 +34,28 @@ class FollowedBusiness:
 @dataclass(frozen=True, slots=True)
 class FollowedBusinessesPage:
     items: tuple[FollowedBusiness, ...]
+    next_cursor: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class BusinessFollowerTag:
+    id: UUID
+    name: str
+
+
+@dataclass(frozen=True, slots=True)
+class BusinessFollower:
+    """A follower as listed in the business's ``/businesses/me/followers``."""
+
+    user_id: UUID
+    name: str
+    followed_at: datetime
+    photo_url: str | None = None
+    tags: tuple[BusinessFollowerTag, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class BusinessFollowersPage:
+    items: tuple[BusinessFollower, ...]
+    total: int
     next_cursor: str | None

@@ -75,6 +75,11 @@ user_follows = Table(
     Column(
         "created_at", DateTime(timezone=True), nullable=False, server_default=func.now()
     ),
+    Index(
+        "idx_user_follows_followed_business_id",
+        "followed_business_id",
+        "created_at",
+    ),
 )
 
 

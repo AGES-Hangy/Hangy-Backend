@@ -3,12 +3,16 @@ from typing import Protocol
 from uuid import UUID
 
 from app.domain.entities import (
+    BusinessFollower,
+    BusinessFollowersPage,
     BusinessProfile,
     FollowedBusiness,
     FollowedBusinessesPage,
     User,
     UserFollow,
 )
+from app.domain.enums import UserTypeEnum
+from app.domain.services.business_profile import NotBusinessProfileError
 from app.domain.services.pagination import (
     InvalidPaginationError,
     decode_cursor,
@@ -51,6 +55,18 @@ class FollowRepository(Protocol):
         cursor_followed_at: datetime | None,
         cursor_business_id: UUID | None,
     ) -> list[FollowedBusiness]: ...
+
+    def count_followers(self, business_id: UUID) -> int: ...
+
+    def list_followers(
+        self,
+        business_id: UUID,
+        *,
+        search: str | None,
+        limit: int,
+        cursor_followed_at: datetime | None,
+        cursor_follower_id: UUID | None,
+    ) -> list[BusinessFollower]: ...
 
 
 class BusinessNotFoundError(Exception):
@@ -133,3 +149,52 @@ class FollowService:
             next_cursor = encode_cursor(last.followed_at, last.user_id)
 
         return FollowedBusinessesPage(items=tuple(items), next_cursor=next_cursor)
+
+    def get_followers(
+        self,
+        business_user: User,
+        *,
+        search: str | None = None,
+        limit: int = DEFAULT_FOLLOWING_LIMIT,
+        cursor: str | None = None,
+    ) -> BusinessFollowersPage:
+        """List the followers of the business, newest follow first.
+
+        Soft-deleted accounts and blocked users (in either direction) are
+        filtered out. ``total`` counts all eligible followers ignoring ``search``.
+        """
+        if (
+            business_user.user_type is not UserTypeEnum.BUSINESS
+            or business_user.user_id is None
+        ):
+            raise NotBusinessProfileError
+
+        if not MIN_FOLLOWING_LIMIT <= limit <= MAX_FOLLOWING_LIMIT:
+            raise InvalidPaginationError(
+                f"limit must be between {MIN_FOLLOWING_LIMIT} and {MAX_FOLLOWING_LIMIT}"
+            )
+
+        cursor_followed_at: datetime | None = None
+        cursor_follower_id: UUID | None = None
+        if cursor:
+            cursor_followed_at, cursor_follower_id = decode_cursor(cursor)
+
+        total = self.repository.count_followers(business_user.user_id)
+
+        rows = self.repository.list_followers(
+            business_user.user_id,
+            search=search,
+            limit=limit + 1,
+            cursor_followed_at=cursor_followed_at,
+            cursor_follower_id=cursor_follower_id,
+        )
+
+        items = rows[:limit]
+        next_cursor = None
+        if len(rows) > limit:
+            last = items[-1]
+            next_cursor = encode_cursor(last.followed_at, last.user_id)
+
+        return BusinessFollowersPage(
+            items=tuple(items), total=total, next_cursor=next_cursor
+        )
