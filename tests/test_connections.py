@@ -9,8 +9,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.domain.enums import UserConnectionStatusEnum
+from app.domain.services import ConnectionNotFoundError, ConnectionService
+from app.domain.services.notification_dispatcher import NotificationDispatcher
 from app.infrastructure.repository import Base, get_db
+from app.infrastructure.repository.connection import SqlAlchemyConnectionRepository
 from app.infrastructure.repository.models import NotificationModel, UserConnectionModel
+from app.infrastructure.repository.notification import SqlAlchemyNotificationRepository
 from app.main import app
 
 TERMS_VERSION = "2026-08-01"
@@ -333,7 +337,8 @@ def test_undo_does_not_create_notifications(client: TestClient) -> None:
     assert response.status_code == 204
 
     with open_db() as db:
-        assert db.query(NotificationModel).count() == before
+        # Undoing only removes the stale request notification; it adds none.
+        assert db.query(NotificationModel).count() <= before
 
 
 def test_undo_by_third_user_returns_403(client: TestClient) -> None:
@@ -389,3 +394,104 @@ def test_undo_without_token_returns_401(client: TestClient) -> None:
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Could not validate credentials"}
+
+
+def test_requester_can_cancel_rejected_request_returns_204(
+    client: TestClient,
+) -> None:
+    # The refusal is silent, so cancelling a rejected request must look exactly
+    # like cancelling a pending one: the requester cannot tell the difference.
+    _, token_a = register_and_authenticate(client, USER_A)
+    user_b_id, _ = register_and_authenticate(client, USER_B)
+    connection_id = send_request(client, token_a, user_b_id)
+    with open_db() as db:
+        model = db.get(UserConnectionModel, UUID(connection_id))
+        assert model is not None
+        model.status = UserConnectionStatusEnum.REJECTED
+        db.commit()
+
+    response = client.delete(
+        f"/connections/{connection_id}", headers=auth_headers(token_a)
+    )
+
+    assert response.status_code == 204
+
+
+class NoBlocks:
+    def is_blocked_between(self, user_a: UUID, user_b: UUID) -> bool:
+        return False
+
+
+@pytest.mark.parametrize("action", ["accept", "reject"])
+def test_undone_request_can_no_longer_be_accepted_or_rejected(
+    client: TestClient, action: str
+) -> None:
+    _, token_a = register_and_authenticate(client, USER_A)
+    user_b_id, _ = register_and_authenticate(client, USER_B)
+    connection_id = send_request(client, token_a, user_b_id)
+    response = client.delete(
+        f"/connections/{connection_id}", headers=auth_headers(token_a)
+    )
+    assert response.status_code == 204
+
+    with open_db() as db:
+        service = ConnectionService(
+            repository=SqlAlchemyConnectionRepository(
+                db, NotificationDispatcher(SqlAlchemyNotificationRepository(db))
+            ),
+            block_checker=NoBlocks(),
+        )
+        with pytest.raises(ConnectionNotFoundError):
+            getattr(service, action)(UUID(connection_id), UUID(user_b_id))
+
+
+def test_undo_with_malformed_connection_id_returns_422(client: TestClient) -> None:
+    _, token_a = register_and_authenticate(client, USER_A)
+
+    response = client.delete("/connections/not-a-uuid", headers=auth_headers(token_a))
+
+    assert response.status_code == 422
+
+
+def test_undo_clears_connection_status_and_count_on_profile(
+    client: TestClient,
+) -> None:
+    user_a_id, token_a = register_and_authenticate(client, USER_A)
+    user_b_id, token_b = register_and_authenticate(client, USER_B)
+    connection_id = send_request(client, token_a, user_b_id)
+    confirm_connection(connection_id)
+    profile = client.get(f"/users/{user_b_id}", headers=auth_headers(token_a))
+    assert profile.json()["connection_status"] == "CONFIRMED"
+    assert profile.json()["connections_count"] == 1
+
+    response = client.delete(
+        f"/connections/{connection_id}", headers=auth_headers(token_a)
+    )
+    assert response.status_code == 204
+
+    profile = client.get(f"/users/{user_b_id}", headers=auth_headers(token_a))
+    assert profile.json()["connection_status"] is None
+    assert profile.json()["connections_count"] == 0
+
+    # A new request after undoing shows up as pending, not as the old row.
+    send_request(client, token_b, user_a_id)
+    profile = client.get(f"/users/{user_b_id}", headers=auth_headers(token_a))
+    assert profile.json()["connection_status"] == "PENDING"
+
+
+def test_cancel_removes_the_request_notification_from_the_receiver(
+    client: TestClient,
+) -> None:
+    _, token_a = register_and_authenticate(client, USER_A)
+    user_b_id, token_b = register_and_authenticate(client, USER_B)
+    connection_id = send_request(client, token_a, user_b_id)
+    before = client.get("/notifications", headers=auth_headers(token_b))
+    assert [item["type"] for item in before.json()["items"]] == ["CONNECTION_REQUEST"]
+
+    response = client.delete(
+        f"/connections/{connection_id}", headers=auth_headers(token_a)
+    )
+    assert response.status_code == 204
+
+    after = client.get("/notifications", headers=auth_headers(token_b))
+    assert after.json()["items"] == []

@@ -19,6 +19,9 @@ from app.infrastructure.repository.models import (
     UserConnectionModel,
     UserModel,
 )
+from app.infrastructure.repository.notification import (
+    delete_connection_request_notifications,
+)
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
 
 
@@ -263,6 +266,7 @@ class SqlAlchemyConnectionRepository:
         if model is None:
             raise ValueError("A connection validated by the service must exist")
         model.deleted_at = datetime.now(UTC)
+        delete_connection_request_notifications(self.db, connection_id)
         self.db.commit()
 
     @staticmethod
