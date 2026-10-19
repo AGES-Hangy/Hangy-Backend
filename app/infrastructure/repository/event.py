@@ -201,12 +201,17 @@ class SqlAlchemyEventRepository:
 
     def add(self, event: NewEvent) -> Event:
         model = EventModel(
+            event_id=event.event_id,
             event_creator_id=event.event_creator_id,
             event_title=event.event_title,
             event_description=event.event_description,
             event_latitude=event.event_latitude,
             event_longitude=event.event_longitude,
+            approx_latitude=event.approx_latitude,
+            approx_longitude=event.approx_longitude,
             location_name=event.location_name,
+            location_neighborhood=event.location_neighborhood,
+            location_city=event.location_city,
             starts_at=event.starts_at,
             ends_at=event.ends_at,
             max_participants=event.max_participants,
@@ -245,7 +250,11 @@ class SqlAlchemyEventRepository:
         model.event_description = event.event_description
         model.event_latitude = event.event_latitude
         model.event_longitude = event.event_longitude
+        model.approx_latitude = event.approx_latitude
+        model.approx_longitude = event.approx_longitude
         model.location_name = event.location_name
+        model.location_neighborhood = event.location_neighborhood
+        model.location_city = event.location_city
         model.starts_at = event.starts_at
         model.ends_at = event.ends_at
         model.cover_photo_url = event.cover_photo_url
@@ -288,6 +297,8 @@ class SqlAlchemyEventRepository:
             event_title=model.event_title,
             event_latitude=model.event_latitude,
             event_longitude=model.event_longitude,
+            approx_latitude=model.approx_latitude,
+            approx_longitude=model.approx_longitude,
             starts_at=model.starts_at,
             ends_at=model.ends_at,
             event_status=model.event_status,
@@ -296,6 +307,8 @@ class SqlAlchemyEventRepository:
             updated_at=model.updated_at,
             event_description=model.event_description,
             location_name=model.location_name,
+            location_neighborhood=model.location_neighborhood,
+            location_city=model.location_city,
             max_participants=model.max_participants,
             cover_photo_url=model.cover_photo_url,
             deleted_at=model.deleted_at,

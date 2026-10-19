@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import (
     CheckConstraint,
@@ -19,6 +19,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.enums import EventPrivacyEnum, EventStatusEnum
+from app.domain.services.event_location import approximate_point
 from app.infrastructure.repository.base import Base
 from app.infrastructure.repository.models.types import enum_column
 
@@ -59,6 +60,8 @@ class EventModel(Base):
         ),
         # Supports the bounding box that narrows down a radius search.
         Index("idx_event_coordinates", "event_latitude", "event_longitude"),
+        # Same bounding box, for viewers who only get the approximate point.
+        Index("idx_event_approx_coordinates", "approx_latitude", "approx_longitude"),
     )
 
     event_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -71,6 +74,11 @@ class EventModel(Base):
     event_longitude: Mapped[float] = mapped_column(Double)
     # Coordinates alone cannot render "Parcao" on the event card.
     location_name: Mapped[str | None] = mapped_column(String(120))
+    # What a viewer without access to the address reads instead of it.
+    location_neighborhood: Mapped[str | None] = mapped_column(String(120))
+    location_city: Mapped[str | None] = mapped_column(String(120))
+    approx_latitude: Mapped[float] = mapped_column(Double)
+    approx_longitude: Mapped[float] = mapped_column(Double)
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     max_participants: Mapped[int | None]
@@ -88,6 +96,19 @@ class EventModel(Base):
         onupdate=func.now(),
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    def __init__(self, **kwargs: Any) -> None:
+        # EventsService computes the approximate point itself; this covers rows
+        # built straight from the model (seed, fixtures), which would otherwise
+        # have no point to show.
+        if "approx_latitude" not in kwargs:
+            kwargs.setdefault("event_id", uuid.uuid4())
+            kwargs["approx_latitude"], kwargs["approx_longitude"] = approximate_point(
+                kwargs["event_id"],
+                kwargs["event_latitude"],
+                kwargs["event_longitude"],
+            )
+        super().__init__(**kwargs)
 
     creator: Mapped[UserModel] = relationship(back_populates="created_events")
     tags: Mapped[list[TagModel]] = relationship(secondary=event_tag)

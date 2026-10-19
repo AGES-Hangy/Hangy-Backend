@@ -4,7 +4,7 @@ from uuid import UUID
 from sqlalchemy import exists, or_, select
 from sqlalchemy.orm import Session
 
-from app.domain.entities import UserEvent
+from app.domain.entities import UserEventParticipation
 from app.domain.enums import (
     EventParticipantStatusEnum,
     EventPrivacyEnum,
@@ -12,6 +12,7 @@ from app.domain.enums import (
     UserEventsTabEnum,
 )
 from app.infrastructure.repository.block import block_exists_between
+from app.infrastructure.repository.event import SqlAlchemyEventRepository
 from app.infrastructure.repository.models import (
     EventFavoriteModel,
     EventModel,
@@ -37,7 +38,7 @@ class SqlAlchemyUserEventsRepository:
         limit: int,
         cursor_starts_at: datetime | None,
         cursor_event_id: UUID | None,
-    ) -> list[UserEvent]:
+    ) -> list[UserEventParticipation]:
         """List one profile tab of `user_id` as `viewer_id` may see it.
 
         Each tab is a single SELECT over events, so an event the user both
@@ -147,15 +148,10 @@ class SqlAlchemyUserEventsRepository:
         return [self._to_entity(event, confirmed) for event, confirmed in rows]
 
     @staticmethod
-    def _to_entity(model: EventModel, is_confirmed: bool) -> UserEvent:
-        return UserEvent(
-            event_id=model.event_id,
-            title=model.event_title,
-            starts_at=model.starts_at,
-            privacy=model.event_privacy,
+    def _to_entity(model: EventModel, is_confirmed: bool) -> UserEventParticipation:
+        return UserEventParticipation(
+            event=SqlAlchemyEventRepository.to_entity(model),
             participation_status=(
                 EventParticipantStatusEnum.CONFIRMED if is_confirmed else None
             ),
-            location_name=model.location_name,
-            cover_photo_url=model.cover_photo_url,
         )

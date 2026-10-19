@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import settings
 from app.domain.enums import EventStatusEnum, UserRoleEnum, UserTypeEnum
+from app.domain.services.event_location import approximate_point
 from app.infrastructure.repository.models import EventModel, UserModel
 from tests import test_create_event
 from tests.test_create_event import RUNNING_ID, auth_header, payload
@@ -197,3 +198,97 @@ def test_openapi_documents_event_update(
     assert operation["responses"]["200"]["content"]["application/json"]["schema"] == {
         "$ref": "#/components/schemas/UpdateEventOutput"
     }
+
+
+def test_editing_other_fields_keeps_the_approximate_point(
+    event_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    test_client, session_factory = event_client
+    event_id = create_event(test_client)
+    with session_factory() as db:
+        event = db.get(EventModel, event_id)
+        assert event is not None
+        original_point = (event.approx_latitude, event.approx_longitude)
+
+    starts_at = datetime.now(UTC) + timedelta(days=5)
+    response = test_client.patch(
+        f"/events/{event_id}",
+        json={
+            "title": "Novo titulo",
+            "event_date": starts_at.isoformat(),
+            "end_date": (starts_at + timedelta(hours=2)).isoformat(),
+            "location_name": "Campo 2",
+            "location_neighborhood": "Moinhos de Vento",
+            "location_city": "Porto Alegre",
+        },
+        headers=auth_header(),
+    )
+
+    assert response.status_code == 200
+    with session_factory() as db:
+        event = db.get(EventModel, event_id)
+        assert event is not None
+        assert event.event_title == "Novo titulo"
+        assert event.location_neighborhood == "Moinhos de Vento"
+        assert event.location_city == "Porto Alegre"
+        assert (event.approx_latitude, event.approx_longitude) == original_point
+
+
+def test_editing_the_coordinates_recalculates_the_approximate_point(
+    event_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    test_client, session_factory = event_client
+    event_id = create_event(test_client)
+    with session_factory() as db:
+        event = db.get(EventModel, event_id)
+        assert event is not None
+        original_point = (event.approx_latitude, event.approx_longitude)
+
+    response = test_client.patch(
+        f"/events/{event_id}",
+        json={"location": {"latitude": -29.9, "longitude": -51.1}},
+        headers=auth_header(),
+    )
+
+    assert response.status_code == 200
+    with session_factory() as db:
+        event = db.get(EventModel, event_id)
+        assert event is not None
+        assert (event.approx_latitude, event.approx_longitude) != original_point
+        assert (event.approx_latitude, event.approx_longitude) == approximate_point(
+            event_id, -29.9, -51.1
+        )
+
+
+def test_organizer_can_clear_the_neighborhood_and_city(
+    event_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    test_client, session_factory = event_client
+    response = test_client.post(
+        "/events",
+        json=payload(location_neighborhood="Partenon", location_city="Porto Alegre"),
+        headers=auth_header(),
+    )
+    event_id = UUID(response.json()["event_id"])
+
+    untouched = test_client.patch(
+        f"/events/{event_id}", json={"title": "Outro"}, headers=auth_header()
+    )
+    assert untouched.status_code == 200
+    with session_factory() as db:
+        event = db.get(EventModel, event_id)
+        assert event is not None
+        assert event.location_neighborhood == "Partenon"
+        assert event.location_city == "Porto Alegre"
+
+    cleared = test_client.patch(
+        f"/events/{event_id}",
+        json={"location_neighborhood": None, "location_city": None},
+        headers=auth_header(),
+    )
+    assert cleared.status_code == 200
+    with session_factory() as db:
+        event = db.get(EventModel, event_id)
+        assert event is not None
+        assert event.location_neighborhood is None
+        assert event.location_city is None

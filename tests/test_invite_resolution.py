@@ -48,6 +48,7 @@ def invite_client() -> Iterator[tuple[TestClient, sessionmaker[Session]]]:
 def _create_invite_only_event(
     db: Session,
     status: EventStatusEnum = EventStatusEnum.PUBLISHED,
+    privacy: EventPrivacyEnum = EventPrivacyEnum.INVITE_ONLY,
 ) -> tuple[UUID, UUID]:
     organizer_id = uuid4()
     event_id = uuid4()
@@ -71,10 +72,12 @@ def _create_invite_only_event(
             event_latitude=-30.0277,
             event_longitude=-51.2287,
             location_name="Parcao",
+            location_neighborhood="Moinhos de Vento",
+            location_city="Porto Alegre",
             starts_at=now + timedelta(days=1),
             ends_at=now + timedelta(days=1, hours=2),
             event_status=status,
-            event_privacy=EventPrivacyEnum.INVITE_ONLY,
+            event_privacy=privacy,
             cover_photo_url="https://storage/cover.png",
         )
     )
@@ -198,3 +201,28 @@ def test_invite_preview_does_not_expose_the_event_description(
         "privacy",
         "requires_login",
     }
+
+
+def test_a_token_of_a_private_event_does_not_reveal_its_address(
+    invite_client: tuple[TestClient, sessionmaker[Session]],
+) -> None:
+    # The link is the access control of an INVITE_ONLY event only: a PRIVATE
+    # event still requires the organizer's approval to show the address.
+    client, session_factory = invite_client
+    token = "private-event-token"
+    with session_factory() as db:
+        event_id, organizer_id = _create_invite_only_event(
+            db, privacy=EventPrivacyEnum.PRIVATE
+        )
+        _add_invite_link(
+            db,
+            event_id,
+            organizer_id,
+            token,
+            expires_at=datetime.now(UTC) + timedelta(days=1),
+        )
+
+    response = client.get(f"/invites/{token}")
+
+    assert response.status_code == 200
+    assert response.json()["location_name"] == "Moinhos de Vento, Porto Alegre"

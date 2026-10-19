@@ -33,6 +33,7 @@ test:
     POSTGRES_PASSWORD: ci-password
     DATABASE_URL: sqlite://
     JWT_SECRET_KEY: test-secret-key
+    LOCATION_OBFUSCATION_SECRET: test-location-secret
   script:
     - pip install -r requirements-dev.txt
     - ruff check .

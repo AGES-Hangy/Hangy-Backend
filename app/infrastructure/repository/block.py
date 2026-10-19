@@ -1,15 +1,19 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, and_, exists, or_, select
+from sqlalchemy import ColumnElement, and_, delete, exists, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.domain.entities import UserBlock
+from app.domain.entities import BlockedUser, UserBlock
 from app.domain.enums import UserConnectionStatusEnum
 from app.domain.services.block import UserAlreadyBlockedError
 from app.infrastructure.repository.connection import select_active_between
-from app.infrastructure.repository.models import UserBlockModel, UserConnectionModel
+from app.infrastructure.repository.models import (
+    UserBlockModel,
+    UserConnectionModel,
+    UserModel,
+)
 
 
 def block_exists_between(
@@ -61,6 +65,54 @@ class SqlAlchemyBlockRepository:
         self.db.commit()
         self.db.refresh(model)
         return self._to_entity(model)
+
+    def list_blocked(
+        self, blocker_id: UUID, limit: int, after: tuple[datetime, UUID] | None
+    ) -> list[BlockedUser]:
+        query = (
+            select(UserBlockModel, UserModel)
+            .join(UserModel, UserModel.user_id == UserBlockModel.blocked_id)
+            .where(
+                UserBlockModel.blocker_id == blocker_id,
+                UserModel.deleted_at.is_(None),
+            )
+            .order_by(
+                UserBlockModel.created_at.desc(), UserBlockModel.blocked_id.desc()
+            )
+            .limit(limit)
+        )
+        if after is not None:
+            created_at, blocked_id = after
+            query = query.where(
+                or_(
+                    UserBlockModel.created_at < created_at,
+                    and_(
+                        UserBlockModel.created_at == created_at,
+                        UserBlockModel.blocked_id < blocked_id,
+                    ),
+                )
+            )
+        rows = self.db.execute(query).all()
+        return [self._to_blocked_user(block, user) for block, user in rows]
+
+    @staticmethod
+    def _to_blocked_user(block: UserBlockModel, user: UserModel) -> BlockedUser:
+        return BlockedUser(
+            user_id=user.user_id,
+            name=user.name,
+            photo_url=user.profile_photo_url,
+            blocked_at=block.created_at,
+        )
+
+    def delete(self, blocker_id: UUID, blocked_id: UUID) -> bool:
+        result = self.db.execute(
+            delete(UserBlockModel).where(
+                UserBlockModel.blocker_id == blocker_id,
+                UserBlockModel.blocked_id == blocked_id,
+            )
+        )
+        self.db.commit()
+        return result.rowcount > 0
 
     @staticmethod
     def _to_entity(model: UserBlockModel) -> UserBlock:

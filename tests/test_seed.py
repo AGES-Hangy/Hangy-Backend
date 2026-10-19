@@ -13,6 +13,7 @@ from app.domain.enums import (
     NotificationTypeEnum,
     UserConnectionStatusEnum,
 )
+from app.domain.services.event_location import approximate_point
 from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import (
     EventCancelledNotificationModel,
@@ -709,3 +710,36 @@ def test_seed_preserves_a_profile_edited_while_testing(
 
         assert carla.description == "Bio editada pelo PATCH"
         assert carla.person_profile.city == "Canoas"
+
+
+def test_seed_events_have_a_neighborhood_a_city_and_an_approximate_point(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        events = db.scalars(select(EventModel)).all()
+
+        assert len(events) == len(SEED_EVENTS)
+        for event in events:
+            assert event.location_neighborhood
+            assert event.location_city == "Porto Alegre"
+            assert (event.approx_latitude, event.approx_longitude) == approximate_point(
+                event.event_id, event.event_latitude, event.event_longitude
+            )
+
+        # A seed that ran before these columns existed is filled in on restart,
+        # without overwriting what was edited since.
+        missing, customized = events[:2]
+        expected_neighborhood = missing.location_neighborhood
+        missing.location_neighborhood = None
+        missing.location_city = None
+        customized.location_neighborhood = "Bairro editado"
+        db.commit()
+
+        seed_events(db)
+        db.refresh(missing)
+        db.refresh(customized)
+
+        assert missing.location_neighborhood == expected_neighborhood
+        assert missing.location_city == "Porto Alegre"
+        assert customized.location_neighborhood == "Bairro editado"
