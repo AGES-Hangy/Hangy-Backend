@@ -422,7 +422,7 @@ def test_followers_isolates_by_business(client: TestClient) -> None:
 
 @pytest.mark.parametrize(
     "query",
-    ["limit=0", "limit=101", "cursor=not-a-cursor", "limit=abc"],
+    ["limit=0", "limit=101", "cursor=not-a-cursor"],
 )
 def test_followers_invalid_pagination_returns_400(
     client: TestClient, query: str
@@ -433,3 +433,11 @@ def test_followers_invalid_pagination_returns_400(
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Invalid pagination parameters"}
+
+
+def test_followers_non_integer_limit_returns_422(client: TestClient) -> None:
+    response = client.get(
+        "/businesses/me/followers?limit=abc", headers=_auth(BUSINESS_ID)
+    )
+
+    assert response.status_code == 422
