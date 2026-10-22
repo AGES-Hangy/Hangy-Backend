@@ -12,6 +12,9 @@ if TYPE_CHECKING:
 __all__ = [
     "EventExperience",
     "EventExperienceAccess",
+    "EventPhoto",
+    "EventPhotoListItem",
+    "EventPhotosPage",
     "ExperienceImage",
     "NewEventExperience",
 ]
@@ -45,3 +48,24 @@ class ExperienceImage:
     photo_url: str
     created_at: datetime
     deleted_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EventPhoto:
+    photo_id: UUID
+    photo_url: str
+    author_id: UUID
+    author_name: str | None
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class EventPhotoListItem:
+    photo: EventPhoto
+    can_delete: bool
+
+
+@dataclass(frozen=True, slots=True)
+class EventPhotosPage:
+    items: tuple[EventPhotoListItem, ...]
+    next_cursor: str | None
