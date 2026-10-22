@@ -12,7 +12,6 @@ from app.domain.enums import (
     NotificationTypeEnum,
 )
 from app.domain.services.event_location import approximate_point
-from app.domain.services.image_upload import ImageUploadService
 
 logger = getLogger(__name__)
 
@@ -69,6 +68,12 @@ class EventRepository(Protocol):
     ) -> None: ...
 
 
+class ImageUploadServiceProtocol(Protocol):
+    def owns(self, url: str) -> bool: ...
+
+    def delete(self, url: str) -> None: ...
+
+
 class EventStartsInThePastError(Exception):
     """Raised when an event is published with a start date that already passed."""
 
@@ -119,7 +124,9 @@ class EventAlreadyFinishedError(Exception):
 
 class EventsService:
     def __init__(
-        self, repository: EventRepository, image_upload_service: ImageUploadService
+        self,
+        repository: EventRepository,
+        image_upload_service: ImageUploadServiceProtocol,
     ) -> None:
         self.repository = repository
         self.image_upload_service = image_upload_service
