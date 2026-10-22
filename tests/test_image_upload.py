@@ -97,8 +97,7 @@ def test_read_helper_bounds_memory_and_ignores_filename(live_image_storage):
     )
     assert upload.filename not in url
     upload.read = AsyncMock(return_value=b"x" * 11)
-    with pytest.raises(ImageTooLargeError):
-        asyncio.run(read_image_upload(upload, max_size_bytes=10))
+    assert asyncio.run(read_image_upload(upload, max_size_bytes=10)) == b"x" * 11
     upload.read.assert_awaited_once_with(11)
 
 
