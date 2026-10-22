@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.presentation.routes import (
+    admin_router,
     auth_router,
     businesses_router,
     cancel_participation_router,
@@ -47,3 +48,4 @@ app.include_router(tags_router)
 app.include_router(feed_router)
 app.include_router(terms_router)
 app.include_router(users_router)
+app.include_router(admin_router)
