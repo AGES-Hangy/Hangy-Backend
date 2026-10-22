@@ -313,8 +313,6 @@ def test_organizer_without_participation_cannot_post_on_a_finished_public_event(
 
     response = _post(test_client, ORGANIZER_ID)
 
-    # The organizer is not a participant: it is the same 403 as any other user,
-    # not a 404 and not a 201.
     assert response.status_code == 403
     assert response.json() == {"detail": "Only confirmed participants can post"}
     with session_factory() as db:
@@ -380,8 +378,6 @@ def test_organizer_of_an_invite_only_event_is_not_hidden_from_posting(client) ->
     organizer = _post(test_client, ORGANIZER_ID)
     outsider = _post(test_client, OUTSIDER_ID)
 
-    # The organizer sees the event (403: not a confirmed participant), while an
-    # outsider gets the 404.
     assert organizer.status_code == 403
     assert organizer.json() == {"detail": "Only confirmed participants can post"}
     assert outsider.status_code == 404

@@ -131,7 +131,10 @@ class ExperienceService:
         cursor_photo_id: UUID | None = None
         if cursor:
             cursor_created_at, cursor_photo_id = decode_cursor(cursor)
-
+        # Product decision: the gallery of a PUBLIC event is open to any
+        # authenticated user who can see the event (not only participants).
+        # INVITE_ONLY events stay hidden from non-confirmed users, and so do
+        # events the organizer blocked the viewer from (see _is_visible).
         access = self.repository.get_access(event_id, viewer_id)
         if access is None or not self._is_visible(access, viewer_id):
             raise ExperienceEventNotFoundError
