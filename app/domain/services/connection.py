@@ -32,6 +32,8 @@ class ConnectionRepository(Protocol):
 
     def reject(self, connection_id: UUID) -> UserConnection: ...
 
+    def soft_delete(self, connection_id: UUID) -> None: ...
+
     def get_active_user(self, user_id: UUID) -> User | None: ...
 
     def find_active_between(
@@ -64,6 +66,10 @@ class ConnectionNotFoundError(Exception):
 
 class NotConnectionReceiverError(Exception):
     """Raised when someone other than the receiver tries to accept or reject."""
+
+
+class NotConnectionParticipantError(Exception):
+    """Raised when someone who is neither requester nor receiver undoes it."""
 
 
 class InvalidConnectionStatusTransitionError(Exception):
@@ -131,6 +137,20 @@ class ConnectionService:
         if connection.status is not UserConnectionStatusEnum.PENDING:
             raise InvalidConnectionStatusTransitionError
         return self.repository.reject(connection_id)
+
+    def undo_connection(self, connection_id: UUID, actor_id: UUID) -> None:
+        """Undo a connection or cancel a pending request.
+
+        Both sides use the same operation. It is a soft delete (`deleted_at`),
+        not a new status, so the pair is freed for a new request. It is
+        silent on purpose: no notification is dispatched.
+        """
+        connection = self.repository.get_by_id_for_update(connection_id)
+        if connection is None:
+            raise ConnectionNotFoundError
+        if actor_id not in (connection.requester_id, connection.receiver_id):
+            raise NotConnectionParticipantError
+        self.repository.soft_delete(connection_id)
 
     def get_pending_requests(
         self,

@@ -228,3 +228,6 @@ __marimo__/
 *.tfbackend
 crash.log
 crash.*.log
+
+*.sh
+*.patch
