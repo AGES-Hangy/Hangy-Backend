@@ -10,9 +10,11 @@ from app.domain.assemblers import (
     EventDetailsAssembler,
     EventParticipantsAssembler,
     EventParticipationAssembler,
+    NearbyEventAssembler,
 )
 from app.domain.entities import User
 from app.domain.services import (
+    DEFAULT_NEARBY_LIMIT,
     AuthService,
     EventAlreadyFinishedError,
     EventCancelledError,
@@ -29,9 +31,15 @@ from app.domain.services import (
     EventStartsInThePastError,
     EventTagNotFoundError,
     FavoriteEventNotFoundError,
+    ImageUploadService,
     InvalidAccessTokenError,
+    InvalidCoverPhotoUrlError,
     InvalidEventCoordinatesError,
+    InvalidNearbyCoordinatesError,
+    InvalidNearbyLimitError,
     InvalidParticipantStatusTransitionError,
+    NearbyRadiusExceededError,
+    NearbyService,
     NotEventOrganizerError,
     NotificationDispatcher,
     OnlyPersonalAccountsCanFavoriteError,
@@ -91,6 +99,7 @@ from app.infrastructure.repository.event_invite_link import (
 from app.infrastructure.repository.event_participant import (
     SqlAlchemyEventParticipantsRepository,
 )
+from app.infrastructure.repository.nearby import SqlAlchemyNearbyRepository
 from app.infrastructure.repository.notification import SqlAlchemyNotificationRepository
 from app.infrastructure.repository.participation import (
     SqlAlchemyParticipationRepository,
@@ -105,6 +114,7 @@ from app.presentation.dtos import (
     EventParticipantsOutput,
     EventParticipationOutput,
     EventShareOutput,
+    NearbyEventsOutput,
     UpdateEventInput,
     UpdateEventOutput,
     UpdateEventParticipantInput,
@@ -117,10 +127,15 @@ from app.presentation.routes.auth import (
     get_auth_service,
     get_current_user,
 )
+from app.presentation.routes.uploads import get_image_upload_service
 
 router = APIRouter(prefix="/events", tags=["Events"])
 
 BAD_REQUEST_EXAMPLES = {
+    "invalid_cover": {
+        "summary": "Capa fora do bucket do projeto",
+        "value": {"detail": "Invalid cover photo URL"},
+    },
     "past_date": {
         "summary": "Data no passado",
         "value": {"detail": "Event date must be in the future"},
@@ -158,8 +173,14 @@ def get_notification_dispatcher(
 def get_events_service(
     dispatcher: Annotated[NotificationDispatcher, Depends(get_notification_dispatcher)],
     db: Annotated[Session, Depends(get_db)],
+    image_upload_service: Annotated[
+        ImageUploadService, Depends(get_image_upload_service)
+    ],
 ) -> EventsService:
-    return EventsService(repository=SqlAlchemyEventRepository(db, dispatcher))
+    return EventsService(
+        repository=SqlAlchemyEventRepository(db, dispatcher),
+        image_upload_service=image_upload_service,
+    )
 
 
 def get_event_details_service(
@@ -199,6 +220,12 @@ def get_participation_service(
     return ParticipationService(
         repository=SqlAlchemyParticipationRepository(db, dispatcher)
     )
+
+
+def get_nearby_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> NearbyService:
+    return NearbyService(repository=SqlAlchemyNearbyRepository(db))
 
 
 @router.post(
@@ -254,6 +281,10 @@ def create_event(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid event coordinates",
         ) from error
+    except InvalidCoverPhotoUrlError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cover photo URL"
+        ) from error
     except TooManyEventTagsError as error:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -265,6 +296,80 @@ def create_event(
             detail="Tag not found",
         ) from error
     return EventAssembler.to_created_dto(event, organizer)
+
+
+@router.get(
+    "/nearby",
+    response_model=NearbyEventsOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Listar eventos proximos",
+    description=(
+        "Retorna eventos publicados e futuros dentro do raio informado, "
+        "ordenados pela distancia ate o centro da busca. Eventos INVITE_ONLY "
+        "nao sao descobriveis neste endpoint."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "Coordenadas, raio ou limite invalidos.",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "invalid_coordinates": {
+                            "value": {"detail": "Invalid coordinates"}
+                        },
+                        "radius_exceeded": {
+                            "value": {"detail": "Radius exceeds maximum"}
+                        },
+                    }
+                }
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token de acesso ausente ou invalido."
+        },
+    },
+)
+def get_nearby_events(
+    latitude: float,
+    longitude: float,
+    radius_m: int,
+    limit: int = DEFAULT_NEARBY_LIMIT,
+    *,
+    token: Annotated[str, Depends(get_access_token)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    nearby_service: Annotated[NearbyService, Depends(get_nearby_service)],
+) -> NearbyEventsOutput:
+    try:
+        viewer = auth_service.get_user_from_token(token)
+    except InvalidAccessTokenError as error:
+        raise credentials_exception from error
+    if viewer.user_id is None:
+        raise credentials_exception
+
+    try:
+        events = nearby_service.get_nearby(
+            viewer_id=viewer.user_id,
+            latitude=latitude,
+            longitude=longitude,
+            radius_m=radius_m,
+            limit=limit,
+        )
+    except InvalidNearbyCoordinatesError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid coordinates",
+        ) from error
+    except NearbyRadiusExceededError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Radius exceeds maximum",
+        ) from error
+    except InvalidNearbyLimitError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid limit",
+        ) from error
+    return NearbyEventAssembler.to_dto(events)
 
 
 @router.get(
@@ -759,7 +864,8 @@ def update_event_participant(
     summary="Editar um evento",
     responses={
         status.HTTP_400_BAD_REQUEST: {
-            "description": "A nova data, horario ou local e invalido.",
+            "description": "A nova data, horario, local ou capa e invalido.",
+            "content": {"application/json": {"examples": BAD_REQUEST_EXAMPLES}},
         },
         status.HTTP_403_FORBIDDEN: {
             "description": "Apenas o organizador pode editar o evento.",
@@ -806,6 +912,10 @@ def update_event(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid event coordinates",
+        ) from error
+    except InvalidCoverPhotoUrlError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid cover photo URL"
         ) from error
     except TooManyEventTagsError as error:
         raise HTTPException(

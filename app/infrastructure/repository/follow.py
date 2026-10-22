@@ -1,11 +1,20 @@
+import unicodedata
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from app.domain.entities import BusinessProfile, FollowedBusiness, User, UserFollow
+from app.domain.entities import (
+    BusinessFollower,
+    BusinessFollowerTag,
+    BusinessProfile,
+    FollowedBusiness,
+    User,
+    UserFollow,
+)
+from app.infrastructure.repository.block import block_exists_between
 from app.infrastructure.repository.business_profile import to_business_profile_entity
 from app.infrastructure.repository.models import (
     BusinessProfileModel,
@@ -15,6 +24,43 @@ from app.infrastructure.repository.models import (
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
 
 __all__ = ["SqlAlchemyFollowRepository"]
+
+
+def _unaccent_str(text: str) -> str:
+    nfkd = unicodedata.normalize("NFKD", text)
+    return "".join(c for c in nfkd if not unicodedata.combining(c))
+
+
+def _unaccent_column(col):
+    replacements = (
+        ("á", "a"),
+        ("à", "a"),
+        ("ã", "a"),
+        ("â", "a"),
+        ("é", "e"),
+        ("ê", "e"),
+        ("í", "i"),
+        ("ó", "o"),
+        ("ô", "o"),
+        ("õ", "o"),
+        ("ú", "u"),
+        ("ç", "c"),
+        ("Á", "A"),
+        ("À", "A"),
+        ("Ã", "A"),
+        ("Â", "A"),
+        ("É", "E"),
+        ("Ê", "E"),
+        ("Í", "I"),
+        ("Ó", "O"),
+        ("Ô", "O"),
+        ("Õ", "O"),
+        ("Ú", "U"),
+        ("Ç", "C"),
+    )
+    for src, dst in replacements:
+        col = func.replace(col, src, dst)
+    return col
 
 
 class SqlAlchemyFollowRepository:
@@ -130,4 +176,79 @@ class SqlAlchemyFollowRepository:
             follower_id=model.follower_id,
             followed_business_id=model.followed_business_id,
             created_at=model.created_at,
+        )
+
+    def count_followers(self, business_id: UUID) -> int:
+        stmt = (
+            select(func.count())
+            .select_from(UserFollowModel)
+            .join(UserModel, UserModel.user_id == UserFollowModel.follower_id)
+            .where(
+                UserFollowModel.followed_business_id == business_id,
+                UserModel.deleted_at.is_(None),
+                ~block_exists_between(UserModel.user_id, business_id),
+            )
+        )
+        return self.db.scalar(stmt) or 0
+
+    def list_followers(
+        self,
+        business_id: UUID,
+        *,
+        search: str | None,
+        limit: int,
+        cursor_followed_at: datetime | None,
+        cursor_follower_id: UUID | None,
+    ) -> list[BusinessFollower]:
+        stmt = (
+            select(UserFollowModel, UserModel)
+            .join(UserModel, UserModel.user_id == UserFollowModel.follower_id)
+            .options(selectinload(UserModel.tags))
+            .where(
+                UserFollowModel.followed_business_id == business_id,
+                UserModel.deleted_at.is_(None),
+                ~block_exists_between(UserModel.user_id, business_id),
+            )
+            .order_by(
+                UserFollowModel.created_at.desc(),
+                UserFollowModel.follower_id.desc(),
+            )
+        )
+        if search:
+            escaped_search = (
+                search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
+            unaccented_search = _unaccent_str(escaped_search)
+            unaccented_col = _unaccent_column(UserModel.name)
+            stmt = stmt.where(
+                or_(
+                    UserModel.name.ilike(f"%{escaped_search}%", escape="\\"),
+                    unaccented_col.ilike(f"%{unaccented_search}%", escape="\\"),
+                )
+            )
+        if cursor_followed_at is not None and cursor_follower_id is not None:
+            stmt = stmt.where(
+                or_(
+                    UserFollowModel.created_at < cursor_followed_at,
+                    (UserFollowModel.created_at == cursor_followed_at)
+                    & (UserFollowModel.follower_id < cursor_follower_id),
+                )
+            )
+        rows = self.db.execute(stmt.limit(limit)).all()
+        return [self._to_business_follower(follow, user) for follow, user in rows]
+
+    @staticmethod
+    def _to_business_follower(
+        follow: UserFollowModel, user: UserModel
+    ) -> BusinessFollower:
+        sorted_tags = sorted(user.tags, key=lambda t: (t.tag_name, t.tag_id))
+        return BusinessFollower(
+            user_id=user.user_id,
+            name=user.name,
+            photo_url=user.profile_photo_url,
+            followed_at=follow.created_at,
+            tags=tuple(
+                BusinessFollowerTag(id=t.tag_id, name=t.tag_name)
+                for t in sorted_tags[:3]
+            ),
         )

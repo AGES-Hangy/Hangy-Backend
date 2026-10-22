@@ -40,6 +40,10 @@ class Settings:
         os.getenv("PRIVATE_EVENT_AREA_RADIUS_M", "500")
     )
     expo_access_token: str | None = os.getenv("EXPO_ACCESS_TOKEN")
+    # How far ahead of starts_at the "event starting" job warns participants.
+    starting_soon_window_minutes: int = int(
+        os.getenv("STARTING_SOON_WINDOW_MINUTES", "60")
+    )
     aws_region: str = os.getenv("AWS_REGION", "us-east-1").strip()
     s3_bucket_name: str = os.getenv("S3_BUCKET_NAME", "").strip()
     aws_s3_bucket: str = os.getenv("AWS_S3_BUCKET", "").strip()

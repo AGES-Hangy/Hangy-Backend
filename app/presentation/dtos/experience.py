@@ -3,7 +3,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-__all__ = ["CreateExperienceInput", "CreateExperienceOutput", "ExperienceImageOutput"]
+__all__ = [
+    "CreateExperienceInput",
+    "CreateExperienceOutput",
+    "EventPhotoAuthorOutput",
+    "EventPhotoOutput",
+    "EventPhotosOutput",
+    "ExperienceImageOutput",
+]
 
 
 class CreateExperienceInput(BaseModel):
@@ -24,3 +31,21 @@ class CreateExperienceOutput(BaseModel):
     description: str
     images: list[ExperienceImageOutput]
     created_at: datetime
+
+
+class EventPhotoAuthorOutput(BaseModel):
+    id: UUID
+    name: str | None
+
+
+class EventPhotoOutput(BaseModel):
+    photo_id: UUID
+    photo_url: str
+    author: EventPhotoAuthorOutput
+    can_delete: bool
+    created_at: datetime
+
+
+class EventPhotosOutput(BaseModel):
+    items: list[EventPhotoOutput]
+    next_cursor: str | None

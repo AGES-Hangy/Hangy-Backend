@@ -9,6 +9,7 @@ from app.domain.enums import (
     EventParticipantStatusEnum,
     EventPrivacyEnum,
     EventStatusEnum,
+    LocationPrecisionEnum,
 )
 
 
@@ -17,6 +18,30 @@ class EventLocationInput(BaseModel):
 
     latitude: float
     longitude: float
+
+
+class EventLocationOutput(BaseModel):
+    latitude: float
+    longitude: float
+
+
+class NearbyEventOutput(BaseModel):
+    event_id: UUID
+    title: str
+    event_date: datetime
+    location: EventLocationOutput
+    location_name: str | None
+    location_precision: LocationPrecisionEnum
+    location_radius_m: int | None
+    privacy: EventPrivacyEnum
+    cover_photo_url: str | None
+    distance_m: int
+    participants_count: int | None
+    is_confirmed: bool
+
+
+class NearbyEventsOutput(BaseModel):
+    items: list[NearbyEventOutput]
 
 
 class CreateEventInput(BaseModel):

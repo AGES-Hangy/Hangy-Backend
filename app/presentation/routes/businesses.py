@@ -26,6 +26,7 @@ from app.infrastructure.repository.business_profile import (
 )
 from app.infrastructure.repository.follow import SqlAlchemyFollowRepository
 from app.presentation.dtos import (
+    BusinessFollowersOutput,
     BusinessMeOutput,
     BusinessProfileUpdateInput,
     BusinessProfileUpdateOutput,
@@ -88,6 +89,80 @@ def read_current_business_profile(
             status.HTTP_403_FORBIDDEN, "Not a business profile"
         ) from error
     return BusinessProfileAssembler.to_dto(profile)
+
+
+@router.get(
+    "/me/followers",
+    response_model=BusinessFollowersOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Listar seguidores do estabelecimento autenticado",
+    description=(
+        "Lista os seguidores do estabelecimento logado, com busca por nome "
+        "e paginação por cursor opaco (`next_cursor`). Usuários bloqueados "
+        "(em qualquer direção) e contas excluídas não aparecem."
+    ),
+    responses={
+        400: {
+            "description": "`limit` fora de 1–100 ou `cursor` malformado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid pagination parameters"}
+                }
+            },
+        },
+        401: {
+            "description": "Token ausente, expirado ou inválido.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        403: {
+            "description": "Usuário pessoal chamando o endpoint.",
+            "content": {
+                "application/json": {"example": {"detail": "Not a business profile"}}
+            },
+        },
+    },
+)
+def read_current_business_followers(
+    current_user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[FollowService, Depends(get_follow_service)],
+    q: Annotated[
+        str | None,
+        Query(
+            min_length=2,
+            description="Busca por parte do nome do seguidor.",
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Query(description="Tamanho da página (1–100)."),
+    ] = DEFAULT_FOLLOWING_LIMIT,
+    cursor: Annotated[
+        str | None,
+        Query(description="Cursor opaco de paginação."),
+    ] = None,
+) -> BusinessFollowersOutput:
+    if current_user.user_id is None:
+        raise credentials_exception
+    try:
+        page = service.get_followers(
+            current_user,
+            search=q,
+            limit=limit,
+            cursor=cursor,
+        )
+    except NotBusinessProfileError as error:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Not a business profile"
+        ) from error
+    except InvalidPaginationError as error:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, "Invalid pagination parameters"
+        ) from error
+    return FollowAssembler.to_followers_dto(page)
 
 
 @router.patch(
