@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import and_, exists, func, or_, select, update
+from sqlalchemy import and_, case, exists, func, or_, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.domain.entities import (
@@ -13,6 +13,7 @@ from app.domain.entities import (
 from app.domain.entities.tag import Tag
 from app.domain.entities.user_profile import UserProfileData
 from app.domain.enums import (
+    ConnectionDirectionEnum,
     EventParticipantStatusEnum,
     EventStatusEnum,
     UserConnectionStatusEnum,
@@ -78,8 +79,6 @@ class SqlAlchemyUserProfileRepository:
         confirmed = confirmed_participations(
             EventModel.event_status == EventStatusEnum.PUBLISHED, ~is_over
         )
-        # Same rule as the `history` tab of GET /users/{user_id}/events: over
-        # events the user created count too, once even if they also attended.
         past = (
             select(func.count())
             .select_from(EventModel)
@@ -212,6 +211,9 @@ class SqlAlchemyUserProfileRepository:
         connections_count = 0
         is_following = False
         connection_status = None
+        connection_id = None
+        connection_direction = None
+        followers_count = None
 
         if model.user_type == UserTypeEnum.PERSONAL:
             connections_count = (
@@ -229,8 +231,13 @@ class SqlAlchemyUserProfileRepository:
             )
 
             if viewer_id != user_id:
-                connection_status = self.db.scalar(
-                    select(UserConnectionModel.status).where(
+                connection = self.db.execute(
+                    select(
+                        UserConnectionModel.connection_id,
+                        UserConnectionModel.requester_id,
+                        UserConnectionModel.status,
+                    ).where(
+                        UserConnectionModel.deleted_at.is_(None),
                         or_(
                             and_(
                                 UserConnectionModel.requester_id == viewer_id,
@@ -240,31 +247,36 @@ class SqlAlchemyUserProfileRepository:
                                 UserConnectionModel.requester_id == user_id,
                                 UserConnectionModel.receiver_id == viewer_id,
                             ),
-                        )
+                        ),
                     )
-                )
-        else:
-            connections_count = (
-                self.db.scalar(
-                    select(func.count())
-                    .select_from(user_follows)
-                    .where(user_follows.c.followed_business_id == user_id)
-                )
-                or 0
-            )
+                ).first()
 
-            if viewer_id != user_id:
-                is_following = (
-                    self.db.scalar(
-                        select(func.count())
-                        .select_from(user_follows)
-                        .where(
-                            user_follows.c.follower_id == viewer_id,
-                            user_follows.c.followed_business_id == user_id,
+                if connection is not None:
+                    connection_status = connection.status
+                    if connection.status != UserConnectionStatusEnum.REJECTED:
+                        connection_id = connection.connection_id
+                    if connection.status == UserConnectionStatusEnum.PENDING:
+                        connection_direction = (
+                            ConnectionDirectionEnum.SENT
+                            if connection.requester_id == viewer_id
+                            else ConnectionDirectionEnum.RECEIVED
                         )
-                    )
-                    > 0
+        else:
+            followers_count, viewer_follows = self.db.execute(
+                select(
+                    func.count(),
+                    func.coalesce(
+                        func.sum(
+                            case((user_follows.c.follower_id == viewer_id, 1), else_=0)
+                        ),
+                        0,
+                    ),
                 )
+                .select_from(user_follows)
+                .where(user_follows.c.followed_business_id == user_id)
+            ).one()
+            connections_count = followers_count
+            is_following = viewer_id != user_id and viewer_follows > 0
 
         return UserProfileData(
             user_id=model.user_id,
@@ -290,6 +302,9 @@ class SqlAlchemyUserProfileRepository:
             connection_status=connection_status,
             is_following=is_following,
             connections_count=connections_count,
+            connection_id=connection_id,
+            connection_direction=connection_direction,
+            followers_count=followers_count,
         )
 
 
