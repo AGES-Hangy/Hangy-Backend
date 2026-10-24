@@ -16,7 +16,7 @@ __all__ = [
     "EventPhotoListItem",
     "EventPhotosPage",
     "ExperienceImage",
-    "ExperiencePhotoAccess"
+    "ExperiencePhotoAccess",
     "NewEventExperience",
 ]
 

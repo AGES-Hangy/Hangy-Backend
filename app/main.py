@@ -8,7 +8,7 @@ from app.presentation.routes import (
     cancel_participation_router,
     connection_router,
     events_router,
-    experience_images_router
+    experience_images_router,
     experiences_router,
     feed_router,
     following_router,

@@ -151,7 +151,6 @@ class SqlAlchemyExperienceRepository:
         self.db.refresh(model)
         return self._to_entity(model)
 
-
     def get_photo_access(self, photo_id: UUID) -> ExperiencePhotoAccess | None:
         stmt = (
             select(
@@ -201,7 +200,6 @@ class SqlAlchemyExperienceRepository:
         )
         self.db.commit()
         return result.rowcount == 1
-
 
     @staticmethod
     def _to_entity(model: EventExperienceModel) -> EventExperience:
