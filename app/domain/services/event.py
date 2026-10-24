@@ -1,7 +1,9 @@
 from collections.abc import Collection
+from dataclasses import replace
 from datetime import UTC, datetime
+from logging import getLogger
 from typing import Protocol
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from app.domain.entities import Event, EventParticipant, EventUpdate, NewEvent
 from app.domain.enums import (
@@ -9,6 +11,9 @@ from app.domain.enums import (
     EventStatusEnum,
     NotificationTypeEnum,
 )
+from app.domain.services.event_location import approximate_point
+
+logger = getLogger(__name__)
 
 MAX_EVENT_TAGS = 5
 MIN_LATITUDE, MAX_LATITUDE = -90.0, 90.0
@@ -63,6 +68,12 @@ class EventRepository(Protocol):
     ) -> None: ...
 
 
+class ImageUploadServiceProtocol(Protocol):
+    def owns(self, url: str) -> bool: ...
+
+    def delete(self, url: str) -> None: ...
+
+
 class EventStartsInThePastError(Exception):
     """Raised when an event is published with a start date that already passed."""
 
@@ -73,6 +84,10 @@ class EventEndsBeforeItStartsError(Exception):
 
 class InvalidEventCoordinatesError(Exception):
     """Raised when the event coordinates fall outside the valid ranges."""
+
+
+class InvalidCoverPhotoUrlError(Exception):
+    """Raised when a new event cover does not belong to the image storage."""
 
 
 class TooManyEventTagsError(Exception):
@@ -108,8 +123,13 @@ class EventAlreadyFinishedError(Exception):
 
 
 class EventsService:
-    def __init__(self, repository: EventRepository) -> None:
+    def __init__(
+        self,
+        repository: EventRepository,
+        image_upload_service: ImageUploadServiceProtocol,
+    ) -> None:
         self.repository = repository
+        self.image_upload_service = image_upload_service
 
     def create(self, event: NewEvent) -> Event:
         """Validate and publish an event, with its organizer already resolved."""
@@ -125,12 +145,27 @@ class EventsService:
         if len(event.tag_ids) > MAX_EVENT_TAGS:
             raise TooManyEventTagsError
 
+        self._validate_cover_photo_url(event.cover_photo_url)
+
         if event.tag_ids:
             existing = self.repository.find_existing_tag_ids(event.tag_ids)
             if len(existing) != len(event.tag_ids):
                 raise EventTagNotFoundError
 
-        return self.repository.add(event)
+        # Computed for every event, whatever its privacy: who gets to see which
+        # point is decided when the event is read, not here.
+        event_id = uuid4()
+        approx_latitude, approx_longitude = approximate_point(
+            event_id, event.event_latitude, event.event_longitude
+        )
+        return self.repository.add(
+            replace(
+                event,
+                event_id=event_id,
+                approx_latitude=approx_latitude,
+                approx_longitude=approx_longitude,
+            )
+        )
 
     def update_participant_status(
         self,
@@ -208,6 +243,13 @@ class EventsService:
         ):
             raise InvalidEventCoordinatesError
 
+        cover_changed = (
+            "cover_photo_url" in changes.fields_to_update
+            and changes.cover_photo_url != event.cover_photo_url
+        )
+        if cover_changed:
+            self._validate_cover_photo_url(changes.cover_photo_url)
+
         tag_ids: Collection[UUID] | None = None
         if "tag_ids" in changes.fields_to_update:
             tag_ids = changes.tag_ids
@@ -217,6 +259,17 @@ class EventsService:
                 existing = self.repository.find_existing_tag_ids(tag_ids)
                 if len(existing) != len(tag_ids):
                     raise EventTagNotFoundError
+
+        # The approximate point only moves together with the real one, so
+        # editing anything else can never be used to sample new offsets.
+        approx_latitude, approx_longitude = (
+            event.approx_latitude,
+            event.approx_longitude,
+        )
+        if "location" in changes.fields_to_update:
+            approx_latitude, approx_longitude = approximate_point(
+                event_id, changes.event_latitude, changes.event_longitude
+            )
 
         updated_event = Event(
             event_id=event.event_id,
@@ -236,6 +289,8 @@ class EventsService:
                 if "location" in changes.fields_to_update
                 else event.event_longitude
             ),
+            approx_latitude=approx_latitude,
+            approx_longitude=approx_longitude,
             starts_at=starts_at,
             ends_at=ends_at,
             event_status=event.event_status,
@@ -252,6 +307,16 @@ class EventsService:
                 if "location_name" in changes.fields_to_update
                 else event.location_name
             ),
+            location_neighborhood=(
+                changes.location_neighborhood
+                if "location_neighborhood" in changes.fields_to_update
+                else event.location_neighborhood
+            ),
+            location_city=(
+                changes.location_city
+                if "location_city" in changes.fields_to_update
+                else event.location_city
+            ),
             max_participants=event.max_participants,
             cover_photo_url=(
                 changes.cover_photo_url
@@ -262,9 +327,26 @@ class EventsService:
         )
         updated_event = self.repository.update(updated_event, tag_ids)
 
+        # The repository commits the new cover before the old object is deleted.
+        if (
+            cover_changed
+            and event.cover_photo_url is not None
+            and self.image_upload_service.owns(event.cover_photo_url)
+        ):
+            try:
+                self.image_upload_service.delete(event.cover_photo_url)
+            except Exception:
+                logger.exception(
+                    "Failed to delete previous cover for event %s", event_id
+                )
+
         if {"event_date", "location"} & changes.fields_to_update:
             participant_ids = self.repository.get_confirmed_participant_ids(event_id)
             if participant_ids:
                 self.repository.notify_event_updated(event_id, participant_ids)
 
         return updated_event
+
+    def _validate_cover_photo_url(self, url: str | None) -> None:
+        if url is not None and not self.image_upload_service.owns(url):
+            raise InvalidCoverPhotoUrlError

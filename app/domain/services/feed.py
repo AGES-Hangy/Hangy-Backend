@@ -1,11 +1,11 @@
 from collections.abc import Collection, Sequence
-from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
-from app.domain.entities import Feed, FeedItem, FeedSection, Tag
+from app.domain.entities import Feed, FeedEvent, FeedItem, FeedSection, Tag
 from app.domain.enums import EventPrivacyEnum
+from app.domain.services.event_location import resolve_location
 
 DEFAULT_FEED_LIMIT = 10
 MIN_FEED_LIMIT = 1
@@ -25,7 +25,7 @@ class FeedRepository(Protocol):
         tag_ids: Collection[UUID],
         reference_time: datetime,
         limit: int,
-    ) -> list[FeedItem]: ...
+    ) -> list[FeedEvent]: ...
 
 
 class InvalidFeedPaginationError(Exception):
@@ -62,7 +62,7 @@ class FeedService:
                 FeedSection(
                     tag=macro_tag,
                     items=tuple(
-                        self._hide_restricted_details(event) for event in events[:limit]
+                        self._to_item(event, user_id) for event in events[:limit]
                     ),
                     has_more=len(events) > limit,
                 )
@@ -70,16 +70,31 @@ class FeedService:
         return Feed(sections=tuple(sections))
 
     @staticmethod
-    def _hide_restricted_details(item: FeedItem) -> FeedItem:
+    def _to_item(feed_event: FeedEvent, viewer_id: UUID) -> FeedItem:
         """Keep a PRIVATE event discoverable without giving it away.
 
-        Anyone may find a PRIVATE event through its tags and ask to join, but
-        when and where it happens is only revealed once the request is accepted.
-        INVITE_ONLY events never reach the feed, so they need no masking here.
+        Anyone may find a PRIVATE event through its tags and ask to join. Its
+        schedule stays hidden, and only its organizer and confirmed participants
+        get more than the neighborhood. INVITE_ONLY events never reach the feed.
         """
-        if item.privacy is not EventPrivacyEnum.PRIVATE:
-            return item
-        return replace(item, event_date=None, location_name=None)
+        event = feed_event.event
+        if event.event_id is None:
+            raise ValueError("A persisted event must have an id")
+        is_private = event.event_privacy is EventPrivacyEnum.PRIVATE
+        return FeedItem(
+            event_id=event.event_id,
+            title=event.event_title,
+            event_date=None if is_private else event.starts_at,
+            privacy=event.event_privacy,
+            participants_count=feed_event.participants_count,
+            location=resolve_location(
+                event,
+                is_organizer=event.event_creator_id == viewer_id,
+                participation_status=feed_event.viewer_participation_status,
+            ),
+            cover_photo_url=event.cover_photo_url,
+            tags=feed_event.tags,
+        )
 
     def _group_by_macro_tag(
         self, interest_tags: Sequence[Tag]

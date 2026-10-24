@@ -1,12 +1,31 @@
-from sqlalchemy import select
+from uuid import UUID
+
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.domain.entities import BusinessProfile, User
+from app.domain.entities import BusinessProfile, EditedBusinessProfile, User
 from app.domain.services.auth import DuplicateEmailError
 from app.domain.services.register_business import DuplicateCnpjError
 from app.infrastructure.repository.models import BusinessProfileModel, UserModel
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
+
+__all__ = [
+    "SqlAlchemyBusinessProfileRepository",
+    "SqlAlchemyBusinessRegistrationRepository",
+    "to_business_profile_entity",
+]
+
+
+def to_business_profile_entity(model: BusinessProfileModel) -> BusinessProfile:
+    return BusinessProfile(
+        user_id=model.user_id,
+        cnpj=model.cnpj,
+        address=model.address,
+        updated_at=model.updated_at,
+        business_latitude=model.business_latitude,
+        business_longitude=model.business_longitude,
+    )
 
 
 class SqlAlchemyBusinessRegistrationRepository:
@@ -24,9 +43,14 @@ class SqlAlchemyBusinessRegistrationRepository:
 
     def get_by_cnpj(self, cnpj: str) -> BusinessProfile | None:
         model = self.db.scalar(
-            select(BusinessProfileModel).where(BusinessProfileModel.cnpj == cnpj)
+            select(BusinessProfileModel)
+            .join(UserModel, UserModel.user_id == BusinessProfileModel.user_id)
+            .where(
+                BusinessProfileModel.cnpj == cnpj,
+                UserModel.deleted_at.is_(None),
+            )
         )
-        return self._to_entity(model) if model is not None else None
+        return to_business_profile_entity(model) if model is not None else None
 
     def add(self, user: User, profile: BusinessProfile) -> User:
         user_model = UserModel(
@@ -65,13 +89,53 @@ class SqlAlchemyBusinessRegistrationRepository:
         self.db.refresh(user_model)
         return SqlAlchemyUserRepository._to_entity(user_model)
 
+
+class SqlAlchemyBusinessProfileRepository:
+    def __init__(self, db: Session) -> None:
+        self.db = db
+
     @staticmethod
     def _to_entity(model: BusinessProfileModel) -> BusinessProfile:
-        return BusinessProfile(
-            user_id=model.user_id,
-            cnpj=model.cnpj,
-            address=model.address,
-            updated_at=model.updated_at,
-            business_latitude=model.business_latitude,
-            business_longitude=model.business_longitude,
+        return to_business_profile_entity(model)
+
+    def get_by_user_id(self, user_id: UUID) -> BusinessProfile | None:
+        model = self.db.scalar(
+            select(BusinessProfileModel)
+            .join(UserModel, UserModel.user_id == BusinessProfileModel.user_id)
+            .where(
+                BusinessProfileModel.user_id == user_id,
+                UserModel.deleted_at.is_(None),
+            )
         )
+        if model is None:
+            return None
+        return self._to_entity(model)
+
+    def update_profile(self, profile: EditedBusinessProfile) -> EditedBusinessProfile:
+        self.db.execute(
+            update(UserModel)
+            .where(
+                UserModel.user_id == profile.user_id,
+                UserModel.deleted_at.is_(None),
+            )
+            .values(
+                name=profile.business_name,
+                description=profile.description,
+                updated_at=profile.updated_at,
+            )
+        )
+        self.db.execute(
+            update(BusinessProfileModel)
+            .where(
+                BusinessProfileModel.user_id == profile.user_id,
+                BusinessProfileModel.user.has(UserModel.deleted_at.is_(None)),
+            )
+            .values(
+                address=profile.address,
+                business_latitude=profile.latitude,
+                business_longitude=profile.longitude,
+                updated_at=profile.updated_at,
+            )
+        )
+        self.db.commit()
+        return profile

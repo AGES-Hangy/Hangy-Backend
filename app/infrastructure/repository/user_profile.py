@@ -1,29 +1,38 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, case, exists, func, or_, select, update
+from sqlalchemy.orm import Session, joinedload
 
-from app.domain.entities import BusinessProfile, PersonProfile, UserProfileCounts
+from app.domain.entities import (
+    BusinessProfile,
+    EditedPersonProfile,
+    PersonProfile,
+    UserProfileCounts,
+)
+from app.domain.entities.tag import Tag
+from app.domain.entities.user_profile import UserProfileData
 from app.domain.enums import (
+    ConnectionDirectionEnum,
     EventParticipantStatusEnum,
     EventStatusEnum,
     UserConnectionStatusEnum,
+    UserTypeEnum,
 )
 from app.infrastructure.repository.models import (
     BusinessProfileModel,
     EventModel,
     EventParticipantModel,
     PersonProfileModel,
+    UserConnectionModel,
+    UserModel,
+    user_follows,
 )
 from app.infrastructure.repository.models.event_experience_model import (
     EventExperienceModel,
 )
 from app.infrastructure.repository.models.experience_images_model import (
     ExperienceImagesModel,
-)
-from app.infrastructure.repository.models.user_connection_model import (
-    UserConnectionModel,
 )
 
 
@@ -46,9 +55,7 @@ class SqlAlchemyUserProfileRepository:
     def get_profile_counts(self, user_id: UUID) -> UserProfileCounts:
         """Every counter of the profile screen, aggregated in a single query."""
         now = _now_utc()
-        # A FINISHED event is over even if it was closed before ends_at; a
-        # PUBLISHED one is over once ends_at is reached. CANCELLED and DRAFT
-        # events belong to neither tab.
+
         is_over = or_(
             EventModel.event_status == EventStatusEnum.FINISHED,
             EventModel.ends_at <= now,
@@ -72,11 +79,26 @@ class SqlAlchemyUserProfileRepository:
         confirmed = confirmed_participations(
             EventModel.event_status == EventStatusEnum.PUBLISHED, ~is_over
         )
-        past = confirmed_participations(
-            EventModel.event_status.in_(
-                (EventStatusEnum.PUBLISHED, EventStatusEnum.FINISHED)
-            ),
-            is_over,
+        past = (
+            select(func.count())
+            .select_from(EventModel)
+            .where(
+                EventModel.deleted_at.is_(None),
+                EventModel.event_status.in_(
+                    (EventStatusEnum.PUBLISHED, EventStatusEnum.FINISHED)
+                ),
+                is_over,
+                or_(
+                    EventModel.event_creator_id == user_id,
+                    exists().where(
+                        EventParticipantModel.event_id == EventModel.event_id,
+                        EventParticipantModel.user_id == user_id,
+                        EventParticipantModel.status
+                        == EventParticipantStatusEnum.CONFIRMED,
+                    ),
+                ),
+            )
+            .scalar_subquery()
         )
         photos = (
             select(func.count())
@@ -117,6 +139,36 @@ class SqlAlchemyUserProfileRepository:
             past=row[0], confirmed=row[1], photos=row[2], connections=row[3]
         )
 
+    def update_person_profile(
+        self, profile: EditedPersonProfile
+    ) -> EditedPersonProfile:
+        self.db.execute(
+            update(UserModel)
+            .where(
+                UserModel.user_id == profile.user_id,
+                UserModel.deleted_at.is_(None),
+            )
+            .values(
+                name=profile.name,
+                description=profile.description,
+                updated_at=profile.updated_at,
+            )
+        )
+        self.db.execute(
+            update(PersonProfileModel)
+            .where(
+                PersonProfileModel.user_id == profile.user_id,
+                PersonProfileModel.user.has(UserModel.deleted_at.is_(None)),
+            )
+            .values(
+                state=profile.state,
+                city=profile.city,
+                updated_at=profile.updated_at,
+            )
+        )
+        self.db.commit()
+        return profile
+
     @staticmethod
     def _to_person_entity(model: PersonProfileModel) -> PersonProfile:
         return PersonProfile(
@@ -138,3 +190,122 @@ class SqlAlchemyUserProfileRepository:
             business_latitude=model.business_latitude,
             business_longitude=model.business_longitude,
         )
+
+    def get_profile(self, user_id: UUID, viewer_id: UUID) -> UserProfileData | None:
+        model = (
+            self.db.execute(
+                select(UserModel)
+                .where(
+                    UserModel.user_id == user_id,
+                    UserModel.deleted_at.is_(None),
+                )
+                .options(joinedload(UserModel.tags))
+            )
+            .unique()
+            .scalar_one_or_none()
+        )
+
+        if model is None:
+            return None
+
+        connections_count = 0
+        is_following = False
+        connection_status = None
+        connection_id = None
+        connection_direction = None
+        followers_count = None
+
+        if model.user_type == UserTypeEnum.PERSONAL:
+            connections_count = (
+                self.db.scalar(
+                    select(func.count(UserConnectionModel.connection_id)).where(
+                        UserConnectionModel.status
+                        == UserConnectionStatusEnum.CONFIRMED,
+                        or_(
+                            UserConnectionModel.requester_id == user_id,
+                            UserConnectionModel.receiver_id == user_id,
+                        ),
+                    )
+                )
+                or 0
+            )
+
+            if viewer_id != user_id:
+                connection = self.db.execute(
+                    select(
+                        UserConnectionModel.connection_id,
+                        UserConnectionModel.requester_id,
+                        UserConnectionModel.status,
+                    ).where(
+                        UserConnectionModel.deleted_at.is_(None),
+                        or_(
+                            and_(
+                                UserConnectionModel.requester_id == viewer_id,
+                                UserConnectionModel.receiver_id == user_id,
+                            ),
+                            and_(
+                                UserConnectionModel.requester_id == user_id,
+                                UserConnectionModel.receiver_id == viewer_id,
+                            ),
+                        ),
+                    )
+                ).first()
+
+                if connection is not None:
+                    connection_status = connection.status
+                    if connection.status != UserConnectionStatusEnum.REJECTED:
+                        connection_id = connection.connection_id
+                    if connection.status == UserConnectionStatusEnum.PENDING:
+                        connection_direction = (
+                            ConnectionDirectionEnum.SENT
+                            if connection.requester_id == viewer_id
+                            else ConnectionDirectionEnum.RECEIVED
+                        )
+        else:
+            followers_count, viewer_follows = self.db.execute(
+                select(
+                    func.count(),
+                    func.coalesce(
+                        func.sum(
+                            case((user_follows.c.follower_id == viewer_id, 1), else_=0)
+                        ),
+                        0,
+                    ),
+                )
+                .select_from(user_follows)
+                .where(user_follows.c.followed_business_id == user_id)
+            ).one()
+            connections_count = followers_count
+            is_following = viewer_id != user_id and viewer_follows > 0
+
+        return UserProfileData(
+            user_id=model.user_id,
+            user_type=model.user_type,
+            name=model.name,
+            description=model.description,
+            photo_url=model.profile_photo_url,
+            tags=tuple(
+                Tag(
+                    tag_id=tag.tag_id,
+                    tag_name=tag.tag_name,
+                    tag_parent_id=tag.tag_parent_id,
+                )
+                for tag in sorted(
+                    model.tags,
+                    key=lambda tag: (
+                        tag.tag_parent_id is not None,
+                        tag.tag_name,
+                        tag.tag_id,
+                    ),
+                )
+            ),
+            connection_status=connection_status,
+            is_following=is_following,
+            connections_count=connections_count,
+            connection_id=connection_id,
+            connection_direction=connection_direction,
+            followers_count=followers_count,
+        )
+
+
+__all__ = ["SqlAlchemyUserProfileRepository"]

@@ -25,6 +25,12 @@ mock_provider "aws" {
   mock_resource "aws_s3_bucket" {
     defaults = { arn = "arn:aws:s3:::hangy-production-123456789012-us-east-2" }
   }
+  mock_resource "aws_ecr_repository" {
+    defaults = { arn = "arn:aws:ecr:us-east-2:123456789012:repository/hangy-production" }
+  }
+  mock_resource "aws_secretsmanager_secret" {
+    defaults = { arn = "arn:aws:secretsmanager:us-east-2:123456789012:secret:hangy-production/app-test" }
+  }
 }
 
 mock_provider "random" {
@@ -110,16 +116,67 @@ run "estimate_settings" {
     error_message = "O bucket deve ter nome específico da conta/região e preservar objetos na exclusão."
   }
   assert {
-    condition     = aws_s3_bucket_public_access_block.app.block_public_acls && aws_s3_bucket_public_access_block.app.block_public_policy && aws_s3_bucket_public_access_block.app.ignore_public_acls && aws_s3_bucket_public_access_block.app.restrict_public_buckets
-    error_message = "O bucket de armazenamento deve permanecer privado."
+    condition     = aws_s3_bucket_public_access_block.app.block_public_acls && !aws_s3_bucket_public_access_block.app.block_public_policy && aws_s3_bucket_public_access_block.app.ignore_public_acls && !aws_s3_bucket_public_access_block.app.restrict_public_buckets
+    error_message = "O bucket deve permitir a policy pública de imagens, mantendo ACLs públicas bloqueadas e ignoradas."
   }
   assert {
     condition     = one(one(aws_s3_bucket_server_side_encryption_configuration.app.rule).apply_server_side_encryption_by_default).sse_algorithm == "AES256" && aws_s3_bucket_ownership_controls.app.rule[0].object_ownership == "BucketOwnerEnforced"
     error_message = "O bucket deve criptografar objetos com SSE-S3 e desabilitar ACLs."
   }
   assert {
-    condition     = jsondecode(aws_s3_bucket_policy.app.policy).Statement[0].Condition.Bool["aws:SecureTransport"] == "false" && jsondecode(aws_s3_bucket_policy.app.policy).Statement[0].Effect == "Deny"
+    condition = toset([for statement in jsondecode(aws_s3_bucket_policy.app.policy).Statement : jsonencode(statement) if statement.Sid == "RequireTLS"]) == toset([
+      jsonencode({
+        Sid       = "RequireTLS"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:*"
+        Resource  = [aws_s3_bucket.app.arn, "${aws_s3_bucket.app.arn}/*"]
+        Condition = { Bool = { "aws:SecureTransport" = "false" } }
+      }),
+    ])
     error_message = "O bucket deve recusar transporte sem TLS."
+  }
+}
+
+run "s3_runtime_access" {
+  command = plan
+
+  assert {
+    condition     = aws_instance.api.metadata_options[0].http_tokens == "required" && aws_instance.api.metadata_options[0].http_put_response_hop_limit == 2
+    error_message = "Docker must be able to retrieve role credentials using IMDSv2."
+  }
+  assert {
+    condition     = jsondecode(aws_secretsmanager_secret_version.app.secret_string).S3_BUCKET_NAME == aws_s3_bucket.app.bucket && jsondecode(aws_secretsmanager_secret_version.app.secret_string).AWS_S3_BUCKET == aws_s3_bucket.app.bucket && jsondecode(aws_secretsmanager_secret_version.app.secret_string).AWS_REGION == var.aws_region
+    error_message = "The runtime environment must reference the managed bucket and region."
+  }
+  assert {
+    condition = toset([for statement in jsondecode(aws_iam_role_policy.ec2.policy).Statement : jsonencode(statement) if anytrue([for action in statement.Action : startswith(action, "s3:") || action == "*"])]) == toset([
+      jsonencode({
+        Sid    = "WriteImages"
+        Effect = "Allow"
+        Action = ["s3:PutObject", "s3:DeleteObject"]
+        Resource = [
+          "${aws_s3_bucket.app.arn}/events/covers/*",
+          "${aws_s3_bucket.app.arn}/experiences/*",
+        ]
+      }),
+    ])
+    error_message = "A role da EC2 deve apenas gravar e apagar nos dois prefixos de imagens, sem listar o bucket ou acessar outros prefixos."
+  }
+  assert {
+    condition = length(jsondecode(aws_s3_bucket_policy.app.policy).Statement) == 2 && toset([for statement in jsondecode(aws_s3_bucket_policy.app.policy).Statement : jsonencode(statement) if statement.Sid != "RequireTLS"]) == toset([
+      jsonencode({
+        Sid       = "PublicReadImages"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = "s3:GetObject"
+        Resource = [
+          "${aws_s3_bucket.app.arn}/events/covers/*",
+          "${aws_s3_bucket.app.arn}/experiences/*",
+        ]
+      }),
+    ])
+    error_message = "Além de RequireTLS, a policy deve permitir somente leitura pública nos dois prefixos de imagens, sem escrita ou listagem pública."
   }
 }
 

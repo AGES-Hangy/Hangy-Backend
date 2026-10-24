@@ -3,7 +3,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.domain.enums import EventPrivacyEnum
+from app.domain.enums import EventPrivacyEnum, LocationPrecisionEnum
 from app.domain.services import DEFAULT_FEED_LIMIT
 
 
@@ -25,7 +25,9 @@ class FeedItemOutput(BaseModel):
     event_id: UUID
     title: str
     event_date: datetime | None
+    # The neighborhood when `location_precision` is APPROXIMATE.
     location_name: str | None
+    location_precision: LocationPrecisionEnum
     cover_photo_url: str | None
     privacy: EventPrivacyEnum
     participants_count: int

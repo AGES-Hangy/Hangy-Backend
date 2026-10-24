@@ -9,6 +9,7 @@ from app.domain.enums import (
     EventParticipantStatusEnum,
     EventPrivacyEnum,
     EventStatusEnum,
+    LocationPrecisionEnum,
 )
 
 
@@ -17,6 +18,30 @@ class EventLocationInput(BaseModel):
 
     latitude: float
     longitude: float
+
+
+class EventLocationOutput(BaseModel):
+    latitude: float
+    longitude: float
+
+
+class NearbyEventOutput(BaseModel):
+    event_id: UUID
+    title: str
+    event_date: datetime
+    location: EventLocationOutput
+    location_name: str | None
+    location_precision: LocationPrecisionEnum
+    location_radius_m: int | None
+    privacy: EventPrivacyEnum
+    cover_photo_url: str | None
+    distance_m: int
+    participants_count: int | None
+    is_confirmed: bool
+
+
+class NearbyEventsOutput(BaseModel):
+    items: list[NearbyEventOutput]
 
 
 class CreateEventInput(BaseModel):
@@ -28,6 +53,8 @@ class CreateEventInput(BaseModel):
     location: EventLocationInput
     description: str | None = Field(default=None, max_length=1000)
     location_name: str | None = Field(default=None, max_length=120)
+    location_neighborhood: str | None = Field(default=None, max_length=120)
+    location_city: str | None = Field(default=None, max_length=120)
     # Nullable on purpose: an event without a limit never blocks on capacity.
     max_participants: int | None = Field(default=None, ge=1)
     privacy: EventPrivacyEnum = EventPrivacyEnum.PUBLIC
@@ -109,6 +136,8 @@ class UpdateEventInput(BaseModel):
     end_date: datetime | None = None
     location: EventLocationInput | None = None
     location_name: str | None = Field(default=None, max_length=120)
+    location_neighborhood: str | None = Field(default=None, max_length=120)
+    location_city: str | None = Field(default=None, max_length=120)
     tag_ids: list[UUID] | None = None
     cover_photo_url: str | None = Field(default=None, max_length=2048)
 

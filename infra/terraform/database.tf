@@ -8,6 +8,11 @@ resource "random_password" "jwt" {
   special = false
 }
 
+resource "random_password" "location_obfuscation" {
+  length  = 64
+  special = false
+}
+
 resource "random_id" "final_snapshot" {
   byte_length = 4
 }
@@ -75,10 +80,14 @@ resource "aws_secretsmanager_secret_version" "app" {
   secret_string = jsonencode({
     DATABASE_URL                = "postgresql+psycopg://hangy:${urlencode(random_password.database.result)}@${aws_db_instance.main.address}:5432/hangy?sslmode=require&connect_timeout=10"
     JWT_SECRET_KEY              = random_password.jwt.result
+    LOCATION_OBFUSCATION_SECRET = random_password.location_obfuscation.result
     JWT_ALGORITHM               = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES = "30"
     CORS_ORIGINS                = join(",", length(var.cors_origins) > 0 ? var.cors_origins : [trimsuffix(var.frontend_base_url, "/")])
     FRONTEND_BASE_URL           = var.frontend_base_url
     INVITE_LINK_BASE_URL        = "hangy://invite/"
+    AWS_REGION                  = var.aws_region
+    S3_BUCKET_NAME              = aws_s3_bucket.app.bucket
+    AWS_S3_BUCKET               = aws_s3_bucket.app.bucket
   })
 }

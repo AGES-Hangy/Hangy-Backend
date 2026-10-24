@@ -59,6 +59,15 @@ resource "aws_iam_role_policy" "ec2" {
         Action   = ["secretsmanager:GetSecretValue"]
         Resource = aws_secretsmanager_secret.app.arn
       },
+      {
+        Sid    = "WriteImages"
+        Effect = "Allow"
+        Action = ["s3:PutObject", "s3:DeleteObject"]
+        Resource = [
+          "${aws_s3_bucket.app.arn}/events/covers/*",
+          "${aws_s3_bucket.app.arn}/experiences/*",
+        ]
+      },
     ]
   })
 }

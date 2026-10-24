@@ -25,6 +25,11 @@ class EventStatusEnum(StrEnum):
     FINISHED = "FINISHED"
 
 
+class LocationPrecisionEnum(StrEnum):
+    EXACT = "EXACT"
+    APPROXIMATE = "APPROXIMATE"
+
+
 class EventParticipantStatusEnum(StrEnum):
     PENDING = "PENDING"
     CONFIRMED = "CONFIRMED"
@@ -45,6 +50,11 @@ class UserConnectionStatusEnum(StrEnum):
     CONFIRMED = "CONFIRMED"
     PENDING = "PENDING"
     REJECTED = "REJECTED"
+
+
+class ConnectionDirectionEnum(StrEnum):
+    SENT = "SENT"
+    RECEIVED = "RECEIVED"
 
 
 class ReportTypeEnum(StrEnum):

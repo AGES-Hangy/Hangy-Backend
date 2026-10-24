@@ -13,6 +13,7 @@ from app.domain.enums import (
     NotificationTypeEnum,
     UserConnectionStatusEnum,
 )
+from app.domain.services.event_location import approximate_point
 from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import (
     EventCancelledNotificationModel,
@@ -90,7 +91,7 @@ def test_seed_creates_the_sample_data_only_once(
         assert count(db, user_tag) == sum(
             len(tag_names) for tag_names in SEED_INTERESTS.values()
         )
-        assert count(db, EventParticipantModel) == 12
+        assert count(db, EventParticipantModel) == 15
         assert count(db, NotificationModel) == len(SEED_NOTIFICATIONS)
 
 
@@ -268,6 +269,95 @@ def test_seeded_business_user_has_an_empty_feed(
     app.dependency_overrides.clear()
 
     assert response.json() == {"sections": []}
+
+
+@pytest.mark.parametrize(
+    ("profile_email", "expected"),
+    [
+        # user@hangy.com's own profile: every tab, PRIVATE events included.
+        # The CANCELLED "Pelada" they had confirmed is in none of them.
+        (
+            "user@hangy.com",
+            {
+                "history": [
+                    "Evento encerrado para teste de experiência",
+                    "Sarau de teatro",
+                ],
+                "created": ["Corrida da Redenção"],
+                "interests": [
+                    "Show de rock no Opinião",
+                    "Roda de samba na Cidade Baixa",
+                ],
+                "confirmed": ["Pelada no Parcão", "Aniversário da Maria"],
+            },
+        ),
+        # A business agenda seen by a visitor: PUBLIC only, so the PRIVATE,
+        # INVITE_ONLY, DRAFT and CANCELLED events stay out.
+        (
+            "admin@hangy.com",
+            {
+                "history": [
+                    "Pelada de ontem",
+                    "Evento encerrado para teste de experiência",
+                ],
+                "created": ["Pelada no Parcão", "Show de rock no Opinião"],
+                "interests": None,
+                "confirmed": None,
+            },
+        ),
+        # "Aniversário da Maria" is PRIVATE, and what she is going to
+        # ("Pelada no Parcão") is not shown to visitors.
+        (
+            "maria@hangy.com",
+            {
+                "history": ["Sarau de teatro"],
+                "created": ["Roda de samba na Cidade Baixa"],
+                "interests": None,
+                "confirmed": None,
+            },
+        ),
+        # Her only participation was cancelled: allowed tabs, but empty.
+        (
+            "ana@hangy.com",
+            {"history": [], "created": [], "interests": None, "confirmed": None},
+        ),
+    ],
+)
+def test_seeded_user_events_match_the_documented_sample(
+    session_factory: sessionmaker[Session],
+    profile_email: str,
+    expected: dict[str, list[str] | None],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        # Twice, to show the favorites are not duplicated by a restart.
+        seed_everything(db)
+        profile_id = db.scalar(
+            select(UserModel.user_id).where(UserModel.email == profile_email)
+        )
+
+    def override_get_db() -> Iterator[Session]:
+        with session_factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as client:
+        login = client.post(
+            "/auth/login",
+            json={"email": "user@hangy.com", "password": "user-password"},
+        )
+        response = client.get(
+            f"/users/{profile_id}/events",
+            headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    titles = {
+        tab: [item["title"] for item in page["items"]] if page is not None else None
+        for tab, page in response.json().items()
+    }
+    assert titles == expected
 
 
 @pytest.mark.parametrize(
@@ -503,7 +593,7 @@ def test_seed_restores_participants_changed_while_testing(
         assert (
             participants[maria.user_id].status == EventParticipantStatusEnum.CONFIRMED
         )
-        assert count(db, EventParticipantModel) == 12
+        assert count(db, EventParticipantModel) == 15
 
 
 def test_seed_recomputes_notification_dates_from_the_current_time(
@@ -554,3 +644,102 @@ def test_seed_resets_only_the_demo_notification_to_unread(
 
         assert db.get(NotificationModel, demo_id).read is False
         assert db.get(NotificationModel, user_notification_id).read is True
+
+
+@pytest.mark.parametrize(
+    ("email", "password", "status_code", "expected"),
+    [
+        (
+            "carla@hangy.com",
+            "carla-password",
+            200,
+            {"name": "Carla Dias", "description": "Curto samba", "city": "Canoas"},
+        ),
+        (
+            "admin@hangy.com",
+            "admin-password",
+            403,
+            {"detail": "Not a personal profile"},
+        ),
+    ],
+)
+def test_seeded_users_cover_the_profile_update_cases(
+    session_factory: sessionmaker[Session],
+    email: str,
+    password: str,
+    status_code: int,
+    expected: dict[str, str],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+
+    def override_get_db() -> Iterator[Session]:
+        with session_factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as client:
+        login = client.post(
+            "/auth/login",
+            json={"email": email, "password": password},
+        )
+        assert login.status_code == 200
+        response = client.patch(
+            "/users/me/profile",
+            headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+            json={"description": "Curto samba", "city": "Canoas"},
+        )
+    app.dependency_overrides.clear()
+
+    assert response.status_code == status_code
+    assert response.json().items() >= expected.items()
+
+
+def test_seed_preserves_a_profile_edited_while_testing(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        carla = db.scalar(select(UserModel).where(UserModel.email == "carla@hangy.com"))
+        carla.description = "Bio editada pelo PATCH"
+        carla.person_profile.city = "Canoas"
+        db.commit()
+
+        seed_everything(db)
+        db.expire_all()
+
+        assert carla.description == "Bio editada pelo PATCH"
+        assert carla.person_profile.city == "Canoas"
+
+
+def test_seed_events_have_a_neighborhood_a_city_and_an_approximate_point(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        events = db.scalars(select(EventModel)).all()
+
+        assert len(events) == len(SEED_EVENTS)
+        for event in events:
+            assert event.location_neighborhood
+            assert event.location_city == "Porto Alegre"
+            assert (event.approx_latitude, event.approx_longitude) == approximate_point(
+                event.event_id, event.event_latitude, event.event_longitude
+            )
+
+        # A seed that ran before these columns existed is filled in on restart,
+        # without overwriting what was edited since.
+        missing, customized = events[:2]
+        expected_neighborhood = missing.location_neighborhood
+        missing.location_neighborhood = None
+        missing.location_city = None
+        customized.location_neighborhood = "Bairro editado"
+        db.commit()
+
+        seed_events(db)
+        db.refresh(missing)
+        db.refresh(customized)
+
+        assert missing.location_neighborhood == expected_neighborhood
+        assert missing.location_city == "Porto Alegre"
+        assert customized.location_neighborhood == "Bairro editado"

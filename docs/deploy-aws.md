@@ -26,7 +26,7 @@ Atualizações de `develop` e tags não publicam na AWS.
 | Rede | VPC própria, uma sub-rede pública para a EC2 e duas privadas para o RDS |
 | Banco | Criptografia, TLS obrigatório, backups por 7 dias e proteção contra exclusão |
 | ECR | Imagens privadas com tags imutáveis e scan no push |
-| S3 | Bucket privado para objetos Standard, criptografia SSE-S3, ACLs desabilitadas e TLS obrigatório |
+| S3 | Objetos Standard com SSE-S3, ACLs desabilitadas e TLS obrigatório; leitura pública somente em `events/covers/*` e `experiences/*` ([decisão e validação](s3.md)) |
 | State Terraform | Bucket S3 separado, privado, criptografado, versionado e com lock de execução |
 | Secrets Manager | Credenciais do banco e JWT geradas automaticamente, configurações da API |
 | IAM/OIDC | Role da EC2 e role do GitLab limitada à `main` do projeto informado |
@@ -120,7 +120,7 @@ Variáveis opcionais, também com escopo `production`:
 | `TF_STATE_KEY` | `<CI_PROJECT_PATH>/production.tfstate`; informe a chave anterior se a infraestrutura já foi criada pelo GitHub |
 
 O caminho do projeto é obtido automaticamente do GitLab. Senha do PostgreSQL,
-chave JWT e `DATABASE_URL` são gerados pelo Terraform e guardados no Secrets
+chave JWT, `LOCATION_OBFUSCATION_SECRET` e `DATABASE_URL` são gerados pelo Terraform e guardados no Secrets
 Manager. Não é necessário cadastrá-los nas variáveis do GitLab.
 
 `FRONTEND_BASE_URL` é o endereço do frontend usado para gerar `web_url` nos

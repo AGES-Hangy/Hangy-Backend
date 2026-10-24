@@ -20,6 +20,7 @@ from app.infrastructure.repository.business_profile import (
 from app.infrastructure.repository.models import (
     ConnectionNotificationModel,
     EventCancelledNotificationModel,
+    EventFavoriteModel,
     EventInviteLinkModel,
     EventModel,
     EventParticipantModel,
@@ -164,10 +165,13 @@ EVENT_LONGITUDE = -51.2090
 class SeedEvent:
     title: str
     location_name: str
+    # What a PRIVATE event shows to whoever was not approved yet.
+    location_neighborhood: str
     tag_name: str
     creator_email: str
     # Days from "now", so a restart always leaves the feed with future events.
     starts_in_days: int
+    location_city: str = "Porto Alegre"
     privacy: EventPrivacyEnum = EventPrivacyEnum.PUBLIC
     event_status: EventStatusEnum = EventStatusEnum.PUBLISHED
     cover_photo_url: str | None = None
@@ -181,6 +185,9 @@ class SeedEvent:
     cancelled_emails: tuple[str, ...] = field(default_factory=tuple)
     # Taken out by the creator, who must not be asked to let them back in.
     removed_emails: tuple[str, ...] = field(default_factory=tuple)
+    # Personal accounts that marked the event as an interest: what fills the
+    # `interests` tab of GET /users/{user_id}/events.
+    favorited_emails: tuple[str, ...] = field(default_factory=tuple)
 
 
 SEED_EVENTS = (
@@ -190,6 +197,7 @@ SEED_EVENTS = (
     SeedEvent(
         title="Pelada no Parcão",
         location_name="Parque Moinhos de Vento (Parcão)",
+        location_neighborhood="Moinhos de Vento",
         tag_name="Futebol",
         creator_email="admin@hangy.com",
         starts_in_days=1,
@@ -203,6 +211,7 @@ SEED_EVENTS = (
     SeedEvent(
         title="Corrida da Redenção",
         location_name="Parque Farroupilha (Redenção)",
+        location_neighborhood="Farroupilha",
         tag_name="Corrida",
         creator_email="user@hangy.com",
         starts_in_days=4,
@@ -211,11 +220,13 @@ SEED_EVENTS = (
         pending_emails=("joao@hangy.com",),
         cancelled_emails=("ana@hangy.com",),
     ),
-    # Visible, but the feed hides event_date and location_name for PRIVATE events.
+    # Visible, but the feed hides event_date and shows only the neighborhood of
+    # PRIVATE events to whoever was not approved.
     # Maria approved user@hangy.com's request.
     SeedEvent(
         title="Aniversário da Maria",
         location_name="Casa da Maria",
+        location_neighborhood="Bom Fim",
         tag_name="Futebol",
         creator_email="maria@hangy.com",
         starts_in_days=2,
@@ -229,6 +240,7 @@ SEED_EVENTS = (
     SeedEvent(
         title="Confraternização da equipe",
         location_name="Sede do Hangy",
+        location_neighborhood="Partenon",
         tag_name="Futebol",
         creator_email="admin@hangy.com",
         starts_in_days=10,
@@ -238,6 +250,7 @@ SEED_EVENTS = (
     SeedEvent(
         title="Rachão fechado",
         location_name="Quadra do bairro",
+        location_neighborhood="Santana",
         tag_name="Futebol",
         creator_email="admin@hangy.com",
         starts_in_days=3,
@@ -248,25 +261,30 @@ SEED_EVENTS = (
     SeedEvent(
         title="Show de rock no Opinião",
         location_name="Bar Opinião",
+        location_neighborhood="Cidade Baixa",
         tag_name="Rock",
         creator_email="admin@hangy.com",
         starts_in_days=5,
         cover_photo_url="https://picsum.photos/seed/rock/800/450",
         pending_emails=("maria@hangy.com",),
         rejected_emails=("user@hangy.com",),
+        favorited_emails=("user@hangy.com",),
     ),
     # Invisible: user@hangy.com has no interest in these tags.
     SeedEvent(
         title="Roda de samba na Cidade Baixa",
         location_name="Cidade Baixa",
+        location_neighborhood="Cidade Baixa",
         tag_name="Samba",
         creator_email="maria@hangy.com",
         starts_in_days=6,
+        favorited_emails=("user@hangy.com", "joao@hangy.com"),
     ),
     # João removed user@hangy.com, so they can't ask to join again.
     SeedEvent(
         title="Churrasco do bairro",
         location_name="Salão de festas do bairro",
+        location_neighborhood="Santana",
         tag_name="Churrasco",
         creator_email="joao@hangy.com",
         starts_in_days=7,
@@ -276,13 +294,26 @@ SEED_EVENTS = (
     SeedEvent(
         title="Pelada de ontem",
         location_name="Parque Moinhos de Vento (Parcão)",
+        location_neighborhood="Moinhos de Vento",
         tag_name="Futebol",
         creator_email="admin@hangy.com",
         starts_in_days=-1,
     ),
+    # A finished event with a confirmed demo participant for testing
+    # POST /events/{event_id}/experiences.
+    SeedEvent(
+        title="Evento encerrado para teste de experiência",
+        location_name="Parque Moinhos de Vento (Parcão)",
+        location_neighborhood="Moinhos de Vento",
+        tag_name="Futebol",
+        creator_email="admin@hangy.com",
+        starts_in_days=-2,
+        confirmed_emails=("user@hangy.com",),
+    ),
     SeedEvent(
         title="Pelada em rascunho",
         location_name="Parque Moinhos de Vento (Parcão)",
+        location_neighborhood="Moinhos de Vento",
         tag_name="Futebol",
         creator_email="admin@hangy.com",
         starts_in_days=8,
@@ -291,11 +322,26 @@ SEED_EVENTS = (
     SeedEvent(
         title="Pelada",
         location_name="Parque Moinhos de Vento (Parcão)",
+        location_neighborhood="Moinhos de Vento",
         tag_name="Futebol",
         creator_email="admin@hangy.com",
         starts_in_days=9,
         event_status=EventStatusEnum.CANCELLED,
         confirmed_emails=("user@hangy.com",),
+    ),
+    # Already over and closed as FINISHED: out of the feed, but on the
+    # `history` tab of GET /users/{id}/events for João (creator) and for the
+    # confirmed participants, user@hangy.com included.
+    SeedEvent(
+        title="Sarau de teatro",
+        location_name="Teatro de Arena",
+        location_neighborhood="Centro Histórico",
+        tag_name="Teatro",
+        creator_email="joao@hangy.com",
+        starts_in_days=-5,
+        event_status=EventStatusEnum.FINISHED,
+        cover_photo_url="https://picsum.photos/seed/sarau/800/450",
+        confirmed_emails=("maria@hangy.com", "user@hangy.com"),
     ),
 )
 
@@ -573,6 +619,8 @@ def seed_events(db: Session) -> None:
                 event_creator_id=creator.user_id,
                 event_title=seed.title,
                 location_name=seed.location_name,
+                location_neighborhood=seed.location_neighborhood,
+                location_city=seed.location_city,
                 event_description=f"Evento de exemplo criado pelo seed: {seed.title}.",
                 event_latitude=EVENT_LATITUDE,
                 event_longitude=EVENT_LONGITUDE,
@@ -594,8 +642,13 @@ def seed_events(db: Session) -> None:
             event.ends_at = starts_at + EVENT_DURATION
             if event.location_name is None:
                 event.location_name = seed.location_name
+            if event.location_neighborhood is None:
+                event.location_neighborhood = seed.location_neighborhood
+            if event.location_city is None:
+                event.location_city = seed.location_city
 
         _seed_participants(db, event, seed, users)
+        _seed_favorites(db, event, seed, users)
         _seed_invite_link(db, event, seed)
     db.commit()
 
@@ -755,6 +808,22 @@ def _seed_participants(
                 # so approving or removing someone while testing must not leave
                 # a "wants to join" notification with no pending request behind.
                 participant.status = status
+
+
+def _seed_favorites(
+    db: Session,
+    event: EventModel,
+    seed: SeedEvent,
+    users: dict[str, UserModel],
+) -> None:
+    for email in seed.favorited_emails:
+        user = users.get(email)
+        if user is None:
+            continue
+        # Put back on every run, like the participants: a demo that
+        # unfavorites the event can be repeated after a restart.
+        if db.get(EventFavoriteModel, (user.user_id, event.event_id)) is None:
+            db.add(EventFavoriteModel(user_id=user.user_id, event_id=event.event_id))
 
 
 def _seed_invite_link(db: Session, event: EventModel, seed: SeedEvent) -> None:

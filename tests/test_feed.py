@@ -20,6 +20,7 @@ from app.infrastructure.repository.models import (
     EventModel,
     EventParticipantModel,
     TagModel,
+    UserBlockModel,
     UserModel,
     event_tag,
     user_tag,
@@ -122,11 +123,17 @@ def create_event(
     starts_at: datetime | None = None,
     privacy: EventPrivacyEnum = EventPrivacyEnum.PUBLIC,
     event_status: EventStatusEnum = EventStatusEnum.PUBLISHED,
+    location_name: str | None = None,
+    neighborhood: str | None = None,
+    city: str | None = None,
 ) -> uuid.UUID:
     starts_at = starts_at if starts_at is not None else NOW + timedelta(days=1)
     event = EventModel(
         event_creator_id=creator_id,
         event_title=title,
+        location_name=location_name,
+        location_neighborhood=neighborhood,
+        location_city=city,
         event_latitude=-30.0,
         event_longitude=-51.0,
         starts_at=starts_at,
@@ -288,7 +295,7 @@ def test_feed_never_shows_invite_only_events(context: FeedContext) -> None:
     assert get_feed(context)["sections"] == []
 
 
-def test_feed_shows_private_events_without_schedule_and_venue(
+def test_feed_shows_private_events_without_schedule_and_with_the_neighborhood(
     context: FeedContext,
 ) -> None:
     creator_id = create_user(context.db, "creator@hangy.com")
@@ -301,16 +308,93 @@ def test_feed_shows_private_events_without_schedule_and_venue(
         "Aniversário do Felipe",
         (sports,),
         privacy=EventPrivacyEnum.PRIVATE,
+        location_name="Rua da Casa, 123",
+        neighborhood="Bom Fim",
+        city="Porto Alegre",
     )
-    create_event(context.db, creator_id, "Pelada no Parcão", (sports,))
+    create_event(
+        context.db,
+        creator_id,
+        "Pelada no Parcão",
+        (sports,),
+        location_name="Parcão",
+        neighborhood="Moinhos de Vento",
+        city="Porto Alegre",
+    )
 
     items = {item["title"]: item for item in get_feed(context)["sections"][0]["items"]}
 
     private_item = items["Aniversário do Felipe"]
     assert private_item["privacy"] == EventPrivacyEnum.PRIVATE
     assert private_item["event_date"] is None
-    assert private_item["location_name"] is None
+    assert private_item["location_name"] == "Bom Fim, Porto Alegre"
+    assert private_item["location_precision"] == "APPROXIMATE"
     assert items["Pelada no Parcão"]["event_date"] is not None
+    assert items["Pelada no Parcão"]["location_name"] == "Parcão"
+    assert items["Pelada no Parcão"]["location_precision"] == "EXACT"
+
+
+@pytest.mark.parametrize(
+    ("status", "location_name", "precision"),
+    [
+        (EventParticipantStatusEnum.CONFIRMED, "Rua da Casa, 123", "EXACT"),
+        (EventParticipantStatusEnum.PENDING, "Bom Fim, Porto Alegre", "APPROXIMATE"),
+        (EventParticipantStatusEnum.REMOVED, "Bom Fim, Porto Alegre", "APPROXIMATE"),
+    ],
+)
+def test_feed_resolves_a_private_event_location_from_the_viewer_participation(
+    context: FeedContext,
+    status: EventParticipantStatusEnum,
+    location_name: str,
+    precision: str,
+) -> None:
+    creator_id = create_user(context.db, "creator@hangy.com")
+    other_id = create_user(context.db, "other@hangy.com")
+    sports = create_tag(context.db, "Esportes")
+    add_interest(context.db, context.user_id, sports)
+    event_id = create_event(
+        context.db,
+        creator_id,
+        "Aniversário do Felipe",
+        (sports,),
+        privacy=EventPrivacyEnum.PRIVATE,
+        location_name="Rua da Casa, 123",
+        neighborhood="Bom Fim",
+        city="Porto Alegre",
+    )
+    add_participant(context.db, event_id, context.user_id, status=status)
+    # Someone else's approval must not leak the address to this viewer, nor
+    # duplicate the card.
+    add_participant(context.db, event_id, other_id)
+
+    [item] = get_feed(context)["sections"][0]["items"]
+
+    assert item["location_name"] == location_name
+    assert item["location_precision"] == precision
+    assert item["participants_count"] == (
+        2 if status is EventParticipantStatusEnum.CONFIRMED else 1
+    )
+
+
+def test_feed_private_event_without_neighborhood_has_no_location_name(
+    context: FeedContext,
+) -> None:
+    creator_id = create_user(context.db, "creator@hangy.com")
+    sports = create_tag(context.db, "Esportes")
+    add_interest(context.db, context.user_id, sports)
+    create_event(
+        context.db,
+        creator_id,
+        "Aniversário do Felipe",
+        (sports,),
+        privacy=EventPrivacyEnum.PRIVATE,
+        location_name="Rua da Casa, 123",
+    )
+
+    item = get_feed(context)["sections"][0]["items"][0]
+
+    assert item["location_name"] is None
+    assert item["location_precision"] == "APPROXIMATE"
 
 
 def test_feed_hides_a_private_event_schedule_even_from_its_creator(
@@ -440,16 +524,50 @@ def test_newly_published_event_is_discoverable_with_appropriate_location(
     assert response.status_code == 201, response.text
     item = get_feed(context)["sections"][0]["items"][0]
     assert item["title"] == "New event"
-    assert item["location_name"] == (
-        "Parque" if privacy == EventPrivacyEnum.PUBLIC else None
-    )
+    # The viewer is the organizer, who always gets the exact location.
+    assert item["location_name"] == "Parque"
+    assert item["location_precision"] == "EXACT"
 
 
-@pytest.mark.skip(
-    reason=(
-        "USER_BLOCK does not exist in the schema yet; the feed query cannot "
-        "filter blocked creators until the blocking task lands."
-    )
-)
-def test_feed_hides_events_created_by_someone_who_blocked_the_user() -> None:
-    raise NotImplementedError
+def test_feed_hides_events_created_by_someone_who_blocked_the_user(
+    context: FeedContext,
+) -> None:
+    blocker_id = create_user(context.db, "blocker@hangy.com")
+    creator_id = create_user(context.db, "creator@hangy.com")
+    sports = create_tag(context.db, "Esportes")
+    add_interest(context.db, context.user_id, sports)
+    create_event(context.db, blocker_id, "Pelada de quem me bloqueou", (sports,))
+    create_event(context.db, creator_id, "Pelada liberada", (sports,))
+    context.db.add(UserBlockModel(blocker_id=blocker_id, blocked_id=context.user_id))
+    context.db.commit()
+
+    assert titles_by_tag(get_feed(context)) == {"Esportes": ["Pelada liberada"]}
+
+
+def test_feed_hides_events_created_by_someone_the_user_blocked(
+    context: FeedContext,
+) -> None:
+    blocked_id = create_user(context.db, "blocked@hangy.com")
+    creator_id = create_user(context.db, "creator@hangy.com")
+    sports = create_tag(context.db, "Esportes")
+    add_interest(context.db, context.user_id, sports)
+    create_event(context.db, blocked_id, "Pelada de quem bloqueei", (sports,))
+    create_event(context.db, creator_id, "Pelada liberada", (sports,))
+    context.db.add(UserBlockModel(blocker_id=context.user_id, blocked_id=blocked_id))
+    context.db.commit()
+
+    assert titles_by_tag(get_feed(context)) == {"Esportes": ["Pelada liberada"]}
+
+
+def test_feed_keeps_events_when_the_block_involves_other_users(
+    context: FeedContext,
+) -> None:
+    creator_id = create_user(context.db, "creator@hangy.com")
+    other_id = create_user(context.db, "other@hangy.com")
+    sports = create_tag(context.db, "Esportes")
+    add_interest(context.db, context.user_id, sports)
+    create_event(context.db, creator_id, "Pelada liberada", (sports,))
+    context.db.add(UserBlockModel(blocker_id=creator_id, blocked_id=other_id))
+    context.db.commit()
+
+    assert titles_by_tag(get_feed(context)) == {"Esportes": ["Pelada liberada"]}
