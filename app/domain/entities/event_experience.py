@@ -16,6 +16,7 @@ __all__ = [
     "EventPhotoListItem",
     "EventPhotosPage",
     "ExperienceImage",
+    "ExperiencePhotoAccess"
     "NewEventExperience",
 ]
 
@@ -69,3 +70,11 @@ class EventPhotoListItem:
 class EventPhotosPage:
     items: tuple[EventPhotoListItem, ...]
     next_cursor: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ExperiencePhotoAccess:
+    photo_id: UUID
+    photo_url: str
+    author_id: UUID
+    organizer_id: UUID

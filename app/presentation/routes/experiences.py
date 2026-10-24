@@ -4,6 +4,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.domain.services.image_upload import ImageUploadService
+from app.presentation.routes.uploads import get_image_upload_service
+
 from app.domain.assemblers import ExperienceAssembler
 from app.domain.entities import User
 from app.domain.services.experience import (
@@ -32,8 +35,11 @@ router = APIRouter(prefix="/events", tags=["Events"])
 
 def get_experience_service(
     db: Annotated[Session, Depends(get_db)],
+    image_upload_service: Annotated[
+        ImageUploadService, Depends(get_image_upload_service)
+    ],
 ) -> ExperienceService:
-    return ExperienceService(SqlAlchemyExperienceRepository(db))
+    return ExperienceService(SqlAlchemyExperienceRepository(db), image_upload_service)
 
 
 @router.post(

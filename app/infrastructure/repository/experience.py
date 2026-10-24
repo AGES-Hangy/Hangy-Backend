@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -9,6 +9,7 @@ from app.domain.entities import (
     EventExperience,
     EventExperienceAccess,
     EventPhoto,
+    ExperiencePhotoAccess,
     NewEventExperience,
 )
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
@@ -149,6 +150,58 @@ class SqlAlchemyExperienceRepository:
             raise
         self.db.refresh(model)
         return self._to_entity(model)
+
+
+    def get_photo_access(self, photo_id: UUID) -> ExperiencePhotoAccess | None:
+        stmt = (
+            select(
+                ExperienceImagesModel.photo_id,
+                ExperienceImagesModel.photo_url,
+                UserModel.user_id,
+                EventModel.event_creator_id,
+            )
+            .join(
+                EventExperienceModel,
+                EventExperienceModel.experience_id
+                == ExperienceImagesModel.experience_id,
+            )
+            .join(
+                EventParticipantModel,
+                EventParticipantModel.participant_id
+                == EventExperienceModel.event_participant_id,
+            )
+            .join(UserModel, UserModel.user_id == EventParticipantModel.user_id)
+            .join(EventModel, EventModel.event_id == EventParticipantModel.event_id)
+            .where(
+                ExperienceImagesModel.photo_id == photo_id,
+                ExperienceImagesModel.deleted_at.is_(None),
+                EventExperienceModel.deleted_at.is_(None),
+                UserModel.deleted_at.is_(None),
+                EventModel.deleted_at.is_(None),
+            )
+        )
+        row = self.db.execute(stmt).one_or_none()
+        if row is None:
+            return None
+        return ExperiencePhotoAccess(
+            photo_id=row.photo_id,
+            photo_url=row.photo_url,
+            author_id=row.user_id,
+            organizer_id=row.event_creator_id,
+        )
+
+    def soft_delete_photo(self, photo_id: UUID) -> bool:
+        result = self.db.execute(
+            update(ExperienceImagesModel)
+            .where(
+                ExperienceImagesModel.photo_id == photo_id,
+                ExperienceImagesModel.deleted_at.is_(None),
+            )
+            .values(deleted_at=datetime.now(UTC))
+        )
+        self.db.commit()
+        return result.rowcount == 1
+
 
     @staticmethod
     def _to_entity(model: EventExperienceModel) -> EventExperience:
