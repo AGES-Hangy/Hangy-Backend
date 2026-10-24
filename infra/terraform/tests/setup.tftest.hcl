@@ -91,6 +91,10 @@ run "secure_arm_stack" {
     error_message = "O segredo deve incluir a URL do frontend e usá-la como origem CORS padrão."
   }
   assert {
+    condition     = random_password.production_admin.length == 10 && !random_password.production_admin.special && jsondecode(aws_secretsmanager_secret_version.app.secret_string).PRODUCTION_ADMIN_PASSWORD == random_password.production_admin.result
+    error_message = "The production admin password must be generated and stored in the app secret."
+  }
+  assert {
     condition     = toset(keys(output.deployment_variables)) == toset(["AWS_REGION", "AWS_ROLE_ARN", "ECR_REPOSITORY", "EC2_INSTANCE_ID", "APP_SECRET_ARN"])
     error_message = "Os outputs devem incluir exatamente as variáveis consumidas pelo deploy."
   }
