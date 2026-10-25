@@ -236,7 +236,7 @@ def send_request(client: TestClient, token: str, receiver_id: str) -> str:
 
 
 def confirm_connection(connection_id: str) -> None:
-    # There is no accept endpoint yet, so the CONFIRMED state is seeded.
+    # Seeded directly so these tests do not depend on the accept flow.
     with open_db() as db:
         model = db.get(UserConnectionModel, UUID(connection_id))
         assert model is not None
