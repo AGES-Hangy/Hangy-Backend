@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
@@ -8,6 +9,7 @@ from app.domain.entities import (
     EventPhoto,
     EventPhotoListItem,
     EventPhotosPage,
+    ExperiencePhotoAccess,
     NewEventExperience,
 )
 from app.domain.enums import (
@@ -15,6 +17,7 @@ from app.domain.enums import (
     EventPrivacyEnum,
     EventStatusEnum,
 )
+from app.domain.services.image_upload import ImageUploadService
 from app.domain.services.pagination import (
     InvalidPaginationError,
     decode_cursor,
@@ -29,9 +32,13 @@ __all__ = [
     "ExperienceEventNotFinishedError",
     "ExperienceEventNotFoundError",
     "ExperienceParticipantNotConfirmedError",
+    "ExperiencePhotoDeleteForbiddenError",
+    "ExperiencePhotoNotFoundError",
     "ExperienceRepository",
     "ExperienceService",
 ]
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_EVENT_PHOTOS_LIMIT = 30
 MIN_EVENT_PHOTOS_LIMIT = 1
@@ -60,6 +67,10 @@ class ExperienceRepository(Protocol):
         self, participant_id: UUID, experience: NewEventExperience
     ) -> EventExperience | None: ...
 
+    def get_photo_access(self, photo_id: UUID) -> ExperiencePhotoAccess | None: ...
+
+    def soft_delete_photo(self, photo_id: UUID) -> bool: ...
+
 
 class ExperienceEventNotFoundError(Exception):
     """The event does not exist or is not visible to this user."""
@@ -77,9 +88,22 @@ class ExperienceAlreadyExistsError(Exception):
     """A participant can create only one experience per event."""
 
 
+class ExperiencePhotoNotFoundError(Exception):
+    """The photo does not exist or was already removed."""
+
+
+class ExperiencePhotoDeleteForbiddenError(Exception):
+    """Only the photo author or the event organizer can remove a photo."""
+
+
 class ExperienceService:
-    def __init__(self, repository: ExperienceRepository) -> None:
+    def __init__(
+        self,
+        repository: ExperienceRepository,
+        image_upload_service: ImageUploadService,
+    ) -> None:
         self.repository = repository
+        self.image_upload_service = image_upload_service
 
     def create(
         self, event_id: UUID, user_id: UUID, experience: NewEventExperience
@@ -138,7 +162,6 @@ class ExperienceService:
         access = self.repository.get_access(event_id, viewer_id)
         if access is None or not self._is_visible(access, viewer_id):
             raise ExperienceEventNotFoundError
-
         # Ask for one extra item to detect whether another page exists.
         photos = self.repository.list_event_photos(
             event_id,
@@ -163,6 +186,22 @@ class ExperienceService:
             next_cursor = encode_cursor(last.created_at, last.photo_id)
 
         return EventPhotosPage(items=items, next_cursor=next_cursor)
+
+    def delete_photo(self, photo_id: UUID, user_id: UUID) -> None:
+        photo = self.repository.get_photo_access(photo_id)
+        if photo is None:
+            raise ExperiencePhotoNotFoundError
+        if user_id not in (photo.author_id, photo.organizer_id):
+            raise ExperiencePhotoDeleteForbiddenError
+
+        if not self.repository.soft_delete_photo(photo_id):
+            raise ExperiencePhotoNotFoundError
+
+        try:
+            if self.image_upload_service.owns(photo.photo_url):
+                self.image_upload_service.delete(photo.photo_url)
+        except Exception:
+            logger.exception("Failed to delete S3 object of photo %s", photo_id)
 
     @staticmethod
     def _is_confirmed(access: EventExperienceAccess) -> bool:

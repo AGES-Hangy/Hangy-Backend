@@ -14,6 +14,7 @@ from app.domain.services.experience import (
     ExperienceParticipantNotConfirmedError,
     ExperienceService,
 )
+from app.domain.services.image_upload import ImageUploadService
 from app.domain.services.pagination import InvalidPaginationError
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.experience import SqlAlchemyExperienceRepository
@@ -24,6 +25,7 @@ from app.presentation.dtos import (
 )
 from app.presentation.mappers import ExperienceMapper
 from app.presentation.routes.auth import credentials_exception, get_current_user
+from app.presentation.routes.uploads import get_image_upload_service
 
 __all__ = ["get_experience_service", "router"]
 
@@ -32,8 +34,11 @@ router = APIRouter(prefix="/events", tags=["Events"])
 
 def get_experience_service(
     db: Annotated[Session, Depends(get_db)],
+    image_upload_service: Annotated[
+        ImageUploadService, Depends(get_image_upload_service)
+    ],
 ) -> ExperienceService:
-    return ExperienceService(SqlAlchemyExperienceRepository(db))
+    return ExperienceService(SqlAlchemyExperienceRepository(db), image_upload_service)
 
 
 @router.post(
