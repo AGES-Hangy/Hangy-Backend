@@ -238,6 +238,40 @@ class SqlAlchemyNotificationRepository:
         return [self._to_entity(row, include_payload=True) for row in rows]
 
 
+def delete_connection_request_notifications(db: Session, connection_id: UUID) -> None:
+    """Drop the receiver's "wants to connect" notification once it is undone.
+
+    Same reason as for participation requests: the notification list would keep
+    offering a request that no longer exists. Runs in the caller's transaction.
+    """
+    request_ids = list(
+        db.scalars(
+            select(NotificationModel.notification_id)
+            .join(
+                ConnectionNotificationModel,
+                ConnectionNotificationModel.notification_id
+                == NotificationModel.notification_id,
+            )
+            .where(
+                ConnectionNotificationModel.connection_id == connection_id,
+                NotificationModel.type == NotificationTypeEnum.CONNECTION_REQUEST,
+            )
+        )
+    )
+    if not request_ids:
+        return
+    db.execute(
+        delete(ConnectionNotificationModel).where(
+            ConnectionNotificationModel.notification_id.in_(request_ids)
+        )
+    )
+    db.execute(
+        delete(NotificationModel).where(
+            NotificationModel.notification_id.in_(request_ids)
+        )
+    )
+
+
 def delete_participation_request_notifications(
     db: Session, participant_id: UUID
 ) -> None:

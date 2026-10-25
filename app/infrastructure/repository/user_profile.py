@@ -225,6 +225,7 @@ class SqlAlchemyUserProfileRepository:
                             UserConnectionModel.requester_id == user_id,
                             UserConnectionModel.receiver_id == user_id,
                         ),
+                        UserConnectionModel.deleted_at.is_(None),
                     )
                 )
                 or 0
@@ -248,6 +249,8 @@ class SqlAlchemyUserProfileRepository:
                                 UserConnectionModel.receiver_id == viewer_id,
                             ),
                         ),
+                        # An undone connection keeps its row (soft delete).
+                        UserConnectionModel.deleted_at.is_(None),
                     )
                 ).first()
 
