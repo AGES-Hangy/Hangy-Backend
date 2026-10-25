@@ -23,18 +23,22 @@ class NotificationRepository(Protocol):
         recipient_id: UUID,
         connection_id: UUID,
         type: NotificationTypeEnum,
-    ) -> UUID: ...
+    ) -> UUID | None: ...
 
     def notify_participant(
         self,
         recipient_id: UUID,
         participant_id: UUID,
         type: NotificationTypeEnum,
-    ) -> UUID: ...
+    ) -> UUID | None: ...
 
-    def notify_event_cancelled(self, recipient_id: UUID, event_id: UUID) -> UUID: ...
+    def notify_event_cancelled(
+        self, recipient_id: UUID, event_id: UUID
+    ) -> UUID | None: ...
 
-    def notify_event_updated(self, recipient_id: UUID, event_id: UUID) -> UUID: ...
+    def notify_event_updated(
+        self, recipient_id: UUID, event_id: UUID
+    ) -> UUID | None: ...
 
     def get_push_context(
         self,
@@ -146,6 +150,8 @@ class NotificationDispatcher:
                 notification_id = self.repository.notify_connection(
                     recipient_id, connection_id, type
                 )
+                if notification_id is None:
+                    return
                 self._send_push(
                     recipient_id, type, notification_id, connection_id=connection_id
                 )
@@ -166,6 +172,8 @@ class NotificationDispatcher:
                 notification_id = self.repository.notify_participant(
                     recipient_id, participant_id, type
                 )
+                if notification_id is None:
+                    return
                 self._send_push(
                     recipient_id, type, notification_id, participant_id=participant_id
                 )
@@ -178,6 +186,8 @@ class NotificationDispatcher:
                 notification_id = self.repository.notify_event_cancelled(
                     recipient_id, event_id
                 )
+                if notification_id is None:
+                    return
                 self._send_push(recipient_id, type, notification_id, event_id=event_id)
 
             elif type is NotificationTypeEnum.EVENT_UPDATED:
@@ -188,6 +198,8 @@ class NotificationDispatcher:
                 notification_id = self.repository.notify_event_updated(
                     recipient_id, event_id
                 )
+                if notification_id is None:
+                    return
                 self._send_push(recipient_id, type, notification_id, event_id=event_id)
 
             else:

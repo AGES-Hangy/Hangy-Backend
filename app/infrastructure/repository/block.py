@@ -1,41 +1,27 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, and_, delete, exists, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.domain.entities import BlockedUser, UserBlock
-from app.domain.enums import UserConnectionStatusEnum
+from app.domain.enums import EventParticipantStatusEnum, UserConnectionStatusEnum
 from app.domain.services.block import UserAlreadyBlockedError
+from app.infrastructure.repository.block_access import (
+    block_exists_between as block_exists_between,
+)
+from app.infrastructure.repository.block_access import (
+    lock_user_pair,
+)
 from app.infrastructure.repository.connection import select_active_between
 from app.infrastructure.repository.models import (
+    EventModel,
+    EventParticipantModel,
     UserBlockModel,
     UserConnectionModel,
     UserModel,
 )
-
-
-def block_exists_between(
-    user_a: UUID | ColumnElement[UUID], user_b: UUID | ColumnElement[UUID]
-) -> ColumnElement[bool]:
-    """SQL condition for "either user blocked the other".
-
-    Accepts columns too, so list queries can filter rows in the database with
-    the same rule BlockService.is_blocked_between applies to a single pair.
-    """
-    return exists().where(
-        or_(
-            and_(
-                UserBlockModel.blocker_id == user_a,
-                UserBlockModel.blocked_id == user_b,
-            ),
-            and_(
-                UserBlockModel.blocker_id == user_b,
-                UserBlockModel.blocked_id == user_a,
-            ),
-        )
-    )
+from app.infrastructure.repository.notification import delete_pair_notifications
 
 
 class SqlAlchemyBlockRepository:
@@ -43,16 +29,17 @@ class SqlAlchemyBlockRepository:
         self.db = db
 
     def exists_between(self, user_a: UUID, user_b: UUID) -> bool:
-        return bool(self.db.scalar(select(block_exists_between(user_a, user_b))))
+        from app.infrastructure.repository.block_access import is_blocked_for_write
+
+        return is_blocked_for_write(self.db, user_a, user_b)
 
     def create(self, blocker_id: UUID, blocked_id: UUID) -> UserBlock:
-        model = UserBlockModel(blocker_id=blocker_id, blocked_id=blocked_id)
-        self.db.add(model)
-        try:
+        lock_user_pair(self.db, blocker_id, blocked_id)
+        existing = self.db.get(UserBlockModel, (blocker_id, blocked_id))
+        model = existing or UserBlockModel(blocker_id=blocker_id, blocked_id=blocked_id)
+        if existing is None:
+            self.db.add(model)
             self.db.flush()
-        except IntegrityError as error:
-            self.db.rollback()
-            raise UserAlreadyBlockedError from error
 
         connection = self.db.scalar(
             select_active_between(self.db, blocker_id, blocked_id)
@@ -62,7 +49,44 @@ class SqlAlchemyBlockRepository:
         if connection is not None:
             connection.deleted_at = datetime.now(UTC)
 
+        self.db.execute(
+            update(EventParticipantModel)
+            .where(
+                EventParticipantModel.status.in_(
+                    (
+                        EventParticipantStatusEnum.PENDING,
+                        EventParticipantStatusEnum.CONFIRMED,
+                    )
+                ),
+                or_(
+                    and_(
+                        EventParticipantModel.user_id == blocker_id,
+                        EventParticipantModel.event_id.in_(
+                            select(EventModel.event_id).where(
+                                EventModel.event_creator_id == blocked_id
+                            )
+                        ),
+                    ),
+                    and_(
+                        EventParticipantModel.user_id == blocked_id,
+                        EventParticipantModel.event_id.in_(
+                            select(EventModel.event_id).where(
+                                EventModel.event_creator_id == blocker_id
+                            )
+                        ),
+                    ),
+                ),
+            )
+            .values(
+                status=EventParticipantStatusEnum.CANCELLED,
+                updated_at=datetime.now(UTC),
+            )
+        )
+        delete_pair_notifications(self.db, blocker_id, blocked_id)
         self.db.commit()
+        if existing is not None:
+            # Preserve 409 while repairing effects of blocks made before this fix.
+            raise UserAlreadyBlockedError
         self.db.refresh(model)
         return self._to_entity(model)
 
@@ -105,6 +129,7 @@ class SqlAlchemyBlockRepository:
         )
 
     def delete(self, blocker_id: UUID, blocked_id: UUID) -> bool:
+        lock_user_pair(self.db, blocker_id, blocked_id)
         result = self.db.execute(
             delete(UserBlockModel).where(
                 UserBlockModel.blocker_id == blocker_id,

@@ -1,0 +1,24 @@
+<!doctype html><meta charset="utf-8"><title>Hangy — evidência de bloqueio</title><style>body{font:16px system-ui;margin:30px;background:#faf8fc;color:#26202b}h1{font-size:26px}main{display:grid;grid-template-columns:1fr 1fr;gap:15px}section{background:white;border:1px solid #d6c9dc;border-radius:12px;padding:15px}h2{font-size:13px;overflow-wrap:anywhere}strong{color:#653e78}pre{font-size:12px;white-space:pre-wrap}</style><h1>Bloqueio: chamadas HTTP reais</h1><p>API local + SQLite exclusivo · contas fictícias · sem mocks de rota · sem tokens exibidos</p><p>Desbloquear não restaura a participação. O último POST registra uma nova inscrição explícita.</p><main><section><h2>DELETE /users/4241e34f-6925-46a5-bd52-3c9622bdce2c/block</h2><strong>HTTP 204</strong><pre>null</pre></section><section><h2>POST /events/75192d11-9d73-4c7c-9b05-2ec7c99db8e3/participation</h2><strong>HTTP 201</strong><pre>{
+  &quot;participant_id&quot;: &quot;da70cdff-3f7b-4975-a766-f3253f78a5c6&quot;,
+  &quot;status&quot;: &quot;CONFIRMED&quot;,
+  &quot;joined_at&quot;: &quot;2026-10-25T19:33:52.976681&quot;
+}</pre></section><section><h2>POST /users/4241e34f-6925-46a5-bd52-3c9622bdce2c/block</h2><strong>HTTP 204</strong><pre>null</pre></section><section><h2>GET /notifications</h2><strong>HTTP 200</strong><pre>{
+  &quot;types&quot;: [
+    &quot;CONNECTION_ACCEPTED&quot;
+  ],
+  &quot;unread_count&quot;: 1
+}</pre></section><section><h2>GET /notifications</h2><strong>HTTP 200</strong><pre>{
+  &quot;types&quot;: [],
+  &quot;unread_count&quot;: 0
+}</pre></section><section><h2>POST /events/75192d11-9d73-4c7c-9b05-2ec7c99db8e3/participation</h2><strong>HTTP 404</strong><pre>{
+  &quot;detail&quot;: &quot;Event not found&quot;
+}</pre></section><section><h2>DELETE /users/4241e34f-6925-46a5-bd52-3c9622bdce2c/block</h2><strong>HTTP 204</strong><pre>null</pre></section><section><h2>GET /notifications</h2><strong>HTTP 200</strong><pre>{
+  &quot;types&quot;: [
+    &quot;CONNECTION_ACCEPTED&quot;
+  ],
+  &quot;unread_count&quot;: 1
+}</pre></section><section><h2>POST /events/75192d11-9d73-4c7c-9b05-2ec7c99db8e3/participation</h2><strong>HTTP 201</strong><pre>{
+  &quot;participant_id&quot;: &quot;da70cdff-3f7b-4975-a766-f3253f78a5c6&quot;,
+  &quot;status&quot;: &quot;CONFIRMED&quot;,
+  &quot;joined_at&quot;: &quot;2026-10-25T19:33:53.102030&quot;
+}</pre></section></main>
