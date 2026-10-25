@@ -17,6 +17,7 @@ from app.domain.enums import (
 )
 from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import (
+    EventFavoriteModel,
     EventModel,
     EventParticipantModel,
     TagModel,
@@ -432,6 +433,30 @@ def test_feed_counts_only_confirmed_participants(context: FeedContext) -> None:
     item = get_feed(context)["sections"][0]["items"][0]
     assert item["participants_count"] == 1
     assert item["privacy"] == EventPrivacyEnum.PUBLIC
+
+
+def test_feed_tells_which_events_the_viewer_favorited(context: FeedContext) -> None:
+    creator_id = create_user(context.db, "creator@hangy.com")
+    other_id = create_user(context.db, "other@hangy.com")
+    sports = create_tag(context.db, "Esportes")
+    add_interest(context.db, context.user_id, sports)
+
+    favorited_id = create_event(
+        context.db, creator_id, "Pelada no Parcão", (sports,), NOW + timedelta(days=1)
+    )
+    other_favorite_id = create_event(
+        context.db, creator_id, "Vôlei na Redenção", (sports,), NOW + timedelta(days=2)
+    )
+    context.db.add(EventFavoriteModel(event_id=favorited_id, user_id=context.user_id))
+    # Someone else's favorite must not leak into the viewer's feed.
+    context.db.add(EventFavoriteModel(event_id=other_favorite_id, user_id=other_id))
+    context.db.commit()
+
+    items = get_feed(context)["sections"][0]["items"]
+    assert {item["title"]: item["is_favorited"] for item in items} == {
+        "Pelada no Parcão": True,
+        "Vôlei na Redenção": False,
+    }
 
 
 def test_feed_paginates_each_section_on_its_own(context: FeedContext) -> None:
