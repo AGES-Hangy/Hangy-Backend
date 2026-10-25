@@ -90,6 +90,10 @@ def get_user_photos_service(
         "o efeito é mútuo: `GET /users/{user_id}` passa a devolver 404 para os "
         "dois lados, nenhum dos dois consegue enviar solicitação de conexão "
         "ao outro e os eventos de um deixam de aparecer no feed do outro. "
+        "Participações pendentes e confirmadas nos eventos um do outro são "
+        "canceladas e as notificações relacionadas são removidas nas duas contas. "
+        "Enquanto houver bloqueio, novas participações são impedidas nos dois "
+        "sentidos. Desbloquear não restaura nada; permite nova inscrição explícita. "
         "Nenhuma notificação é enviada ao bloqueado."
     ),
     responses={

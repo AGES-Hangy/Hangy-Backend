@@ -55,6 +55,15 @@ class SqlAlchemyConnectionRepository:
         self.dispatcher = dispatcher
 
     def get_by_id_for_update(self, connection_id: UUID) -> UserConnection | None:
+        from app.infrastructure.repository.block_access import lock_user_pair
+
+        pair = self.db.execute(
+            select(
+                UserConnectionModel.requester_id, UserConnectionModel.receiver_id
+            ).where(UserConnectionModel.connection_id == connection_id)
+        ).one_or_none()
+        if pair is not None:
+            lock_user_pair(self.db, *pair)
         model = self.db.scalar(
             select(UserConnectionModel)
             .where(
