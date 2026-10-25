@@ -9,7 +9,7 @@ from app.domain.services.experience import (
     ExperiencePhotoNotFoundError,
     ExperienceService,
 )
-from app.presentation.routes.auth import credentials_exception, get_current_user
+from app.presentation.routes.auth import get_current_user
 from app.presentation.routes.experiences import get_experience_service
 
 __all__ = ["router"]
@@ -57,9 +57,6 @@ def delete_experience_image(
     user: Annotated[User, Depends(get_current_user)],
     service: Annotated[ExperienceService, Depends(get_experience_service)],
 ) -> Response:
-    if user.user_id is None:
-        raise credentials_exception
-
     try:
         service.delete_photo(photo_id, user.user_id)
     except ExperiencePhotoNotFoundError as error:

@@ -162,6 +162,7 @@ class ExperienceService:
         access = self.repository.get_access(event_id, viewer_id)
         if access is None or not self._is_visible(access, viewer_id):
             raise ExperienceEventNotFoundError
+        # Ask for one extra item to detect whether another page exists.
         photos = self.repository.list_event_photos(
             event_id,
             limit=limit + 1,
