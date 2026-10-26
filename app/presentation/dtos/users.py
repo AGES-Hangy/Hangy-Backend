@@ -29,6 +29,8 @@ class UserProfileDTO(BaseModel):
     is_following: bool
     connections_count: int
     followers_count: int | None
+    events_count: int | None = None
+    photos_count: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

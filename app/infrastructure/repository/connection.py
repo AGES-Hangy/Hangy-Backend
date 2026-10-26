@@ -242,6 +242,8 @@ class SqlAlchemyConnectionRepository:
         if model is None:
             raise ValueError("A connection validated by the service must exist")
         model.status = UserConnectionStatusEnum.CONFIRMED
+        # Answered: the receiver's "wants to connect" would keep offering it.
+        delete_connection_request_notifications(self.db, connection_id)
         self.dispatcher.dispatch(
             NotificationTypeEnum.CONNECTION_ACCEPTED,
             recipient_id=model.requester_id,
@@ -261,6 +263,7 @@ class SqlAlchemyConnectionRepository:
         if model is None:
             raise ValueError("A connection validated by the service must exist")
         model.status = UserConnectionStatusEnum.REJECTED
+        delete_connection_request_notifications(self.db, connection_id)
         self.db.commit()
         self.db.refresh(model)
         return self._to_entity(model)
