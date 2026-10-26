@@ -12,6 +12,7 @@ class UserPhotoEventOutput(BaseModel):
 class UserPhotoOutput(BaseModel):
     photo_id: UUID
     photo_url: str
+    experience_id: UUID | None
     event: UserPhotoEventOutput
     description: str | None
     created_at: datetime

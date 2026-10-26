@@ -24,6 +24,7 @@ class BusinessProfileAssembler:
             address=profile.address,
             location=location,
             phone=profile.phone,
+            photo_url=profile.photo_url,
         )
 
     @staticmethod

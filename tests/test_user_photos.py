@@ -228,6 +228,7 @@ def test_photo_item_has_the_documented_shape(photos_client) -> None:
     assert set(item) == {
         "photo_id",
         "photo_url",
+        "experience_id",
         "event",
         "description",
         "created_at",

@@ -96,6 +96,7 @@ class SqlAlchemyUserPhotosRepository:
                 event_title=event_title,
                 created_at=image.created_at,
                 description=description,
+                experience_id=image.experience_id,
             )
             for image, event_id, event_title, description in rows
         ]
