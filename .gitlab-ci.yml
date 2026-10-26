@@ -57,6 +57,7 @@ validate-infra:
     - for script in infra/terraform/bootstrap-ec2.sh scripts/*.sh scripts/tests/*.sh; do bash -n "$script" || exit 1; done
     - bash scripts/tests/bootstrap-terraform-state.sh
     - bash scripts/tests/deploy-gitlab.sh
+    - bash scripts/tests/deploy-ec2.sh
 
 deploy:
   stage: deploy

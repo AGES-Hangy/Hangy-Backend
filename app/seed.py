@@ -43,6 +43,7 @@ from app.infrastructure.repository.person_profile import (
 )
 from app.infrastructure.repository.session import SessionLocal
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
+from app.seed_catalog import ensure_tags
 
 SEED_TERMS_VERSION = "2026-08-01"
 
@@ -651,28 +652,7 @@ def seed_users(db: Session) -> None:
 
 
 def seed_tags(db: Session) -> None:
-    for macro_name, micro_names in SEED_TAGS.items():
-        macro = db.scalar(
-            select(TagModel).where(
-                TagModel.tag_name == macro_name,
-                TagModel.tag_parent_id.is_(None),
-            )
-        )
-        if macro is None:
-            macro = TagModel(tag_name=macro_name)
-            db.add(macro)
-            db.flush()
-
-        existing_micro_names = set(
-            db.scalars(
-                select(TagModel.tag_name).where(TagModel.tag_parent_id == macro.tag_id)
-            )
-        )
-        for micro_name in micro_names:
-            if micro_name not in existing_micro_names:
-                db.add(TagModel(tag_name=micro_name, tag_parent_id=macro.tag_id))
-
-    db.flush()
+    ensure_tags(db, SEED_TAGS)
     _retire_legacy_tags(db)
     db.commit()
 
