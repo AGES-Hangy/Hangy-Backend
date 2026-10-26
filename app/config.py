@@ -49,7 +49,7 @@ class Settings:
     aws_s3_bucket: str = os.getenv("AWS_S3_BUCKET", "").strip()
     image_max_size_bytes: int = int(os.getenv("IMAGE_MAX_SIZE_BYTES", "5242880"))
     # Photos a user can keep in one event's experience (deleted ones don't count).
-    experience_photo_limit: int = int(os.getenv("EXPERIENCE_PHOTO_LIMIT", "10"))
+    experience_photo_limit: int = int(os.getenv("EXPERIENCE_PHOTO_LIMIT", "5"))
     terms_version: str = os.getenv("TERMS_VERSION", "2026-08-01")
     terms_published_at: str = os.getenv("TERMS_PUBLISHED_AT", "2026-08-01T00:00:00Z")
     terms_url: str = os.getenv("TERMS_URL", "https://hangy.app/termos/2026-08-01")
