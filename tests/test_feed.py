@@ -338,7 +338,7 @@ def test_feed_shows_private_events_without_schedule_and_with_the_neighborhood(
 @pytest.mark.parametrize(
     ("status", "location_name", "precision"),
     [
-        (EventParticipantStatusEnum.CONFIRMED, "Rua da Casa, 123", "EXACT"),
+        # CONFIRMED never reaches the feed: see the test right below.
         (EventParticipantStatusEnum.PENDING, "Bom Fim, Porto Alegre", "APPROXIMATE"),
         (EventParticipantStatusEnum.REMOVED, "Bom Fim, Porto Alegre", "APPROXIMATE"),
     ],
@@ -372,9 +372,26 @@ def test_feed_resolves_a_private_event_location_from_the_viewer_participation(
 
     assert item["location_name"] == location_name
     assert item["location_precision"] == precision
-    assert item["participants_count"] == (
-        2 if status is EventParticipantStatusEnum.CONFIRMED else 1
+    assert item["participants_count"] == 1
+
+
+def test_feed_hides_events_the_viewer_already_confirmed(
+    context: FeedContext,
+) -> None:
+    creator_id = create_user(context.db, "creator@hangy.com")
+    sports = create_tag(context.db, "Esportes")
+    add_interest(context.db, context.user_id, sports)
+    confirmed_id = create_event(context.db, creator_id, "Pelada confirmada", (sports,))
+    pending_id = create_event(context.db, creator_id, "Pelada pendente", (sports,))
+    add_participant(context.db, confirmed_id, context.user_id)
+    add_participant(
+        context.db,
+        pending_id,
+        context.user_id,
+        status=EventParticipantStatusEnum.PENDING,
     )
+
+    assert titles_by_tag(get_feed(context)) == {"Esportes": ["Pelada pendente"]}
 
 
 def test_feed_private_event_without_neighborhood_has_no_location_name(
@@ -398,21 +415,21 @@ def test_feed_private_event_without_neighborhood_has_no_location_name(
     assert item["location_precision"] == "APPROXIMATE"
 
 
-def test_feed_hides_a_private_event_schedule_even_from_its_creator(
-    context: FeedContext,
-) -> None:
+def test_feed_hides_the_viewer_own_events(context: FeedContext) -> None:
+    creator_id = create_user(context.db, "creator@hangy.com")
     sports = create_tag(context.db, "Esportes")
     add_interest(context.db, context.user_id, sports)
+    create_event(context.db, context.user_id, "Minha pelada", (sports,))
     create_event(
         context.db,
         context.user_id,
-        "Aniversário do Felipe",
+        "Meu aniversário",
         (sports,),
         privacy=EventPrivacyEnum.PRIVATE,
     )
+    create_event(context.db, creator_id, "Pelada de outra pessoa", (sports,))
 
-    item = get_feed(context)["sections"][0]["items"][0]
-    assert item["event_date"] is None
+    assert titles_by_tag(get_feed(context)) == {"Esportes": ["Pelada de outra pessoa"]}
 
 
 def test_feed_counts_only_confirmed_participants(context: FeedContext) -> None:
@@ -526,10 +543,18 @@ def test_feed_rejects_an_invalid_token(context: FeedContext) -> None:
     assert response.headers["www-authenticate"] == "Bearer"
 
 
-@pytest.mark.parametrize("privacy", [EventPrivacyEnum.PUBLIC, EventPrivacyEnum.PRIVATE])
+@pytest.mark.parametrize(
+    ("privacy", "location_name", "precision"),
+    [
+        (EventPrivacyEnum.PUBLIC, "Parque", "EXACT"),
+        (EventPrivacyEnum.PRIVATE, None, "APPROXIMATE"),
+    ],
+)
 def test_newly_published_event_is_discoverable_with_appropriate_location(
     context: FeedContext,
     privacy: EventPrivacyEnum,
+    location_name: str | None,
+    precision: str,
 ) -> None:
     sports = create_tag(context.db, "Esportes")
     add_interest(context.db, context.user_id, sports)
@@ -547,11 +572,40 @@ def test_newly_published_event_is_discoverable_with_appropriate_location(
         },
     )
     assert response.status_code == 201, response.text
-    item = get_feed(context)["sections"][0]["items"][0]
+    # The organizer never sees their own event in the feed: someone else does.
+    assert get_feed(context)["sections"] == []
+    register = context.client.post(
+        "/auth/register",
+        json={
+            "user_type": "PERSONAL",
+            "email": "visitor@hangy.com",
+            "password": USER_PASSWORD,
+            "name": "Visitante",
+            "cpf": "11144477735",
+            "phone": "51999990001",
+            "date_of_birth": "2000-04-12",
+            "state": "RS",
+            "city": "Porto Alegre",
+            "accepted_terms_version": "2026-08-01",
+        },
+    )
+    assert register.status_code == 201, register.text
+    add_interest(context.db, uuid.UUID(register.json()["user"]["id"]), sports)
+    login = context.client.post(
+        "/auth/login",
+        json={"email": "visitor@hangy.com", "password": USER_PASSWORD},
+    )
+    visitor = FeedContext(
+        client=context.client,
+        db=context.db,
+        token=login.json()["access_token"],
+        user_id=uuid.UUID(register.json()["user"]["id"]),
+    )
+
+    item = get_feed(visitor)["sections"][0]["items"][0]
     assert item["title"] == "New event"
-    # The viewer is the organizer, who always gets the exact location.
-    assert item["location_name"] == "Parque"
-    assert item["location_precision"] == "EXACT"
+    assert item["location_name"] == location_name
+    assert item["location_precision"] == precision
 
 
 def test_feed_hides_events_created_by_someone_who_blocked_the_user(

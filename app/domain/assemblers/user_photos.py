@@ -20,5 +20,6 @@ class UserPhotosAssembler:
             photo_id=item.photo_id,
             photo_url=item.photo_url,
             event=UserPhotoEventOutput(id=item.event_id, title=item.event_title),
+            description=item.description,
             created_at=item.created_at,
         )

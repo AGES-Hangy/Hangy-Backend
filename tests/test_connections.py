@@ -495,3 +495,42 @@ def test_cancel_removes_the_request_notification_from_the_receiver(
 
     after = client.get("/notifications", headers=auth_headers(token_b))
     assert after.json()["items"] == []
+
+
+@pytest.mark.parametrize("answer", ["CONFIRMED", "REJECTED"])
+def test_answering_removes_the_request_notification_from_the_receiver(
+    client: TestClient, answer: str
+) -> None:
+    _, token_a = register_and_authenticate(client, USER_A)
+    user_b_id, token_b = register_and_authenticate(client, USER_B)
+    connection_id = send_request(client, token_a, user_b_id)
+
+    response = client.patch(
+        f"/connections/{connection_id}",
+        json={"status": answer},
+        headers=auth_headers(token_b),
+    )
+    assert response.status_code == 200, response.text
+
+    after = client.get("/notifications", headers=auth_headers(token_b))
+    assert after.json()["items"] == []
+    # The requester still hears about an acceptance.
+    requester = client.get("/notifications", headers=auth_headers(token_a))
+    assert [item["type"] for item in requester.json()["items"]] == (
+        ["CONNECTION_ACCEPTED"] if answer == "CONFIRMED" else []
+    )
+
+
+def test_request_notification_of_an_already_answered_connection_is_hidden(
+    client: TestClient,
+) -> None:
+    # Rows written before answering started deleting the request notification.
+    _, token_a = register_and_authenticate(client, USER_A)
+    user_b_id, token_b = register_and_authenticate(client, USER_B)
+    connection_id = send_request(client, token_a, user_b_id)
+    confirm_connection(connection_id)
+
+    notifications = client.get("/notifications", headers=auth_headers(token_b))
+    assert notifications.json()["items"] == []
+    unread = client.get("/notifications/unread-count", headers=auth_headers(token_b))
+    assert unread.json()["unread_count"] == 0

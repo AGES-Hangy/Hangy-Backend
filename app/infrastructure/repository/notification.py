@@ -5,11 +5,11 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import and_, delete, exists, func, or_, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.domain.entities import Notification
-from app.domain.enums import NotificationTypeEnum
+from app.domain.enums import NotificationTypeEnum, UserConnectionStatusEnum
 from app.domain.services.notification_dispatcher import PushContext
 from app.infrastructure.repository.block_access import is_blocked_for_write
 from app.infrastructure.repository.models import (
@@ -36,6 +36,22 @@ _ORGANIZER_SENDER_TYPES = frozenset(
 )
 
 
+def _is_live():
+    """A "wants to connect" whose request was already answered or undone is
+    stale: answering deletes it, but rows from before that rule still exist."""
+    pending_request = exists().where(
+        ConnectionNotificationModel.notification_id
+        == NotificationModel.notification_id,
+        UserConnectionModel.connection_id == ConnectionNotificationModel.connection_id,
+        UserConnectionModel.status == UserConnectionStatusEnum.PENDING,
+        UserConnectionModel.deleted_at.is_(None),
+    )
+    return or_(
+        NotificationModel.type != NotificationTypeEnum.CONNECTION_REQUEST,
+        pending_request,
+    )
+
+
 class SqlAlchemyNotificationRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -48,6 +64,7 @@ class SqlAlchemyNotificationRepository:
                 .where(
                     NotificationModel.user_id == user_id,
                     NotificationModel.read.is_(False),
+                    _is_live(),
                 )
             )
             or 0
@@ -235,7 +252,7 @@ class SqlAlchemyNotificationRepository:
     ) -> list[Notification]:
         stmt = (
             select(NotificationModel)
-            .where(NotificationModel.user_id == user_id)
+            .where(NotificationModel.user_id == user_id, _is_live())
             .options(
                 joinedload(NotificationModel.connection_detail).joinedload(
                     ConnectionNotificationModel.connection
