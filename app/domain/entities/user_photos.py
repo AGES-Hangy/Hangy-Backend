@@ -14,6 +14,8 @@ class UserPhoto:
     created_at: datetime
     # The text of the experience the photo belongs to.
     description: str | None = None
+    # Lets the author edit that text (PATCH /experiences/{experience_id}).
+    experience_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)

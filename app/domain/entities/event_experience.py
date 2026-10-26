@@ -17,6 +17,7 @@ __all__ = [
     "EventPhoto",
     "EventPhotoListItem",
     "EventPhotosPage",
+    "ExperienceDetails",
     "ExperienceImage",
     "ExperiencePhotoAccess",
     "NewEventExperience",
@@ -59,6 +60,15 @@ class ExperienceImage:
     photo_url: str
     created_at: datetime
     deleted_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExperienceDetails:
+    """An experience with its active photos, as its author sees it."""
+
+    experience: EventExperience
+    event_id: UUID
+    images: tuple[ExperienceImage, ...]
 
 
 @dataclass(frozen=True, slots=True)

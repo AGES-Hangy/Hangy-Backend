@@ -174,6 +174,7 @@ def test_business_reads_its_own_profile(client: TestClient) -> None:
         "address": "Av. Independência, 100",
         "location": {"latitude": -30.0331, "longitude": -51.23},
         "phone": "5133330000",
+        "photo_url": None,
     }
 
 

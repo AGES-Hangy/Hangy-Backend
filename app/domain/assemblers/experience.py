@@ -4,6 +4,7 @@ from app.domain.entities import (
     EventExperience,
     EventPhotoListItem,
     EventPhotosPage,
+    ExperienceDetails,
     ExperienceImage,
 )
 from app.presentation.dtos import (
@@ -29,6 +30,21 @@ class ExperienceAssembler:
             event_id=event_id,
             description=experience.description,
             images=[],
+            created_at=experience.created_at,
+        )
+
+    @staticmethod
+    def to_details_dto(details: ExperienceDetails) -> CreateExperienceOutput:
+        experience = details.experience
+        if experience.experience_id is None:
+            raise ValueError("A persisted experience must have an id")
+        return CreateExperienceOutput(
+            experience_id=experience.experience_id,
+            event_id=details.event_id,
+            description=experience.description,
+            images=[
+                ExperienceAssembler.to_image_dto(image) for image in details.images
+            ],
             created_at=experience.created_at,
         )
 

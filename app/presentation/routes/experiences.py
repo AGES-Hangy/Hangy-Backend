@@ -11,6 +11,7 @@ from app.domain.services.experience import (
     ExperienceAlreadyExistsError,
     ExperienceEventNotFinishedError,
     ExperienceEventNotFoundError,
+    ExperienceNotFoundError,
     ExperienceParticipantNotConfirmedError,
     ExperienceService,
 )
@@ -117,6 +118,60 @@ def create_experience(
             detail="Experience already exists",
         ) from error
     return ExperienceAssembler.to_created_dto(experience, event_id)
+
+
+@router.get(
+    "/{event_id}/experiences/me",
+    response_model=CreateExperienceOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Ler a própria experiência num evento",
+    description=(
+        "Devolve a experiência do usuário autenticado no evento, com as fotos "
+        "ativas (da mais antiga para a mais recente). Serve para o app "
+        "reaproveitar o `experience_id` depois de um `409 Experience already "
+        "exists` no `POST`."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, expirado ou inválido.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": (
+                "O evento não existe ou não é visível (`Event not found`), ou o "
+                "usuário ainda não tem experiência nele (`Experience not found`)."
+            ),
+            "content": {
+                "application/json": {"example": {"detail": "Experience not found"}}
+            },
+        },
+    },
+)
+def read_my_experience(
+    event_id: UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[ExperienceService, Depends(get_experience_service)],
+) -> CreateExperienceOutput:
+    if user.user_id is None:
+        raise credentials_exception
+
+    try:
+        details = service.get_mine(event_id, user.user_id)
+    except ExperienceEventNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found",
+        ) from error
+    except ExperienceNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Experience not found",
+        ) from error
+    return ExperienceAssembler.to_details_dto(details)
 
 
 @router.get(

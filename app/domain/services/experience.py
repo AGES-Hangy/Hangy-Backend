@@ -11,6 +11,7 @@ from app.domain.entities import (
     EventPhoto,
     EventPhotoListItem,
     EventPhotosPage,
+    ExperienceDetails,
     ExperienceImage,
     ExperiencePhotoAccess,
     NewEventExperience,
@@ -71,6 +72,14 @@ class ExperienceRepository(Protocol):
     def add(
         self, participant_id: UUID, experience: NewEventExperience
     ) -> EventExperience | None: ...
+
+    def get_for_participant(
+        self, event_id: UUID, user_id: UUID
+    ) -> ExperienceDetails | None: ...
+
+    def update_description(
+        self, experience_id: UUID, user_id: UUID, description: str
+    ) -> ExperienceDetails | None: ...
 
     def get_owner_access_for_update(
         self, experience_id: UUID, user_id: UUID
@@ -157,6 +166,26 @@ class ExperienceService:
         if created is None:
             raise ExperienceAlreadyExistsError
         return created
+
+    def get_mine(self, event_id: UUID, user_id: UUID) -> ExperienceDetails:
+        """The user's own experience in the event, so a client can reuse its id."""
+        access = self.repository.get_access(event_id, user_id)
+        if access is None or not self._is_visible(access, user_id):
+            raise ExperienceEventNotFoundError
+        details = self.repository.get_for_participant(event_id, user_id)
+        if details is None:
+            raise ExperienceNotFoundError
+        return details
+
+    def update_description(
+        self, experience_id: UUID, user_id: UUID, description: str
+    ) -> ExperienceDetails:
+        details = self.repository.update_description(
+            experience_id, user_id, description
+        )
+        if details is None:
+            raise ExperienceNotFoundError
+        return details
 
     def list_photos(
         self,
