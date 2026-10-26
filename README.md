@@ -77,24 +77,47 @@ usuários, tags, interesses e eventos de exemplo (`python -m app.seed`, executad
 a cada start do contêiner). Os usuários têm as mesmas permissões até que regras
 de autorização sejam adicionadas:
 
-| E-mail            | Senha            | Tipo     | Interesses             |
-| ----------------- | ---------------- | -------- | ---------------------- |
-| `user@hangy.com`  | `user-password`  | PERSONAL | Futebol, Corrida, Rock |
-| `maria@hangy.com` | `maria-password` | PERSONAL | Samba                  |
-| `joao@hangy.com`  | `joao-password`  | PERSONAL | nenhum                 |
-| `ana@hangy.com`   | `ana-password`   | PERSONAL | nenhum                 |
-| `pedro@hangy.com` | `pedro-password` | PERSONAL | nenhum                 |
-| `carla@hangy.com` | `carla-password` | PERSONAL | nenhum                 |
-| `lucas@hangy.com` | `lucas-password` | PERSONAL | nenhum                 |
-| `bia@hangy.com`   | `bia-password`   | PERSONAL | nenhum                 |
-| `admin@hangy.com` | `admin-password` | BUSINESS | nenhum                 |
+| E-mail             | Senha             | Tipo     | Interesses                                     |
+| ------------------ | ----------------- | -------- | ---------------------------------------------- |
+| `user@hangy.com`   | `user-password`   | PERSONAL | Futebol, Corrida, Rock                         |
+| `maria@hangy.com`  | `maria-password`  | PERSONAL | Samba                                          |
+| `joao@hangy.com`   | `joao-password`   | PERSONAL | nenhum                                         |
+| `ana@hangy.com`    | `ana-password`    | PERSONAL | nenhum                                         |
+| `pedro@hangy.com`  | `pedro-password`  | PERSONAL | Teatro, Sertanejo, Doces, Futebol, Churrasco   |
+| `carla@hangy.com`  | `carla-password`  | PERSONAL | nenhum                                         |
+| `lucas@hangy.com`  | `lucas-password`  | PERSONAL | nenhum                                         |
+| `bia@hangy.com`    | `bia-password`    | PERSONAL | nenhum                                         |
+| `rafael@hangy.com` | `rafael-password` | PERSONAL | nenhum                                         |
+| `admin@hangy.com`  | `admin-password`  | BUSINESS | nenhum                                         |
 
-O seed também cria o evento `Rachão fechado` como `INVITE_ONLY`. Para testar o
-aceite por link com `user@hangy.com`, use o token
-`seed-invite-racha-fechado`.
+### Roteiro de demonstração com `user@hangy.com`
 
-Há também o evento `Confraternização da equipe`, `PRIVATE`, criado por
-`admin@hangy.com` e sem nenhum participante.
+| Funcionalidade                          | Onde testar                                                                                  |
+| --------------------------------------- | -------------------------------------------------------------------------------------------- |
+| Feed por interesses                     | `GET /feed`: seções `Esportes` e `Vida Social`                                               |
+| Eventos criados                         | `Treino de corrida no Gasômetro` (`PUBLIC`) e `Corrida da Redenção` (`PRIVATE`)              |
+| Aprovar ou recusar pedido               | `Corrida da Redenção`: João está `PENDING`                                                   |
+| Entrar direto em evento público         | `Corrida noturna na Orla` (do `admin@hangy.com`, sem o usuário)                              |
+| Pedir para participar de evento privado | `Confraternização da equipe` (sem participantes)                                             |
+| Cancelar pedido pendente                | `Jam de rock no apê do João`                                                                 |
+| Pedido aprovado / recusado / removido   | `Aniversário da Maria` / `Show de rock no Opinião` / `Churrasco do bairro`                   |
+| Evento começando em breve               | `Fut society no fim de tarde`, começa 45 minutos após o seed                                 |
+| Evento cancelado                        | `Pelada` (`CANCELLED`)                                                                       |
+| Aceite por link                         | `Rachão fechado` (`INVITE_ONLY`), token `seed-invite-racha-fechado`                          |
+| Experiência e fotos                     | `Evento encerrado para teste de experiência` (já passou, sem experiência)                    |
+| Fotos publicadas                        | `GET /users/me/photos` e `GET /events/{id}/photos` do `Sarau de teatro` (`FINISHED`)         |
+| Favoritos                               | `Show de rock no Opinião` e `Roda de samba na Cidade Baixa`                                  |
+| Conexões                                | 5 pedidos recebidos (Maria, João, Ana, Pedro, Carla) e 2 conexões (Lucas, Bia)               |
+| Perfil de empresa                       | criador dos eventos do `admin@hangy.com`; o usuário já o segue (`is_following`)              |
+| Perfil pessoal                          | criadores ou participantes dos eventos, e as conexões                                        |
+| Bloqueio                                | `GET /users/me/blocked` lista `rafael@hangy.com`                                             |
+
+O `admin@hangy.com` é seguido por `user@hangy.com`, Maria e João
+(`GET /businesses/me/followers`).
+
+Participações, conexões, favoritos, seguidores, bloqueios e fotos voltam ao
+estado acima a cada execução do seed, então a demonstração pode ser repetida
+após reiniciar o contêiner.
 
 O `user@hangy.com` recebe notificações dos 11 tipos, com cinco solicitações
 (Maria, João, Ana, Pedro e Carla) e duas aceitações de conexão (Lucas e Bia):
@@ -120,10 +143,12 @@ exemplo, `carla@hangy.com`) para o caso `200` e o `admin@hangy.com`, que é
 sobrescreve usuários que já existem, então as edições feitas pela rota continuam
 após reiniciar o contêiner.
 
-As tags de exemplo seguem a hierarquia macro → micro usada pelo feed:
-`Esportes` (Futebol, Corrida), `Música` (Rock, Samba, Sertanejo),
-`Gastronomia` (Churrasco, Culinária Italiana, Confeitaria) e `Arte e Cultura`
-(Teatro, Cinema).
+As tags do seed são o mesmo catálogo de produção, em
+`app/production_tags.json`, com a hierarquia macro → micro usada pelo feed.
+Bancos já populados pelo catálogo antigo têm `Música` e `Arte e Cultura`
+substituídas por `Vida Social` e `Arte & Cultura`, `Culinária Italiana` por
+`Italiana` e `Confeitaria` por `Doces`; usuários e eventos que usavam essas
+tags passam para as novas.
 
 Para encerrar os contêineres:
 
