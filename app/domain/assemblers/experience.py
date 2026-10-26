@@ -1,11 +1,17 @@
 from uuid import UUID
 
-from app.domain.entities import EventExperience, EventPhotoListItem, EventPhotosPage
+from app.domain.entities import (
+    EventExperience,
+    EventPhotoListItem,
+    EventPhotosPage,
+    ExperienceImage,
+)
 from app.presentation.dtos import (
     CreateExperienceOutput,
     EventPhotoAuthorOutput,
     EventPhotoOutput,
     EventPhotosOutput,
+    ExperienceImageOutput,
 )
 
 __all__ = ["ExperienceAssembler"]
@@ -24,6 +30,16 @@ class ExperienceAssembler:
             description=experience.description,
             images=[],
             created_at=experience.created_at,
+        )
+
+    @staticmethod
+    def to_image_dto(image: ExperienceImage) -> ExperienceImageOutput:
+        if image.photo_id is None:
+            raise ValueError("A persisted photo must have an id")
+        return ExperienceImageOutput(
+            photo_id=image.photo_id,
+            photo_url=image.photo_url,
+            created_at=image.created_at,
         )
 
     @staticmethod

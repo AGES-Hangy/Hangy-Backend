@@ -3,12 +3,15 @@ from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
+from app.config import settings
 from app.domain.entities import (
     EventExperience,
     EventExperienceAccess,
+    EventExperienceOwnerAccess,
     EventPhoto,
     EventPhotoListItem,
     EventPhotosPage,
+    ExperienceImage,
     ExperiencePhotoAccess,
     NewEventExperience,
 )
@@ -31,8 +34,10 @@ __all__ = [
     "ExperienceAlreadyExistsError",
     "ExperienceEventNotFinishedError",
     "ExperienceEventNotFoundError",
+    "ExperienceNotFoundError",
     "ExperienceParticipantNotConfirmedError",
     "ExperiencePhotoDeleteForbiddenError",
+    "ExperiencePhotoLimitReachedError",
     "ExperiencePhotoNotFoundError",
     "ExperienceRepository",
     "ExperienceService",
@@ -67,6 +72,12 @@ class ExperienceRepository(Protocol):
         self, participant_id: UUID, experience: NewEventExperience
     ) -> EventExperience | None: ...
 
+    def get_owner_access_for_update(
+        self, experience_id: UUID, user_id: UUID
+    ) -> EventExperienceOwnerAccess | None: ...
+
+    def add_photo(self, experience_id: UUID, photo_url: str) -> ExperienceImage: ...
+
     def get_photo_access(self, photo_id: UUID) -> ExperiencePhotoAccess | None: ...
 
     def soft_delete_photo(self, photo_id: UUID) -> bool: ...
@@ -88,6 +99,14 @@ class ExperienceAlreadyExistsError(Exception):
     """A participant can create only one experience per event."""
 
 
+class ExperienceNotFoundError(Exception):
+    """The experience does not exist, was removed, or belongs to another user."""
+
+
+class ExperiencePhotoLimitReachedError(Exception):
+    """The user already has the maximum number of photos in this event."""
+
+
 class ExperiencePhotoNotFoundError(Exception):
     """The photo does not exist or was already removed."""
 
@@ -101,9 +120,11 @@ class ExperienceService:
         self,
         repository: ExperienceRepository,
         image_upload_service: ImageUploadService,
+        photo_limit: int = settings.experience_photo_limit,
     ) -> None:
         self.repository = repository
         self.image_upload_service = image_upload_service
+        self.photo_limit = photo_limit
 
     def create(
         self, event_id: UUID, user_id: UUID, experience: NewEventExperience
@@ -186,6 +207,32 @@ class ExperienceService:
             next_cursor = encode_cursor(last.created_at, last.photo_id)
 
         return EventPhotosPage(items=items, next_cursor=next_cursor)
+
+    def add_photo(
+        self, experience_id: UUID, user_id: UUID, content: bytes, content_type: str
+    ) -> ExperienceImage:
+        # Refuse before touching S3: no object is stored for a rejected request.
+        access = self.repository.get_owner_access_for_update(experience_id, user_id)
+        if access is None:
+            raise ExperienceNotFoundError
+        if access.participant_status is not EventParticipantStatusEnum.CONFIRMED:
+            raise ExperienceParticipantNotConfirmedError
+        if access.active_photo_count >= self.photo_limit:
+            raise ExperiencePhotoLimitReachedError
+
+        photo_url = self.image_upload_service.upload(
+            folder=f"experiences/{experience_id}",
+            content=content,
+            content_type=content_type,
+        )
+        try:
+            return self.repository.add_photo(experience_id, photo_url)
+        except Exception:
+            try:
+                self.image_upload_service.delete(photo_url)
+            except Exception:
+                logger.exception("Failed to delete orphan S3 object %s", photo_url)
+            raise
 
     def delete_photo(self, photo_id: UUID, user_id: UUID) -> None:
         photo = self.repository.get_photo_access(photo_id)

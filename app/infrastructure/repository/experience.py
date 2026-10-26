@@ -1,14 +1,16 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domain.entities import (
     EventExperience,
     EventExperienceAccess,
+    EventExperienceOwnerAccess,
     EventPhoto,
+    ExperienceImage,
     ExperiencePhotoAccess,
     NewEventExperience,
 )
@@ -151,6 +153,57 @@ class SqlAlchemyExperienceRepository:
         self.db.refresh(model)
         return self._to_entity(model)
 
+    def get_owner_access_for_update(
+        self, experience_id: UUID, user_id: UUID
+    ) -> EventExperienceOwnerAccess | None:
+        """Lock the user's active experience so concurrent uploads respect the limit."""
+        stmt = (
+            select(EventExperienceModel, EventParticipantModel.status)
+            .join(
+                EventParticipantModel,
+                EventParticipantModel.participant_id
+                == EventExperienceModel.event_participant_id,
+            )
+            .join(EventModel, EventModel.event_id == EventParticipantModel.event_id)
+            .where(
+                EventExperienceModel.experience_id == experience_id,
+                EventExperienceModel.deleted_at.is_(None),
+                EventParticipantModel.user_id == user_id,
+                EventModel.deleted_at.is_(None),
+            )
+            .with_for_update(of=EventExperienceModel)
+        )
+        row = self.db.execute(stmt).one_or_none()
+        if row is None:
+            return None
+
+        experience_model, participant_status = row
+        active_photo_count = self.db.scalar(
+            select(func.count())
+            .select_from(ExperienceImagesModel)
+            .where(
+                ExperienceImagesModel.experience_id == experience_id,
+                ExperienceImagesModel.deleted_at.is_(None),
+            )
+        )
+        return EventExperienceOwnerAccess(
+            experience_id=experience_model.experience_id,
+            author_id=user_id,
+            participant_status=participant_status,
+            active_photo_count=active_photo_count or 0,
+        )
+
+    def add_photo(self, experience_id: UUID, photo_url: str) -> ExperienceImage:
+        model = ExperienceImagesModel(experience_id=experience_id, photo_url=photo_url)
+        self.db.add(model)
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        self.db.refresh(model)
+        return self._to_image_entity(model)
+
     def get_photo_access(self, photo_id: UUID) -> ExperiencePhotoAccess | None:
         stmt = (
             select(
@@ -207,6 +260,20 @@ class SqlAlchemyExperienceRepository:
             experience_id=model.experience_id,
             event_participant_id=model.event_participant_id,
             description=model.description,
+            created_at=(
+                model.created_at
+                if model.created_at.tzinfo is not None
+                else model.created_at.replace(tzinfo=UTC)
+            ),
+            deleted_at=model.deleted_at,
+        )
+
+    @staticmethod
+    def _to_image_entity(model: ExperienceImagesModel) -> ExperienceImage:
+        return ExperienceImage(
+            photo_id=model.photo_id,
+            experience_id=model.experience_id,
+            photo_url=model.photo_url,
             created_at=(
                 model.created_at
                 if model.created_at.tzinfo is not None
