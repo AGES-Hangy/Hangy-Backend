@@ -14,6 +14,7 @@ from app.domain.enums import (
     EventStatusEnum,
     NotificationTypeEnum,
     UserConnectionStatusEnum,
+    UserRoleEnum,
 )
 from app.domain.services import RegisterBusinessService, RegisterPersonalService
 from app.infrastructure.repository.business_profile import (
@@ -47,6 +48,11 @@ from app.seed_catalog import ensure_tags
 
 SEED_TERMS_VERSION = "2026-08-01"
 
+# The moderation account, with role ADMIN like in production. It owns no events
+# or followers: the demo business is BUSINESS_EMAIL.
+ADMIN_EMAIL = "admin@hangy.com"
+BUSINESS_EMAIL = "estabelecimento@hangy.com"
+
 SEED_USERS: tuple[PersonRegistration | BusinessRegistration, ...] = (
     PersonRegistration(
         email="user@hangy.com",
@@ -58,14 +64,25 @@ SEED_USERS: tuple[PersonRegistration | BusinessRegistration, ...] = (
         city="Porto Alegre",
         accepted_terms_version=SEED_TERMS_VERSION,
     ),
+    # Same account and profile as the production seed (app/seed_production.py).
     BusinessRegistration(
-        email="admin@hangy.com",
+        email=ADMIN_EMAIL,
         password="admin-password",
         business_name="Admin Hangy",
         cnpj="11222333000181",
         address="Av. Independência, 100 — Porto Alegre",
         latitude=-30.0331,
         longitude=-51.23,
+        accepted_terms_version=SEED_TERMS_VERSION,
+    ),
+    BusinessRegistration(
+        email=BUSINESS_EMAIL,
+        password="estabelecimento-password",
+        business_name="Bar do Parcão",
+        cnpj="45678123000114",
+        address="Rua Mostardeiro, 200 — Porto Alegre",
+        latitude=-30.0277,
+        longitude=-51.2045,
         accepted_terms_version=SEED_TERMS_VERSION,
     ),
     PersonRegistration(
@@ -179,8 +196,8 @@ LEGACY_SEED_TAGS: dict[TagKey, TagKey] = {
 # Dropped once no micro tag hangs below them.
 LEGACY_SEED_MACROS = ("Música", "Arte e Cultura")
 
-# admin@hangy.com is a BUSINESS user and stays without interests, which makes it
-# the account to check the empty feed with. For GET /users/me/tags,
+# estabelecimento@hangy.com is a BUSINESS user and stays without interests,
+# which makes it the account to check the empty feed with. For GET /users/me/tags,
 # pedro@hangy.com has tags in four macros, listed out of order on purpose so
 # the response shows the macro-then-name ordering, and ana@hangy.com is a
 # PERSONAL user without interests, which returns `{"tags": []}`.
@@ -246,7 +263,7 @@ SEED_EVENTS = (
         location_name="Parque Moinhos de Vento (Parcão)",
         location_neighborhood="Moinhos de Vento",
         tag=("Esportes", "Futebol"),
-        creator_email="admin@hangy.com",
+        creator_email=BUSINESS_EMAIL,
         starts_in_days=1,
         cover_photo_url="https://picsum.photos/seed/pelada/800/450",
         confirmed_emails=("maria@hangy.com", "joao@hangy.com", "user@hangy.com"),
@@ -258,7 +275,7 @@ SEED_EVENTS = (
         location_name="Arena Society Menino Deus",
         location_neighborhood="Menino Deus",
         tag=("Esportes", "Futebol"),
-        creator_email="admin@hangy.com",
+        creator_email=BUSINESS_EMAIL,
         starts_in_days=0,
         starts_in_minutes=45,
         confirmed_emails=("joao@hangy.com", "user@hangy.com"),
@@ -270,7 +287,7 @@ SEED_EVENTS = (
         location_name="Orla do Guaíba",
         location_neighborhood="Centro Histórico",
         tag=("Esportes", "Corrida"),
-        creator_email="admin@hangy.com",
+        creator_email=BUSINESS_EMAIL,
         starts_in_days=6,
         cover_photo_url="https://picsum.photos/seed/orla/800/450",
         confirmed_emails=("maria@hangy.com", "ana@hangy.com"),
@@ -316,15 +333,16 @@ SEED_EVENTS = (
         confirmed_emails=("user@hangy.com",),
         pending_emails=("joao@hangy.com",),
     ),
-    # admin@hangy.com's own event, PRIVATE and with no participant at all: the
-    # empty ManageEvent state. Under "Esportes", so it also shows up (masked, as
-    # any PRIVATE event) in user@hangy.com's feed, with zero participants.
+    # estabelecimento@hangy.com's own event, PRIVATE and with no participant at
+    # all: the empty ManageEvent state. Under "Esportes", so it also shows up
+    # (masked, as any PRIVATE event) in user@hangy.com's feed, with zero
+    # participants.
     SeedEvent(
         title="Confraternização da equipe",
         location_name="Sede do Hangy",
         location_neighborhood="Partenon",
         tag=("Esportes", "Futebol"),
-        creator_email="admin@hangy.com",
+        creator_email=BUSINESS_EMAIL,
         starts_in_days=10,
         privacy=EventPrivacyEnum.PRIVATE,
     ),
@@ -334,7 +352,7 @@ SEED_EVENTS = (
         location_name="Quadra do bairro",
         location_neighborhood="Santana",
         tag=("Esportes", "Futebol"),
-        creator_email="admin@hangy.com",
+        creator_email=BUSINESS_EMAIL,
         starts_in_days=3,
         privacy=EventPrivacyEnum.INVITE_ONLY,
         invite_token="seed-invite-racha-fechado",
@@ -352,13 +370,13 @@ SEED_EVENTS = (
         confirmed_emails=("maria@hangy.com",),
         pending_emails=("user@hangy.com",),
     ),
-    # Visible, under "Vida Social". The admin turned down user@hangy.com's request.
+    # Visible, under "Vida Social". The business turned down user@hangy.com's request.
     SeedEvent(
         title="Show de rock no Opinião",
         location_name="Bar Opinião",
         location_neighborhood="Cidade Baixa",
         tag=("Vida Social", "Rock"),
-        creator_email="admin@hangy.com",
+        creator_email=BUSINESS_EMAIL,
         starts_in_days=5,
         cover_photo_url="https://picsum.photos/seed/rock/800/450",
         pending_emails=("maria@hangy.com",),
@@ -391,7 +409,7 @@ SEED_EVENTS = (
         location_name="Parque Moinhos de Vento (Parcão)",
         location_neighborhood="Moinhos de Vento",
         tag=("Esportes", "Futebol"),
-        creator_email="admin@hangy.com",
+        creator_email=BUSINESS_EMAIL,
         starts_in_days=-1,
     ),
     # A finished event with a confirmed demo participant for testing
@@ -401,7 +419,7 @@ SEED_EVENTS = (
         location_name="Parque Moinhos de Vento (Parcão)",
         location_neighborhood="Moinhos de Vento",
         tag=("Esportes", "Futebol"),
-        creator_email="admin@hangy.com",
+        creator_email=BUSINESS_EMAIL,
         starts_in_days=-2,
         confirmed_emails=("user@hangy.com",),
     ),
@@ -410,7 +428,7 @@ SEED_EVENTS = (
         location_name="Parque Moinhos de Vento (Parcão)",
         location_neighborhood="Moinhos de Vento",
         tag=("Esportes", "Futebol"),
-        creator_email="admin@hangy.com",
+        creator_email=BUSINESS_EMAIL,
         starts_in_days=8,
         event_status=EventStatusEnum.DRAFT,
     ),
@@ -419,7 +437,7 @@ SEED_EVENTS = (
         location_name="Parque Moinhos de Vento (Parcão)",
         location_neighborhood="Moinhos de Vento",
         tag=("Esportes", "Futebol"),
-        creator_email="admin@hangy.com",
+        creator_email=BUSINESS_EMAIL,
         starts_in_days=9,
         event_status=EventStatusEnum.CANCELLED,
         confirmed_emails=("user@hangy.com",),
@@ -470,8 +488,11 @@ def seed_notification_id(user_email: str, key: str) -> UUID:
 
 
 def seed_event_id(creator_email: str, title: str) -> UUID:
-    # Titles are not unique and can belong to user-created events.
-    return uuid5(NAMESPACE_URL, f"hangy:seed:event:{creator_email}:{title}")
+    # Titles are not unique and can belong to user-created events. The business
+    # events were first seeded under admin@hangy.com and keep that id, so a
+    # database seeded before is updated in place instead of duplicated.
+    id_owner = ADMIN_EMAIL if creator_email == BUSINESS_EMAIL else creator_email
+    return uuid5(NAMESPACE_URL, f"hangy:seed:event:{id_owner}:{title}")
 
 
 def seed_connection_id(requester_email: str, receiver_email: str) -> UUID:
@@ -555,7 +576,7 @@ SEED_NOTIFICATIONS = (
         NotificationTypeEnum.EVENT_STARTING_SOON,
         age=timedelta(minutes=10),
         read=True,
-        event=("admin@hangy.com", "Fut society no fim de tarde"),
+        event=(BUSINESS_EMAIL, "Fut society no fim de tarde"),
         participant_email="user@hangy.com",
     ),
     SeedNotification(
@@ -563,7 +584,7 @@ SEED_NOTIFICATIONS = (
         "event-updated",
         NotificationTypeEnum.EVENT_UPDATED,
         age=timedelta(hours=1),
-        event=("admin@hangy.com", "Pelada no Parcão"),
+        event=(BUSINESS_EMAIL, "Pelada no Parcão"),
     ),
     SeedNotification(
         "user@hangy.com",
@@ -586,7 +607,7 @@ SEED_NOTIFICATIONS = (
         "request-rejected",
         NotificationTypeEnum.EVENT_REQUEST_REJECTED,
         age=timedelta(days=1),
-        event=("admin@hangy.com", "Show de rock no Opinião"),
+        event=(BUSINESS_EMAIL, "Show de rock no Opinião"),
         participant_email="user@hangy.com",
     ),
     SeedNotification(
@@ -612,7 +633,7 @@ SEED_NOTIFICATIONS = (
         "event-cancelled",
         NotificationTypeEnum.EVENT_CANCELLED,
         age=timedelta(days=4),
-        event=("admin@hangy.com", "Pelada"),
+        event=(BUSINESS_EMAIL, "Pelada"),
     ),
     SeedNotification(
         "maria@hangy.com",
@@ -627,7 +648,7 @@ SEED_NOTIFICATIONS = (
         NotificationTypeEnum.EVENT_REQUEST_APPROVED,
         age=timedelta(minutes=30),
         reset_on_seed=True,
-        event=("admin@hangy.com", "Pelada no Parcão"),
+        event=(BUSINESS_EMAIL, "Pelada no Parcão"),
         participant_email="joao@hangy.com",
     ),
 )
@@ -649,6 +670,54 @@ def seed_users(db: Session) -> None:
             personal_service.register(registration)
         else:
             business_service.register(registration)
+
+    users = _users_by_email(db)
+    admin = users.get(ADMIN_EMAIL)
+    business = users.get(BUSINESS_EMAIL)
+    if admin is not None and admin.deleted_at is None:
+        # Put back on every run, like the participants: a demotion made while
+        # testing can be undone with a restart.
+        admin.role = UserRoleEnum.ADMIN
+        if business is not None:
+            _hand_over_business_data(db, admin, business)
+    db.commit()
+
+
+def _hand_over_business_data(
+    db: Session, admin: UserModel, business: UserModel
+) -> None:
+    """Move what admin@hangy.com owned before it became ADMIN to the business.
+
+    Databases seeded before have the demo events, their invite links and the
+    followers under admin@hangy.com, plus whatever was created with that
+    account while testing. Everything moves, with the same ids.
+    """
+    db.execute(
+        update(EventModel)
+        .where(EventModel.event_creator_id == admin.user_id)
+        .values(event_creator_id=business.user_id)
+    )
+    db.execute(
+        update(EventInviteLinkModel)
+        .where(EventInviteLinkModel.created_by == admin.user_id)
+        .values(created_by=business.user_id)
+    )
+    # A follower of both only loses the duplicate follow.
+    db.execute(
+        delete(UserFollowModel).where(
+            UserFollowModel.followed_business_id == admin.user_id,
+            UserFollowModel.follower_id.in_(
+                select(UserFollowModel.follower_id).where(
+                    UserFollowModel.followed_business_id == business.user_id
+                )
+            ),
+        )
+    )
+    db.execute(
+        update(UserFollowModel)
+        .where(UserFollowModel.followed_business_id == admin.user_id)
+        .values(followed_business_id=business.user_id)
+    )
 
 
 def seed_tags(db: Session) -> None:
@@ -765,6 +834,7 @@ def seed_events(db: Session) -> None:
                 event_tag.insert().values(event_id=event.event_id, tag_id=tag.tag_id)
             )
         else:
+            event.event_creator_id = creator.user_id
             # Slide the schedule forward so the feed keeps working after a
             # restart instead of slowly filling up with past events.
             event.starts_at = starts_at
@@ -882,10 +952,11 @@ class SeedExperience:
     photo_urls: tuple[str, ...]
 
 
-# The followers of admin@hangy.com (GET /businesses/me/followers). user@hangy.com
-# is one, so their profile shows `is_following` and can be unfollowed.
+# The followers of estabelecimento@hangy.com (GET /businesses/me/followers).
+# user@hangy.com is one, so their profile shows `is_following` and can be
+# unfollowed.
 SEED_FOLLOWS: dict[str, tuple[str, ...]] = {
-    "admin@hangy.com": ("user@hangy.com", "maria@hangy.com", "joao@hangy.com"),
+    BUSINESS_EMAIL: ("user@hangy.com", "maria@hangy.com", "joao@hangy.com"),
 }
 
 # (blocker_email, blocked_email)

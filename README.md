@@ -74,8 +74,8 @@ A aplicação ficará disponível em:
 
 O ambiente de desenvolvimento também popula o banco, de forma idempotente, com
 usuários, tags, interesses e eventos de exemplo (`python -m app.seed`, executado
-a cada start do contêiner). Os usuários têm as mesmas permissões até que regras
-de autorização sejam adicionadas:
+a cada start do contêiner). Todos têm o papel `USER`, exceto o `admin@hangy.com`,
+que tem o papel `ADMIN`:
 
 | E-mail             | Senha             | Tipo     | Interesses                                     |
 | ------------------ | ----------------- | -------- | ---------------------------------------------- |
@@ -88,7 +88,8 @@ de autorização sejam adicionadas:
 | `lucas@hangy.com`  | `lucas-password`  | PERSONAL | nenhum                                         |
 | `bia@hangy.com`    | `bia-password`    | PERSONAL | nenhum                                         |
 | `rafael@hangy.com` | `rafael-password` | PERSONAL | nenhum                                         |
-| `admin@hangy.com`  | `admin-password`  | BUSINESS | nenhum                                         |
+| `estabelecimento@hangy.com` | `estabelecimento-password` | BUSINESS | nenhum                       |
+| `admin@hangy.com`  | `admin-password`  | BUSINESS, papel `ADMIN` | nenhum                          |
 
 ### Roteiro de demonstração com `user@hangy.com`
 
@@ -97,7 +98,7 @@ de autorização sejam adicionadas:
 | Feed por interesses                     | `GET /feed`: seções `Esportes` e `Vida Social`                                               |
 | Eventos criados                         | `Treino de corrida no Gasômetro` (`PUBLIC`) e `Corrida da Redenção` (`PRIVATE`)              |
 | Aprovar ou recusar pedido               | `Corrida da Redenção`: João está `PENDING`                                                   |
-| Entrar direto em evento público         | `Corrida noturna na Orla` (do `admin@hangy.com`, sem o usuário)                              |
+| Entrar direto em evento público         | `Corrida noturna na Orla` (do `estabelecimento@hangy.com`, sem o usuário)                    |
 | Pedir para participar de evento privado | `Confraternização da equipe` (sem participantes)                                             |
 | Cancelar pedido pendente                | `Jam de rock no apê do João`                                                                 |
 | Pedido aprovado / recusado / removido   | `Aniversário da Maria` / `Show de rock no Opinião` / `Churrasco do bairro`                   |
@@ -108,12 +109,20 @@ de autorização sejam adicionadas:
 | Fotos publicadas                        | `GET /users/me/photos` e `GET /events/{id}/photos` do `Sarau de teatro` (`FINISHED`)         |
 | Favoritos                               | `Show de rock no Opinião` e `Roda de samba na Cidade Baixa`                                  |
 | Conexões                                | 5 pedidos recebidos (Maria, João, Ana, Pedro, Carla) e 2 conexões (Lucas, Bia)               |
-| Perfil de empresa                       | criador dos eventos do `admin@hangy.com`; o usuário já o segue (`is_following`)              |
+| Perfil de empresa                       | `estabelecimento@hangy.com` (Bar do Parcão); o usuário já o segue (`is_following`)           |
 | Perfil pessoal                          | criadores ou participantes dos eventos, e as conexões                                        |
 | Bloqueio                                | `GET /users/me/blocked` lista `rafael@hangy.com`                                             |
 
-O `admin@hangy.com` é seguido por `user@hangy.com`, Maria e João
+O `estabelecimento@hangy.com` é seguido por `user@hangy.com`, Maria e João
 (`GET /businesses/me/followers`).
+
+O `admin@hangy.com` é a conta de moderação, com papel `ADMIN` e o mesmo perfil
+empresarial do seed de produção. Ela não tem eventos nem seguidores: o login
+devolve `role: "ADMIN"`, e o app a leva ao painel administrativo. O seed devolve
+o papel `ADMIN` a cada execução. Num banco semeado antes dessa mudança, ele também
+transfere ao `estabelecimento@hangy.com` tudo o que o `admin@hangy.com` tinha:
+eventos (inclusive os criados durante os testes, com os mesmos IDs), links de
+convite e seguidores.
 
 Participações, conexões, favoritos, seguidores, bloqueios e fotos voltam ao
 estado acima a cada execução do seed, então a demonstração pode ser repetida
@@ -138,8 +147,8 @@ caso `403`. A collection `postman/tid219_patch_notifications_read.postman_collec
 percorre todos os cenários.
 
 Para testar `PATCH /users/me/profile`, use qualquer usuário `PERSONAL` (por
-exemplo, `carla@hangy.com`) para o caso `200` e o `admin@hangy.com`, que é
-`BUSINESS`, para o caso `403`. Os usuários do seed começam sem bio. O seed não
+exemplo, `carla@hangy.com`) para o caso `200` e o `estabelecimento@hangy.com`,
+que é `BUSINESS`, para o caso `403`. Os usuários do seed começam sem bio. O seed não
 sobrescreve usuários que já existem, então as edições feitas pela rota continuam
 após reiniciar o contêiner.
 
