@@ -357,20 +357,15 @@ def test_seeded_feed_matches_the_documented_sample(
         (item["title"], item["participants_count"], item["event_date"] is None)
         for item in sections[0]["items"]
     ]
+    # user@hangy.com already confirmed "Fut society no fim de tarde", "Pelada
+    # no Parcão" and "Aniversário da Maria" and created "Corrida da Redenção"
+    # and "Treino de corrida no Gasômetro": none of them is discovery.
     assert sports == [
-        # Starts within the hour: the "starting soon" notification's event.
-        ("Fut society no fim de tarde", 2, False),
-        ("Pelada no Parcão", 3, False),
-        # Both PRIVATE: discoverable, but the schedule stays hidden — even
-        # from "Corrida da Redenção"'s own creator, user@hangy.com.
-        ("Aniversário da Maria", 1, True),
-        # Only the confirmed one counts: Ana cancelled and João is still pending.
-        ("Corrida da Redenção", 1, True),
         # PUBLIC and without user@hangy.com: the one to join directly.
         ("Corrida noturna na Orla", 2, False),
-        # admin@hangy.com's own PRIVATE event, with nobody in it.
+        # admin@hangy.com's PRIVATE event, with nobody in it: discoverable, but
+        # the schedule stays hidden.
         ("Confraternização da equipe", 0, True),
-        ("Treino de corrida no Gasômetro", 2, False),
     ]
     assert [item["title"] for item in sections[1]["items"]] == [
         "Show de rock no Opinião",

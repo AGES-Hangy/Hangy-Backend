@@ -10,6 +10,7 @@ from app.domain.entities import (
     EventExperienceAccess,
     EventExperienceOwnerAccess,
     EventPhoto,
+    ExperienceDetails,
     ExperienceImage,
     ExperiencePhotoAccess,
     NewEventExperience,
@@ -152,6 +153,78 @@ class SqlAlchemyExperienceRepository:
             raise
         self.db.refresh(model)
         return self._to_entity(model)
+
+    def get_for_participant(
+        self, event_id: UUID, user_id: UUID
+    ) -> ExperienceDetails | None:
+        model = self.db.scalar(
+            select(EventExperienceModel)
+            .join(
+                EventParticipantModel,
+                EventParticipantModel.participant_id
+                == EventExperienceModel.event_participant_id,
+            )
+            .where(
+                EventParticipantModel.event_id == event_id,
+                EventParticipantModel.user_id == user_id,
+                EventExperienceModel.deleted_at.is_(None),
+            )
+        )
+        if model is None:
+            return None
+        return self._to_details(model, event_id)
+
+    def update_description(
+        self, experience_id: UUID, user_id: UUID, description: str
+    ) -> ExperienceDetails | None:
+        row = self.db.execute(
+            select(EventExperienceModel, EventParticipantModel.event_id)
+            .join(
+                EventParticipantModel,
+                EventParticipantModel.participant_id
+                == EventExperienceModel.event_participant_id,
+            )
+            .join(EventModel, EventModel.event_id == EventParticipantModel.event_id)
+            .where(
+                EventExperienceModel.experience_id == experience_id,
+                EventExperienceModel.deleted_at.is_(None),
+                EventParticipantModel.user_id == user_id,
+                EventModel.deleted_at.is_(None),
+            )
+            .with_for_update(of=EventExperienceModel)
+        ).one_or_none()
+        if row is None:
+            return None
+
+        model, event_id = row
+        model.description = description
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        self.db.refresh(model)
+        return self._to_details(model, event_id)
+
+    def _to_details(
+        self, model: EventExperienceModel, event_id: UUID
+    ) -> ExperienceDetails:
+        images = self.db.scalars(
+            select(ExperienceImagesModel)
+            .where(
+                ExperienceImagesModel.experience_id == model.experience_id,
+                ExperienceImagesModel.deleted_at.is_(None),
+            )
+            .order_by(
+                ExperienceImagesModel.created_at.asc(),
+                ExperienceImagesModel.photo_id.asc(),
+            )
+        ).all()
+        return ExperienceDetails(
+            experience=self._to_entity(model),
+            event_id=event_id,
+            images=tuple(self._to_image_entity(image) for image in images),
+        )
 
     def get_owner_access_for_update(
         self, experience_id: UUID, user_id: UUID

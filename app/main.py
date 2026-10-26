@@ -15,6 +15,7 @@ from app.presentation.routes import (
     health_router,
     invites_router,
     notifications_router,
+    profile_photo_router,
     tags_router,
     terms_router,
     uploads_router,
@@ -50,4 +51,5 @@ app.include_router(tags_router)
 app.include_router(feed_router)
 app.include_router(terms_router)
 app.include_router(uploads_router)
+app.include_router(profile_photo_router)
 app.include_router(users_router)

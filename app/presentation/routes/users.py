@@ -26,6 +26,7 @@ from app.domain.services import (
     UserNotBlockedError,
     UserPhotosService,
 )
+from app.domain.services.user_photos import UserPhotosForbiddenError
 from app.domain.services.users import UserNotFoundError, UsersService
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.block import SqlAlchemyBlockRepository
@@ -75,8 +76,13 @@ def get_user_events_service(
 
 def get_user_photos_service(
     db: Annotated[Session, Depends(get_db)],
+    block_service: Annotated[BlockService, Depends(get_block_service)],
 ) -> UserPhotosService:
-    return UserPhotosService(repository=SqlAlchemyUserPhotosRepository(db))
+    return UserPhotosService(
+        repository=SqlAlchemyUserPhotosRepository(db),
+        user_repository=SqlAlchemyUserRepository(db),
+        block_checker=block_service,
+    )
 
 
 @router.post(
@@ -503,6 +509,92 @@ def list_user_events(
     return UserEventsAssembler.to_tabs_dto(tabs)
 
 
+@router.get(
+    "/users/{user_id}/photos",
+    response_model=UserPhotosOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Listar as fotos publicadas por um perfil (aba Galeria)",
+    description=(
+        "Pessoa física: as fotos que ela publicou nas experiências de eventos; "
+        "só as conexões confirmadas (e a própria pessoa) podem ver. "
+        "Estabelecimento: as fotos publicadas nos eventos que ele organizou, "
+        "visíveis a qualquer um. Da mais recente para a mais antiga, com a "
+        "descrição da experiência. Para quem visita só entram fotos de eventos "
+        "PUBLIC, as mesmas que o contador `photos_count` de "
+        "`GET /users/{user_id}` conta."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "`limit` ou `cursor` inválido.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid pagination parameters"}
+                }
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": (
+                "Galeria de pessoa física e o solicitante não é conexão "
+                "confirmada (ou a conta do token foi excluída)."
+            ),
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Only connections can see photos"}
+                }
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": (
+                "O usuário não existe, a conta foi excluída ou há um bloqueio "
+                "entre ele e o solicitante."
+            ),
+            "content": {"application/json": {"example": {"detail": "User not found"}}},
+        },
+    },
+)
+def list_user_photos(
+    user_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    user_photos_service: Annotated[UserPhotosService, Depends(get_user_photos_service)],
+    limit: Annotated[
+        int,
+        BeforeValidator(_parse_limit),
+        Query(description="Tamanho da página (1–100)."),
+    ] = DEFAULT_USER_PHOTOS_LIMIT,
+    cursor: Annotated[
+        str | None, Query(description="Cursor opaco de paginação.")
+    ] = None,
+) -> UserPhotosOutput:
+    assert current_user.user_id is not None
+    try:
+        page = user_photos_service.get_profile_photos(
+            user_id, current_user.user_id, limit=limit, cursor=cursor
+        )
+    except UserNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="User not found"
+        ) from error
+    except UserPhotosForbiddenError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only connections can see photos",
+        ) from error
+    except InvalidPaginationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters",
+        ) from error
+    return UserPhotosAssembler.to_dto(page)
+
+
 __all__ = [
     "block_user",
     "get_block_service",
@@ -511,6 +603,7 @@ __all__ = [
     "get_user_profile",
     "get_users_service",
     "list_user_events",
+    "list_user_photos",
     "read_blocked_users",
     "read_current_user_events",
     "read_current_user_photos",

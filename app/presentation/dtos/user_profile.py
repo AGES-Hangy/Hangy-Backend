@@ -30,6 +30,7 @@ class UserProfileDataOutput(BaseModel):
 class UserProfileCountsOutput(BaseModel):
     past: int
     confirmed: int
+    created: int
     photos: int
 
 

@@ -27,7 +27,11 @@ from app.domain.services.experience import (
     ExperiencePhotoNotFoundError,
     ExperienceService,
 )
-from app.presentation.dtos import ExperienceImageOutput
+from app.presentation.dtos import (
+    CreateExperienceOutput,
+    ExperienceImageOutput,
+    UpdateExperienceInput,
+)
 from app.presentation.mappers import read_image_upload
 from app.presentation.routes.auth import credentials_exception, get_current_user
 from app.presentation.routes.experiences import get_experience_service
@@ -35,6 +39,52 @@ from app.presentation.routes.experiences import get_experience_service
 __all__ = ["router"]
 
 router = APIRouter(prefix="/experiences", tags=["Experiences"])
+
+
+@router.patch(
+    "/{experience_id}",
+    response_model=CreateExperienceOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Editar a descrição da experiência",
+    description=(
+        "Troca a descrição da experiência do usuário autenticado. Só o autor "
+        "edita; as fotos não mudam e voltam na resposta."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, expirado ou inválido.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "A experiência não existe ou é de outro usuário.",
+            "content": {
+                "application/json": {"example": {"detail": "Experience not found"}}
+            },
+        },
+    },
+)
+def update_experience(
+    experience_id: UUID,
+    payload: UpdateExperienceInput,
+    user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[ExperienceService, Depends(get_experience_service)],
+) -> CreateExperienceOutput:
+    if user.user_id is None:
+        raise credentials_exception
+
+    try:
+        details = service.update_description(
+            experience_id, user.user_id, payload.description
+        )
+    except ExperienceNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Experience not found"
+        ) from error
+    return ExperienceAssembler.to_details_dto(details)
 
 
 @router.post(

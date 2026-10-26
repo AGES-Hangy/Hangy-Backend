@@ -10,10 +10,17 @@ __all__ = [
     "EventPhotoOutput",
     "EventPhotosOutput",
     "ExperienceImageOutput",
+    "UpdateExperienceInput",
 ]
 
 
 class CreateExperienceInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    description: str = Field(min_length=1, max_length=1000)
+
+
+class UpdateExperienceInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     description: str = Field(min_length=1, max_length=1000)

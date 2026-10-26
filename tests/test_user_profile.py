@@ -293,7 +293,7 @@ def test_new_user_gets_profile_with_empty_tabs(ctx: Context) -> None:
             "tags": [],
             "connections_count": 0,
         },
-        "counts": {"past": 0, "confirmed": 0, "photos": 0},
+        "counts": {"past": 0, "confirmed": 0, "created": 0, "photos": 0},
     }
 
 
@@ -377,7 +377,12 @@ def test_confirmed_counts_future_and_past_counts_ended(ctx: Context) -> None:
     _participate(ctx.db, user_id, _ended_event(ctx.db, user_id).event_id)
     ctx.db.commit()
 
-    assert get_counts(ctx.client, headers) == {"past": 1, "confirmed": 2, "photos": 0}
+    assert get_counts(ctx.client, headers) == {
+        "past": 1,
+        "confirmed": 2,
+        "created": 3,
+        "photos": 0,
+    }
 
 
 def test_event_in_progress_is_still_confirmed(ctx: Context) -> None:
@@ -391,7 +396,12 @@ def test_event_in_progress_is_still_confirmed(ctx: Context) -> None:
     _participate(ctx.db, user_id, ongoing.event_id)
     ctx.db.commit()
 
-    assert get_counts(ctx.client, headers) == {"past": 0, "confirmed": 1, "photos": 0}
+    assert get_counts(ctx.client, headers) == {
+        "past": 0,
+        "confirmed": 1,
+        "created": 1,
+        "photos": 0,
+    }
 
 
 def test_event_ending_exactly_now_is_past(ctx: Context) -> None:
@@ -402,7 +412,12 @@ def test_event_ending_exactly_now_is_past(ctx: Context) -> None:
     _participate(ctx.db, user_id, boundary.event_id)
     ctx.db.commit()
 
-    assert get_counts(ctx.client, headers) == {"past": 1, "confirmed": 0, "photos": 0}
+    assert get_counts(ctx.client, headers) == {
+        "past": 1,
+        "confirmed": 0,
+        "created": 1,
+        "photos": 0,
+    }
 
 
 def test_elapsed_event_without_status_change_is_past(ctx: Context) -> None:
@@ -420,7 +435,12 @@ def test_finished_event_is_past_even_before_ends_at(ctx: Context) -> None:
     _participate(ctx.db, user_id, finished.event_id)
     ctx.db.commit()
 
-    assert get_counts(ctx.client, headers) == {"past": 1, "confirmed": 0, "photos": 0}
+    assert get_counts(ctx.client, headers) == {
+        "past": 1,
+        "confirmed": 0,
+        "created": 1,
+        "photos": 0,
+    }
 
 
 @pytest.mark.parametrize(
@@ -436,7 +456,12 @@ def test_cancelled_or_draft_events_are_in_no_tab(
     _participate(ctx.db, user_id, ended.event_id)
     ctx.db.commit()
 
-    assert get_counts(ctx.client, headers) == {"past": 0, "confirmed": 0, "photos": 0}
+    assert get_counts(ctx.client, headers) == {
+        "past": 0,
+        "confirmed": 0,
+        "created": 0,
+        "photos": 0,
+    }
 
 
 def test_deleted_events_are_in_no_tab(ctx: Context) -> None:
@@ -449,7 +474,12 @@ def test_deleted_events_are_in_no_tab(ctx: Context) -> None:
     )
     ctx.db.commit()
 
-    assert get_counts(ctx.client, headers) == {"past": 0, "confirmed": 0, "photos": 0}
+    assert get_counts(ctx.client, headers) == {
+        "past": 0,
+        "confirmed": 0,
+        "created": 0,
+        "photos": 0,
+    }
 
 
 @pytest.mark.parametrize(
@@ -473,7 +503,12 @@ def test_only_confirmed_participations_are_counted(
     _participate(ctx.db, user_id, ended.event_id, participant_status)
     ctx.db.commit()
 
-    assert get_counts(ctx.client, headers) == {"past": 0, "confirmed": 0, "photos": 0}
+    assert get_counts(ctx.client, headers) == {
+        "past": 0,
+        "confirmed": 0,
+        "created": 0,
+        "photos": 0,
+    }
 
 
 def test_other_users_participations_are_not_counted(ctx: Context) -> None:
@@ -486,7 +521,12 @@ def test_other_users_participations_are_not_counted(ctx: Context) -> None:
     _participate(ctx.db, other.user_id, ended.event_id)
     ctx.db.commit()
 
-    assert get_counts(ctx.client, headers) == {"past": 0, "confirmed": 0, "photos": 0}
+    assert get_counts(ctx.client, headers) == {
+        "past": 0,
+        "confirmed": 0,
+        "created": 0,
+        "photos": 0,
+    }
 
 
 def test_past_counts_ended_events_the_user_created_once(ctx: Context) -> None:
@@ -498,7 +538,12 @@ def test_past_counts_ended_events_the_user_created_once(ctx: Context) -> None:
     _future_event(ctx.db, user_id)
     ctx.db.commit()
 
-    assert get_counts(ctx.client, headers) == {"past": 2, "confirmed": 0, "photos": 0}
+    assert get_counts(ctx.client, headers) == {
+        "past": 2,
+        "confirmed": 0,
+        "created": 3,
+        "photos": 0,
+    }
 
 
 def test_photos_count_only_active_images_of_the_user(ctx: Context) -> None:

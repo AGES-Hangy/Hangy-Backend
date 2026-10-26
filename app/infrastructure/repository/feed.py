@@ -81,6 +81,15 @@ class SqlAlchemyFeedRepository:
             )
             .correlate(EventModel)
         )
+        viewer_confirmed = (
+            exists()
+            .where(
+                EventParticipantModel.event_id == EventModel.event_id,
+                EventParticipantModel.user_id == viewer_id,
+                EventParticipantModel.status == EventParticipantStatusEnum.CONFIRMED,
+            )
+            .correlate(EventModel)
+        )
         # Aliased so it does not capture the participant count subquery above.
         viewer_participation = aliased(EventParticipantModel)
         tagged_events = select(event_tag.c.event_id).where(
@@ -112,6 +121,10 @@ class SqlAlchemyFeedRepository:
                 # A block hides both sides from each other, so events created
                 # by someone the viewer blocked are dropped too.
                 ~block_exists_between(EventModel.event_creator_id, viewer_id),
+                # The feed is for discovering: the viewer's own events and the
+                # ones they already confirmed live on their profile instead.
+                EventModel.event_creator_id != viewer_id,
+                ~viewer_confirmed,
             )
             .order_by(EventModel.starts_at, EventModel.event_id)
             .limit(limit)
