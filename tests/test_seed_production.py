@@ -105,6 +105,7 @@ def test_production_admin_can_log_in_and_access_its_business_profile(sessions):
                 "id": str(production.ADMIN_ID),
                 "email": production.ADMIN_EMAIL,
                 "user_type": "BUSINESS",
+                "role": "ADMIN",
                 "business_name": "Admin Hangy",
             }
             profile = client.get(
