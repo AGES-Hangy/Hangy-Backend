@@ -55,6 +55,7 @@ resource "aws_s3_bucket_policy" "app" {
         Resource = [
           "${aws_s3_bucket.app.arn}/events/covers/*",
           "${aws_s3_bucket.app.arn}/experiences/*",
+          "${aws_s3_bucket.app.arn}/profile-photos/*",
         ]
       },
     ]

@@ -1,4 +1,4 @@
-"""Tests for GET /users/me/photos.
+"""Tests for GET /users/me/photos and GET /users/{user_id}/photos.
 
 Follows the pattern from tests/test_auth.py:
 - SQLite in-memory with StaticPool
@@ -23,6 +23,7 @@ from app.domain.enums import (
     EventParticipantStatusEnum,
     EventPrivacyEnum,
     EventStatusEnum,
+    UserConnectionStatusEnum,
     UserRoleEnum,
     UserTypeEnum,
 )
@@ -30,6 +31,8 @@ from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import (
     EventModel,
     EventParticipantModel,
+    UserBlockModel,
+    UserConnectionModel,
     UserModel,
 )
 from app.infrastructure.repository.models.event_experience_model import (
@@ -222,10 +225,18 @@ def test_photo_item_has_the_documented_shape(photos_client) -> None:
     body = client.get(URL, headers=headers).json()
 
     [item] = body["items"]
-    assert set(item) == {"photo_id", "photo_url", "event", "created_at"}
+    assert set(item) == {
+        "photo_id",
+        "photo_url",
+        "experience_id",
+        "event",
+        "description",
+        "created_at",
+    }
     assert item["photo_id"] == photo_id
     assert item["photo_url"] == "https://img/a.jpg"
     assert item["event"] == {"id": event_id, "title": "Pelada no Parcão"}
+    assert item["description"] == "Foi demais"
     assert datetime.fromisoformat(item["created_at"]).replace(tzinfo=UTC) == created_at
     assert body["next_cursor"] is None
 
@@ -410,3 +421,146 @@ def test_invalid_token_returns_401(photos_client) -> None:
 
     assert response.status_code == 401
     assert response.json() == {"detail": "Could not validate credentials"}
+
+
+# ---------------------------------------------------------------------------
+# GET /users/{user_id}/photos
+# ---------------------------------------------------------------------------
+
+
+def connect(db: Session, requester_id: UUID, receiver_id: UUID) -> None:
+    db.add(
+        UserConnectionModel(
+            requester_id=requester_id,
+            receiver_id=receiver_id,
+            status=UserConnectionStatusEnum.CONFIRMED,
+        )
+    )
+    db.flush()
+
+
+def test_connection_sees_only_the_photos_of_public_events(photos_client) -> None:
+    client, session = photos_client
+    with session() as db:
+        owner = create_user(db)
+        visitor = create_user(db)
+        connect(db, visitor.user_id, owner.user_id)
+        public = create_event(db, owner.user_id, "Pelada no Parcão")
+        private = create_event(db, owner.user_id, "Aniversário")
+        private.event_privacy = EventPrivacyEnum.PRIVATE
+        add_photo(
+            db,
+            create_experience(db, owner.user_id, public),
+            "https://img/a.jpg",
+            created_at=NOW,
+        )
+        add_photo(
+            db,
+            create_experience(db, owner.user_id, private),
+            "https://img/b.jpg",
+            created_at=NOW,
+        )
+        db.commit()
+        owner_id = owner.user_id
+        visitor_headers = make_token(visitor.user_id)
+        owner_headers = make_token(owner.user_id)
+
+    url = f"/users/{owner_id}/photos"
+    visitor_view = client.get(url, headers=visitor_headers)
+    owner_view = client.get(url, headers=owner_headers)
+
+    assert visitor_view.status_code == 200, visitor_view.text
+    assert [item["photo_url"] for item in visitor_view.json()["items"]] == [
+        "https://img/a.jpg"
+    ]
+    assert len(owner_view.json()["items"]) == 2
+    profile = client.get(f"/users/{owner_id}", headers=visitor_headers).json()
+    assert profile["photos_count"] == 1
+    assert profile["events_count"] == 1
+
+
+def test_profile_photos_are_hidden_by_a_block(photos_client) -> None:
+    client, session = photos_client
+    with session() as db:
+        owner = create_user(db)
+        visitor = create_user(db)
+        db.add(UserBlockModel(blocker_id=owner.user_id, blocked_id=visitor.user_id))
+        db.commit()
+        owner_id = owner.user_id
+        headers = make_token(visitor.user_id)
+
+    response = client.get(f"/users/{owner_id}/photos", headers=headers)
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "User not found"}
+
+
+def test_profile_photos_of_an_unknown_user_return_404(photos_client) -> None:
+    client, session = photos_client
+    with session() as db:
+        me = create_user(db)
+        db.commit()
+        headers = make_token(me.user_id)
+
+    response = client.get(f"/users/{uuid4()}/photos", headers=headers)
+
+    assert response.status_code == 404
+
+
+def test_person_gallery_is_only_for_connections(photos_client) -> None:
+    client, session = photos_client
+    with session() as db:
+        owner = create_user(db)
+        stranger = create_user(db)
+        event = create_event(db, owner.user_id, "Pelada no Parcão")
+        add_photo(
+            db,
+            create_experience(db, owner.user_id, event),
+            "https://img/a.jpg",
+            created_at=NOW,
+        )
+        db.commit()
+        owner_id = owner.user_id
+        headers = make_token(stranger.user_id)
+
+    response = client.get(f"/users/{owner_id}/photos", headers=headers)
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Only connections can see photos"}
+
+
+def test_business_gallery_is_public_with_the_photos_of_its_events(
+    photos_client,
+) -> None:
+    client, session = photos_client
+    with session() as db:
+        business = create_user(db)
+        business.user_type = UserTypeEnum.BUSINESS
+        participant = create_user(db)
+        stranger = create_user(db)
+        event = create_event(db, business.user_id, "Show no bar")
+        other_event = create_event(db, participant.user_id, "Outro evento")
+        add_photo(
+            db,
+            create_experience(db, participant.user_id, event),
+            "https://img/a.jpg",
+            created_at=NOW,
+        )
+        add_photo(
+            db,
+            create_experience(db, participant.user_id, other_event),
+            "https://img/b.jpg",
+            created_at=NOW,
+        )
+        db.commit()
+        business_id = business.user_id
+        headers = make_token(stranger.user_id)
+
+    response = client.get(f"/users/{business_id}/photos", headers=headers)
+
+    assert response.status_code == 200, response.text
+    assert [item["photo_url"] for item in response.json()["items"]] == [
+        "https://img/a.jpg"
+    ]
+    profile = client.get(f"/users/{business_id}", headers=headers).json()
+    assert profile["photos_count"] == 1

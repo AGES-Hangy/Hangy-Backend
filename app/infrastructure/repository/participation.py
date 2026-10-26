@@ -24,6 +24,11 @@ class SqlAlchemyParticipationRepository:
         self.db = db
         self.dispatcher = dispatcher
 
+    def is_blocked_between(self, user_a: UUID, user_b: UUID) -> bool:
+        from app.infrastructure.repository.block_access import is_blocked_for_write
+
+        return is_blocked_for_write(self.db, user_a, user_b)
+
     def get_event_for_update(self, event_id: UUID) -> Event | None:
         from app.infrastructure.repository.event import SqlAlchemyEventRepository
 

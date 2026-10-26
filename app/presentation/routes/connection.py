@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BeforeValidator
 from sqlalchemy.orm import Session
 
@@ -16,6 +16,7 @@ from app.domain.services import (
     ConnectionService,
     InvalidConnectionStatusTransitionError,
     InvalidPaginationError,
+    NotConnectionParticipantError,
     NotConnectionReceiverError,
     NotificationDispatcher,
     ReceiverNotFoundError,
@@ -294,3 +295,59 @@ def list_my_connections(
             detail="Invalid pagination parameters",
         ) from exc
     return ConnectionAssembler.to_connections_dto(page)
+
+
+@router.delete(
+    "/connections/{connection_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Desfazer uma conexão ou cancelar uma solicitação",
+    description=(
+        "Desfaz uma conexão existente ou cancela uma solicitação enviada; os "
+        "dois lados (solicitante e destinatário) usam o mesmo endpoint. A "
+        "remoção é lógica (`deleted_at`), então os usuários podem se conectar "
+        "de novo depois. Nenhuma notificação é enviada."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "O usuário não é nem o solicitante nem o destinatário.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Not part of this connection"}
+                }
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Conexão inexistente ou já desfeita.",
+            "content": {
+                "application/json": {"example": {"detail": "Connection not found"}}
+            },
+        },
+    },
+)
+def undo_connection(
+    connection_id: UUID,
+    current_user: Annotated[User, Depends(get_current_user)],
+    connection_service: Annotated[ConnectionService, Depends(get_connection_service)],
+) -> Response:
+    assert current_user.user_id is not None
+    try:
+        connection_service.undo_connection(connection_id, current_user.user_id)
+    except ConnectionNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Connection not found",
+        ) from error
+    except NotConnectionParticipantError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not part of this connection",
+        ) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

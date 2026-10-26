@@ -5,12 +5,13 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import and_, delete, exists, func, or_, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.domain.entities import Notification
-from app.domain.enums import NotificationTypeEnum
+from app.domain.enums import NotificationTypeEnum, UserConnectionStatusEnum
 from app.domain.services.notification_dispatcher import PushContext
+from app.infrastructure.repository.block_access import is_blocked_for_write
 from app.infrastructure.repository.models import (
     ConnectionNotificationModel,
     EventCancelledNotificationModel,
@@ -35,6 +36,22 @@ _ORGANIZER_SENDER_TYPES = frozenset(
 )
 
 
+def _is_live():
+    """A "wants to connect" whose request was already answered or undone is
+    stale: answering deletes it, but rows from before that rule still exist."""
+    pending_request = exists().where(
+        ConnectionNotificationModel.notification_id
+        == NotificationModel.notification_id,
+        UserConnectionModel.connection_id == ConnectionNotificationModel.connection_id,
+        UserConnectionModel.status == UserConnectionStatusEnum.PENDING,
+        UserConnectionModel.deleted_at.is_(None),
+    )
+    return or_(
+        NotificationModel.type != NotificationTypeEnum.CONNECTION_REQUEST,
+        pending_request,
+    )
+
+
 class SqlAlchemyNotificationRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -47,6 +64,7 @@ class SqlAlchemyNotificationRepository:
                 .where(
                     NotificationModel.user_id == user_id,
                     NotificationModel.read.is_(False),
+                    _is_live(),
                 )
             )
             or 0
@@ -82,7 +100,12 @@ class SqlAlchemyNotificationRepository:
         recipient_id: UUID,
         connection_id: UUID,
         type: NotificationTypeEnum,
-    ) -> UUID:
+    ) -> UUID | None:
+        context = self.get_push_context(type, connection_id=connection_id)
+        if context.sender_id is not None and is_blocked_for_write(
+            self.db, recipient_id, context.sender_id
+        ):
+            return None
         notification = NotificationModel(user_id=recipient_id, type=type)
         self.db.add(notification)
         self.db.flush()
@@ -99,7 +122,19 @@ class SqlAlchemyNotificationRepository:
         recipient_id: UUID,
         participant_id: UUID,
         type: NotificationTypeEnum,
-    ) -> UUID:
+    ) -> UUID | None:
+        participant = self.db.get(EventParticipantModel, participant_id)
+        if participant is not None:
+            event = self.db.get(EventModel, participant.event_id)
+            counterpart = (
+                participant.user_id
+                if participant.user_id != recipient_id
+                else (event.event_creator_id if event else None)
+            )
+            if counterpart is not None and is_blocked_for_write(
+                self.db, recipient_id, counterpart
+            ):
+                return None
         notification = NotificationModel(user_id=recipient_id, type=type)
         self.db.add(notification)
         self.db.flush()
@@ -111,7 +146,14 @@ class SqlAlchemyNotificationRepository:
         )
         return notification.notification_id
 
-    def notify_event_cancelled(self, recipient_id: UUID, event_id: UUID) -> UUID:
+    def notify_event_cancelled(self, recipient_id: UUID, event_id: UUID) -> UUID | None:
+        context = self.get_push_context(
+            NotificationTypeEnum.EVENT_CANCELLED, event_id=event_id
+        )
+        if context.sender_id is not None and is_blocked_for_write(
+            self.db, recipient_id, context.sender_id
+        ):
+            return None
         notification = NotificationModel(
             user_id=recipient_id, type=NotificationTypeEnum.EVENT_CANCELLED
         )
@@ -125,7 +167,14 @@ class SqlAlchemyNotificationRepository:
         )
         return notification.notification_id
 
-    def notify_event_updated(self, recipient_id: UUID, event_id: UUID) -> UUID:
+    def notify_event_updated(self, recipient_id: UUID, event_id: UUID) -> UUID | None:
+        context = self.get_push_context(
+            NotificationTypeEnum.EVENT_UPDATED, event_id=event_id
+        )
+        if context.sender_id is not None and is_blocked_for_write(
+            self.db, recipient_id, context.sender_id
+        ):
+            return None
         notification = NotificationModel(
             user_id=recipient_id, type=NotificationTypeEnum.EVENT_UPDATED
         )
@@ -203,7 +252,7 @@ class SqlAlchemyNotificationRepository:
     ) -> list[Notification]:
         stmt = (
             select(NotificationModel)
-            .where(NotificationModel.user_id == user_id)
+            .where(NotificationModel.user_id == user_id, _is_live())
             .options(
                 joinedload(NotificationModel.connection_detail).joinedload(
                     ConnectionNotificationModel.connection
@@ -236,6 +285,40 @@ class SqlAlchemyNotificationRepository:
 
         rows = self.db.scalars(stmt).unique().all()
         return [self._to_entity(row, include_payload=True) for row in rows]
+
+
+def delete_connection_request_notifications(db: Session, connection_id: UUID) -> None:
+    """Drop the receiver's "wants to connect" notification once it is undone.
+
+    Same reason as for participation requests: the notification list would keep
+    offering a request that no longer exists. Runs in the caller's transaction.
+    """
+    request_ids = list(
+        db.scalars(
+            select(NotificationModel.notification_id)
+            .join(
+                ConnectionNotificationModel,
+                ConnectionNotificationModel.notification_id
+                == NotificationModel.notification_id,
+            )
+            .where(
+                ConnectionNotificationModel.connection_id == connection_id,
+                NotificationModel.type == NotificationTypeEnum.CONNECTION_REQUEST,
+            )
+        )
+    )
+    if not request_ids:
+        return
+    db.execute(
+        delete(ConnectionNotificationModel).where(
+            ConnectionNotificationModel.notification_id.in_(request_ids)
+        )
+    )
+    db.execute(
+        delete(NotificationModel).where(
+            NotificationModel.notification_id.in_(request_ids)
+        )
+    )
 
 
 def delete_participation_request_notifications(
@@ -351,3 +434,101 @@ def _build_payload(model: NotificationModel) -> dict:
         return {}
 
     return {}
+
+
+def delete_pair_notifications(db: Session, user_a: UUID, user_b: UUID) -> None:
+    """Delete both inboxes' relationship/event records, including old links.
+
+    Never delete a third person's inbox or unrelated events. Details go first
+    for SQLite configurations without FK cascades; the caller owns the commit.
+    """
+    connections = (
+        select(ConnectionNotificationModel.notification_id)
+        .join(
+            UserConnectionModel,
+            UserConnectionModel.connection_id
+            == ConnectionNotificationModel.connection_id,
+        )
+        .where(
+            or_(
+                and_(
+                    UserConnectionModel.requester_id == user_a,
+                    UserConnectionModel.receiver_id == user_b,
+                ),
+                and_(
+                    UserConnectionModel.requester_id == user_b,
+                    UserConnectionModel.receiver_id == user_a,
+                ),
+            )
+        )
+    )
+    participants = (
+        select(EventParticipantNotificationModel.notification_id)
+        .join(
+            EventParticipantModel,
+            EventParticipantModel.participant_id
+            == EventParticipantNotificationModel.participant_id,
+        )
+        .join(EventModel, EventModel.event_id == EventParticipantModel.event_id)
+        .where(
+            or_(
+                and_(
+                    NotificationModel.user_id == user_a,
+                    or_(
+                        EventModel.event_creator_id == user_b,
+                        EventParticipantModel.user_id == user_b,
+                    ),
+                ),
+                and_(
+                    NotificationModel.user_id == user_b,
+                    or_(
+                        EventModel.event_creator_id == user_a,
+                        EventParticipantModel.user_id == user_a,
+                    ),
+                ),
+            )
+        )
+        .correlate(NotificationModel)
+    )
+    events = (
+        select(EventCancelledNotificationModel.notification_id)
+        .join(
+            EventModel, EventModel.event_id == EventCancelledNotificationModel.event_id
+        )
+        .where(
+            or_(
+                and_(
+                    NotificationModel.user_id == user_a,
+                    EventModel.event_creator_id == user_b,
+                ),
+                and_(
+                    NotificationModel.user_id == user_b,
+                    EventModel.event_creator_id == user_a,
+                ),
+            )
+        )
+        .correlate(NotificationModel)
+    )
+    ids = list(
+        db.scalars(
+            select(NotificationModel.notification_id).where(
+                NotificationModel.user_id.in_((user_a, user_b)),
+                or_(
+                    NotificationModel.notification_id.in_(connections),
+                    NotificationModel.notification_id.in_(participants),
+                    NotificationModel.notification_id.in_(events),
+                ),
+            )
+        )
+    )
+    if not ids:
+        return
+    for detail in (
+        ConnectionNotificationModel,
+        EventParticipantNotificationModel,
+        EventCancelledNotificationModel,
+    ):
+        db.execute(delete(detail).where(detail.notification_id.in_(ids)))
+    db.execute(
+        delete(NotificationModel).where(NotificationModel.notification_id.in_(ids))
+    )

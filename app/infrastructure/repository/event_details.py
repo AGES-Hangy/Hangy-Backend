@@ -16,9 +16,6 @@ from app.infrastructure.repository.models import (
     EventModel,
     EventParticipantModel,
 )
-from app.infrastructure.repository.models.user_block_model import (
-    UserBlockModel,
-)
 
 
 class SqlAlchemyEventDetailsRepository:
@@ -91,16 +88,10 @@ class SqlAlchemyEventDetailsRepository:
         )
 
     def organizer_blocked_viewer(self, organizer_id: UUID, viewer_id: UUID) -> bool:
-        return (
-            self.db.scalar(
-                select(func.count())
-                .select_from(UserBlockModel)
-                .where(
-                    UserBlockModel.blocker_id == organizer_id,
-                    UserBlockModel.blocked_id == viewer_id,
-                )
-            )
-            > 0
+        from app.infrastructure.repository.block_access import block_exists_between
+
+        return bool(
+            self.db.scalar(select(block_exists_between(organizer_id, viewer_id)))
         )
 
     @staticmethod

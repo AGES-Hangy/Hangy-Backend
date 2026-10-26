@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import Select, case, func, or_, select
@@ -18,6 +18,9 @@ from app.infrastructure.repository.models import (
     PersonProfileModel,
     UserConnectionModel,
     UserModel,
+)
+from app.infrastructure.repository.notification import (
+    delete_connection_request_notifications,
 )
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
 
@@ -52,9 +55,21 @@ class SqlAlchemyConnectionRepository:
         self.dispatcher = dispatcher
 
     def get_by_id_for_update(self, connection_id: UUID) -> UserConnection | None:
+        from app.infrastructure.repository.block_access import lock_user_pair
+
+        pair = self.db.execute(
+            select(
+                UserConnectionModel.requester_id, UserConnectionModel.receiver_id
+            ).where(UserConnectionModel.connection_id == connection_id)
+        ).one_or_none()
+        if pair is not None:
+            lock_user_pair(self.db, *pair)
         model = self.db.scalar(
             select(UserConnectionModel)
-            .where(UserConnectionModel.connection_id == connection_id)
+            .where(
+                UserConnectionModel.connection_id == connection_id,
+                UserConnectionModel.deleted_at.is_(None),
+            )
             .with_for_update()
         )
         return self._to_entity(model) if model is not None else None
@@ -227,6 +242,8 @@ class SqlAlchemyConnectionRepository:
         if model is None:
             raise ValueError("A connection validated by the service must exist")
         model.status = UserConnectionStatusEnum.CONFIRMED
+        # Answered: the receiver's "wants to connect" would keep offering it.
+        delete_connection_request_notifications(self.db, connection_id)
         self.dispatcher.dispatch(
             NotificationTypeEnum.CONNECTION_ACCEPTED,
             recipient_id=model.requester_id,
@@ -246,9 +263,23 @@ class SqlAlchemyConnectionRepository:
         if model is None:
             raise ValueError("A connection validated by the service must exist")
         model.status = UserConnectionStatusEnum.REJECTED
+        delete_connection_request_notifications(self.db, connection_id)
         self.db.commit()
         self.db.refresh(model)
         return self._to_entity(model)
+
+    def soft_delete(self, connection_id: UUID) -> None:
+        model = self.db.scalar(
+            select(UserConnectionModel).where(
+                UserConnectionModel.connection_id == connection_id,
+                UserConnectionModel.deleted_at.is_(None),
+            )
+        )
+        if model is None:
+            raise ValueError("A connection validated by the service must exist")
+        model.deleted_at = datetime.now(UTC)
+        delete_connection_request_notifications(self.db, connection_id)
+        self.db.commit()
 
     @staticmethod
     def _to_entity(model: UserConnectionModel) -> UserConnection:

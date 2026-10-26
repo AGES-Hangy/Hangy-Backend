@@ -133,6 +133,21 @@ class SqlAlchemyEventRepository:
     def get_participant_for_update(
         self, event_id: UUID, participant_id: UUID
     ) -> EventParticipant | None:
+        from app.infrastructure.repository.block_access import is_blocked_for_write
+
+        pair = self.db.execute(
+            select(EventModel.event_creator_id, EventParticipantModel.user_id)
+            .join(
+                EventParticipantModel,
+                EventParticipantModel.event_id == EventModel.event_id,
+            )
+            .where(
+                EventModel.event_id == event_id,
+                EventParticipantModel.participant_id == participant_id,
+            )
+        ).one_or_none()
+        if pair is None or is_blocked_for_write(self.db, pair[0], pair[1]):
+            return None
         model = self.db.scalar(
             select(EventParticipantModel)
             .where(

@@ -31,6 +31,9 @@ class FeedItemOutput(BaseModel):
     cover_photo_url: str | None
     privacy: EventPrivacyEnum
     participants_count: int
+    # Whether the viewer favorited the event, same as `viewer.is_favorited`
+    # in the event details.
+    is_favorited: bool = False
     # The event's own tag(s) that matched this section, e.g. `Futebol` under
     # `Esportes` — not the section's own macro tag, which is already the
     # section title.

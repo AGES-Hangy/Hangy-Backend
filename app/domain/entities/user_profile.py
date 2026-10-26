@@ -15,6 +15,7 @@ __all__ = ["UserProfile", "UserProfileCounts", "UserProfileData"]
 class UserProfileCounts:
     past: int
     confirmed: int
+    created: int
     photos: int
     connections: int
 
@@ -43,3 +44,6 @@ class UserProfileData:
     connection_id: UUID | None = None
     connection_direction: ConnectionDirectionEnum | None = None
     followers_count: int | None = None
+    # Created events and gallery photos, as the viewer may see them.
+    events_count: int | None = None
+    photos_count: int | None = None

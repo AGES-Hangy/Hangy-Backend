@@ -30,6 +30,7 @@ class UserProfileAssembler:
             counts=UserProfileCountsOutput(
                 past=profile.counts.past,
                 confirmed=profile.counts.confirmed,
+                created=profile.counts.created,
                 photos=profile.counts.photos,
             ),
         )

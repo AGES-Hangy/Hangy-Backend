@@ -1,7 +1,7 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from unittest.mock import Mock
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import jwt
 import pytest
@@ -9,8 +9,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import settings
+from app.domain.enums import UserRoleEnum, UserTypeEnum
 from app.domain.services import ImageStorageUnavailableError
-from app.infrastructure.repository.models import EventModel, user_tag
+from app.infrastructure.repository.models import EventModel, UserModel, user_tag
 from tests import test_create_event
 from tests.test_create_event import FOOTBALL_ID, ORGANIZER_ID, auth_header, payload
 
@@ -146,15 +147,35 @@ def test_uploaded_cover_is_saved_and_visible_in_detail_and_feed(client) -> None:
     )
     assert created.status_code == 201
     event_id = created.json()["event_id"]
+    # The organizer never sees their own event in the feed: someone else does.
+    visitor_id = uuid4()
     with session_factory() as db:
         assert db.get(EventModel, UUID(event_id)).cover_photo_url == url
-        db.execute(user_tag.insert().values(user_id=ORGANIZER_ID, tag_id=FOOTBALL_ID))
+        db.add(
+            UserModel(
+                user_id=visitor_id,
+                user_type=UserTypeEnum.PERSONAL,
+                role=UserRoleEnum.USER,
+                email="visitor@hangy.test",
+                password_hash="hashed",
+                name="Visitante",
+            )
+        )
+        db.flush()
+        db.execute(user_tag.insert().values(user_id=visitor_id, tag_id=FOOTBALL_ID))
         db.commit()
+    visitor_token = jwt.encode(
+        {"sub": str(visitor_id), "exp": datetime.now(UTC) + timedelta(minutes=5)},
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
 
     detail = test_client.get(f"/events/{event_id}", headers=auth_header())
     assert detail.status_code == 200
     assert detail.json()["cover_photo_url"] == url
-    feed = test_client.get("/feed", headers=auth_header())
+    feed = test_client.get(
+        "/feed", headers={"Authorization": f"Bearer {visitor_token}"}
+    )
     assert feed.status_code == 200
     items = [item for section in feed.json()["sections"] for item in section["items"]]
     assert any(

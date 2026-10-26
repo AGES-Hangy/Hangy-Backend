@@ -47,6 +47,26 @@ class SqlAlchemyUserRepository:
         )
         return self.db.scalar(stmt) is not None
 
+    def set_profile_photo(
+        self, user_id: UUID, photo_url: str
+    ) -> tuple[bool, str | None]:
+        """Save the photo; returns whether the user exists and the previous URL."""
+        model = self.db.scalar(
+            select(UserModel)
+            .where(UserModel.user_id == user_id, UserModel.deleted_at.is_(None))
+            .with_for_update()
+        )
+        if model is None:
+            return False, None
+        previous = model.profile_photo_url
+        model.profile_photo_url = photo_url
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        return True, previous
+
     def soft_delete(self, user_id: UUID, deleted_at: datetime) -> None:
         model = self.db.scalar(select(UserModel).where(UserModel.user_id == user_id))
         if model is None:

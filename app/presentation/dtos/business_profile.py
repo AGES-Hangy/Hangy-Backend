@@ -32,6 +32,7 @@ class BusinessMeOutput(BaseModel):
     address: str
     location: BusinessLocationOutput | None
     phone: str | None
+    photo_url: str | None
 
 
 class BusinessProfileUpdateInput(BaseModel):
