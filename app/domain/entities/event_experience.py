@@ -8,9 +8,11 @@ from uuid import UUID
 if TYPE_CHECKING:
     from app.domain.entities.event import Event
     from app.domain.entities.event_participant import EventParticipant
+    from app.domain.enums import EventParticipantStatusEnum
 
 __all__ = [
     "EventExperience",
+    "EventExperienceOwnerAccess",
     "EventExperienceAccess",
     "EventPhoto",
     "EventPhotoListItem",
@@ -40,6 +42,14 @@ class EventExperienceAccess:
     event: Event
     participant: EventParticipant | None
     organizer_blocked_viewer: bool
+
+
+@dataclass(frozen=True, slots=True)
+class EventExperienceOwnerAccess:
+    experience_id: UUID
+    author_id: UUID
+    participant_status: EventParticipantStatusEnum
+    active_photo_count: int
 
 
 @dataclass(frozen=True, slots=True)
