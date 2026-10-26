@@ -1,9 +1,10 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, delete, func, select
+from sqlalchemy import create_engine, delete, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -13,6 +14,7 @@ from app.domain.enums import (
     EventStatusEnum,
     NotificationTypeEnum,
     UserConnectionStatusEnum,
+    UserRoleEnum,
 )
 from app.domain.services.event_location import approximate_point
 from app.infrastructure.repository import Base, get_db
@@ -84,6 +86,30 @@ def seed_everything(db: Session) -> None:
 
 def count(db: Session, entity: object) -> int:
     return db.scalar(select(func.count()).select_from(entity))
+
+
+def count_where(db: Session, entity: object, condition: object) -> int:
+    return db.scalar(select(func.count()).select_from(entity).where(condition))
+
+
+def seed_events_created_by(db: Session, creator: UserModel, title: str) -> UUID:
+    starts_at = datetime.now(UTC) + timedelta(days=2)
+    event = EventModel(
+        event_creator_id=creator.user_id,
+        event_title=title,
+        location_name="Parcão",
+        location_neighborhood="Moinhos de Vento",
+        location_city="Porto Alegre",
+        event_latitude=-30.03,
+        event_longitude=-51.2,
+        starts_at=starts_at,
+        ends_at=starts_at + timedelta(hours=2),
+        event_status=EventStatusEnum.PUBLISHED,
+        event_privacy=EventPrivacyEnum.PUBLIC,
+    )
+    db.add(event)
+    db.flush()
+    return event.event_id
 
 
 def test_seed_creates_the_sample_data_only_once(
@@ -363,8 +389,8 @@ def test_seeded_feed_matches_the_documented_sample(
     assert sports == [
         # PUBLIC and without user@hangy.com: the one to join directly.
         ("Corrida noturna na Orla", 2, False),
-        # admin@hangy.com's PRIVATE event, with nobody in it: discoverable, but
-        # the schedule stays hidden.
+        # estabelecimento@hangy.com's PRIVATE event, with nobody in it:
+        # discoverable, but the schedule stays hidden.
         ("Confraternização da equipe", 0, True),
     ]
     assert [item["title"] for item in sections[1]["items"]] == [
@@ -372,6 +398,143 @@ def test_seeded_feed_matches_the_documented_sample(
         # user@hangy.com's request is still pending.
         "Jam de rock no apê do João",
     ]
+
+
+def test_seed_makes_admin_hangy_an_admin_without_business_data(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        admin = db.scalar(select(UserModel).where(UserModel.email == "admin@hangy.com"))
+        assert admin.role == UserRoleEnum.ADMIN
+        assert admin.business_profile is not None
+        assert (
+            count_where(db, EventModel, EventModel.event_creator_id == admin.user_id)
+            == 0
+        )
+        assert (
+            count_where(
+                db,
+                UserFollowModel,
+                UserFollowModel.followed_business_id == admin.user_id,
+            )
+            == 0
+        )
+        others = db.scalars(
+            select(UserModel.role).where(UserModel.email != "admin@hangy.com")
+        ).all()
+        assert set(others) == {UserRoleEnum.USER}
+
+    def override_get_db() -> Iterator[Session]:
+        with session_factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as client:
+        login = client.post(
+            "/auth/login",
+            json={"email": "admin@hangy.com", "password": "admin-password"},
+        )
+    app.dependency_overrides.clear()
+
+    assert login.status_code == 200
+    assert login.json()["user"]["role"] == "ADMIN"
+
+
+def test_seed_hands_admin_hangy_business_data_over_to_the_business(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        users = {user.email: user for user in db.scalars(select(UserModel))}
+        admin = users["admin@hangy.com"]
+        business = users["estabelecimento@hangy.com"]
+        # The state an older seed left: admin@hangy.com owned the demo events,
+        # their invite links and the followers, was a USER, and a tester
+        # created one more event with it.
+        admin.role = UserRoleEnum.USER
+        db.execute(
+            update(EventModel)
+            .where(EventModel.event_creator_id == business.user_id)
+            .values(event_creator_id=admin.user_id)
+        )
+        db.execute(
+            update(EventInviteLinkModel)
+            .where(EventInviteLinkModel.created_by == business.user_id)
+            .values(created_by=admin.user_id)
+        )
+        db.execute(delete(UserFollowModel))
+        db.add_all(
+            [
+                UserFollowModel(
+                    follower_id=users[email].user_id,
+                    followed_business_id=admin.user_id,
+                )
+                for email in ("user@hangy.com", "maria@hangy.com", "joao@hangy.com")
+            ]
+        )
+        # Already follows both: must not end up with a duplicate follow.
+        db.add(
+            UserFollowModel(
+                follower_id=users["maria@hangy.com"].user_id,
+                followed_business_id=business.user_id,
+            )
+        )
+        created_while_testing = seed_events_created_by(db, admin, "Evento do teste")
+        db.commit()
+        event_ids = set(db.scalars(select(EventModel.event_id)))
+
+        seed_everything(db)
+        db.expire_all()
+
+        assert admin.role == UserRoleEnum.ADMIN
+        assert set(db.scalars(select(EventModel.event_id))) == event_ids
+        assert (
+            set(
+                db.scalars(
+                    select(EventModel.event_id).where(
+                        EventModel.event_creator_id == admin.user_id
+                    )
+                )
+            )
+            == set()
+        )
+        assert db.get(EventModel, created_while_testing).event_creator_id == (
+            business.user_id
+        )
+        assert (
+            count_where(
+                db,
+                EventInviteLinkModel,
+                EventInviteLinkModel.created_by == admin.user_id,
+            )
+            == 0
+        )
+        followers = db.scalars(
+            select(UserFollowModel.follower_id).where(
+                UserFollowModel.followed_business_id == business.user_id
+            )
+        ).all()
+        assert sorted(followers) == sorted(
+            users[email].user_id
+            for email in ("user@hangy.com", "maria@hangy.com", "joao@hangy.com")
+        )
+        assert count(db, UserFollowModel) == 3
+
+
+def test_seed_restores_the_admin_role_removed_while_testing(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        admin = db.scalar(select(UserModel).where(UserModel.email == "admin@hangy.com"))
+        admin.role = UserRoleEnum.USER
+        db.commit()
+
+        seed_everything(db)
+        db.refresh(admin)
+
+        assert admin.role == UserRoleEnum.ADMIN
 
 
 def test_seeded_business_user_has_an_empty_feed(
@@ -388,7 +551,10 @@ def test_seeded_business_user_has_an_empty_feed(
     with TestClient(app) as client:
         login = client.post(
             "/auth/login",
-            json={"email": "admin@hangy.com", "password": "admin-password"},
+            json={
+                "email": "estabelecimento@hangy.com",
+                "password": "estabelecimento-password",
+            },
         )
         response = client.get(
             "/feed",
@@ -426,7 +592,7 @@ def test_seeded_business_user_has_an_empty_feed(
         # A business agenda seen by a visitor: PUBLIC only, so the PRIVATE,
         # INVITE_ONLY, DRAFT and CANCELLED events stay out.
         (
-            "admin@hangy.com",
+            "estabelecimento@hangy.com",
             {
                 "history": [
                     "Pelada de ontem",
@@ -793,8 +959,8 @@ def test_seed_resets_only_the_demo_notification_to_unread(
             {"name": "Carla Dias", "description": "Curto samba", "city": "Canoas"},
         ),
         (
-            "admin@hangy.com",
-            "admin-password",
+            "estabelecimento@hangy.com",
+            "estabelecimento-password",
             403,
             {"detail": "Not a personal profile"},
         ),
@@ -1046,8 +1212,10 @@ def test_user_hangy_can_demo_every_flow(
         assert finished.starts_at.replace(tzinfo=UTC) < now
         assert status_in(finished.event_title) == EventParticipantStatusEnum.CONFIRMED
 
-        admin = db.scalar(select(UserModel).where(UserModel.email == "admin@hangy.com"))
-        assert db.get(UserFollowModel, (user.user_id, admin.user_id)) is not None
+        business = db.scalar(
+            select(UserModel).where(UserModel.email == "estabelecimento@hangy.com")
+        )
+        assert db.get(UserFollowModel, (user.user_id, business.user_id)) is not None
         assert (
             db.scalar(
                 select(func.count())
