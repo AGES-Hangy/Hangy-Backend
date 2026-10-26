@@ -46,7 +46,7 @@ def test_upload_sets_profile_photo(client, image_storage, content, extension) ->
 
     assert response.status_code == 200
     url = response.json()["photo_url"]
-    assert url.startswith(f"{image_storage.base_url}/users/{ANA_ID}/photo/")
+    assert url.startswith(f"{image_storage.base_url}/profile-photos/{ANA_ID}/")
     assert url.endswith(f".{extension}")
     assert _stored_url(session) == url
     assert set(image_storage.objects) == {url}

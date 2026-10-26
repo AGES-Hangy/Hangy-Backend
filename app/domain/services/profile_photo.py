@@ -35,7 +35,7 @@ class ProfilePhotoService:
     def replace(self, user_id: UUID, content: bytes, content_type: str) -> str:
         """Store the new photo and drop the previous object from S3."""
         photo_url = self.image_upload_service.upload(
-            folder=f"users/{user_id}/photo",
+            folder=f"profile-photos/{user_id}",
             content=content,
             content_type=content_type,
         )

@@ -66,6 +66,7 @@ resource "aws_iam_role_policy" "ec2" {
         Resource = [
           "${aws_s3_bucket.app.arn}/events/covers/*",
           "${aws_s3_bucket.app.arn}/experiences/*",
+          "${aws_s3_bucket.app.arn}/profile-photos/*",
         ]
       },
     ]
