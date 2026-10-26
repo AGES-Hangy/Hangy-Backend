@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.domain.enums import UserRoleEnum
 from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import UserModel
 from app.main import app
@@ -85,7 +86,7 @@ def test_read_current_user_returns_personal_profile_shape(
     assert response.status_code == 200
     body = response.json()
     assert "user_id" not in body
-    assert "role" not in body
+    assert body["role"] == "USER"
     assert body["email"] == PERSONAL_PAYLOAD["email"]
     assert body["user_type"] == "PERSONAL"
     assert body["name"] == PERSONAL_PAYLOAD["name"]
@@ -107,6 +108,7 @@ def test_read_current_user_returns_business_profile_shape(
     assert response.status_code == 200
     body = response.json()
     assert body["user_type"] == "BUSINESS"
+    assert body["role"] == "USER"
     assert body["name"] == BUSINESS_PAYLOAD["business_name"]
     assert body["profile"] == {
         "cnpj": BUSINESS_PAYLOAD["cnpj"],
@@ -115,6 +117,30 @@ def test_read_current_user_returns_business_profile_shape(
         "longitude": BUSINESS_PAYLOAD["location"]["longitude"],
         "photo_url": None,
     }
+
+
+def test_read_current_user_reflects_a_role_change_without_a_new_token(
+    client: TestClient,
+) -> None:
+    token = register_and_login(client, PERSONAL_PAYLOAD)
+    headers = {"Authorization": f"Bearer {token}"}
+    db: Session = client.db  # type: ignore[attr-defined]
+    user = db.scalar(
+        select(UserModel).where(UserModel.email == PERSONAL_PAYLOAD["email"])
+    )
+    assert user is not None
+
+    user.role = UserRoleEnum.ADMIN
+    db.commit()
+    promoted = client.get("/users/me", headers=headers)
+    user.role = UserRoleEnum.USER
+    db.commit()
+    demoted = client.get("/users/me", headers=headers)
+
+    assert promoted.status_code == 200
+    assert promoted.json()["role"] == "ADMIN"
+    assert demoted.status_code == 200
+    assert demoted.json()["role"] == "USER"
 
 
 def test_read_current_user_rejects_deleted_account_with_a_still_valid_token(

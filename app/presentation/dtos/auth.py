@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
-from app.domain.enums import UserTypeEnum
+from app.domain.enums import UserRoleEnum, UserTypeEnum
 
 EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
 CPF_PATTERN = r"^\d{11}$"
@@ -71,6 +71,7 @@ class AuthPersonalUserOutput(BaseModel):
     id: UUID
     email: str
     user_type: Literal[UserTypeEnum.PERSONAL]
+    role: UserRoleEnum
     name: str
 
 
@@ -78,6 +79,7 @@ class AuthBusinessUserOutput(BaseModel):
     id: UUID
     email: str
     user_type: Literal[UserTypeEnum.BUSINESS]
+    role: UserRoleEnum
     business_name: str
 
 
@@ -106,6 +108,7 @@ class CurrentUserOutput(BaseModel):
     id: UUID
     email: str
     user_type: UserTypeEnum
+    role: UserRoleEnum
     name: str | None = None
     profile: PersonalProfileOutput | BusinessProfileOutput | None = None
 
