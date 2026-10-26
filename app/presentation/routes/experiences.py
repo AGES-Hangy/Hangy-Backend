@@ -11,9 +11,11 @@ from app.domain.services.experience import (
     ExperienceAlreadyExistsError,
     ExperienceEventNotFinishedError,
     ExperienceEventNotFoundError,
+    ExperienceNotFoundError,
     ExperienceParticipantNotConfirmedError,
     ExperienceService,
 )
+from app.domain.services.image_upload import ImageUploadService
 from app.domain.services.pagination import InvalidPaginationError
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.experience import SqlAlchemyExperienceRepository
@@ -24,6 +26,7 @@ from app.presentation.dtos import (
 )
 from app.presentation.mappers import ExperienceMapper
 from app.presentation.routes.auth import credentials_exception, get_current_user
+from app.presentation.routes.uploads import get_image_upload_service
 
 __all__ = ["get_experience_service", "router"]
 
@@ -32,8 +35,11 @@ router = APIRouter(prefix="/events", tags=["Events"])
 
 def get_experience_service(
     db: Annotated[Session, Depends(get_db)],
+    image_upload_service: Annotated[
+        ImageUploadService, Depends(get_image_upload_service)
+    ],
 ) -> ExperienceService:
-    return ExperienceService(SqlAlchemyExperienceRepository(db))
+    return ExperienceService(SqlAlchemyExperienceRepository(db), image_upload_service)
 
 
 @router.post(
@@ -112,6 +118,60 @@ def create_experience(
             detail="Experience already exists",
         ) from error
     return ExperienceAssembler.to_created_dto(experience, event_id)
+
+
+@router.get(
+    "/{event_id}/experiences/me",
+    response_model=CreateExperienceOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Ler a própria experiência num evento",
+    description=(
+        "Devolve a experiência do usuário autenticado no evento, com as fotos "
+        "ativas (da mais antiga para a mais recente). Serve para o app "
+        "reaproveitar o `experience_id` depois de um `409 Experience already "
+        "exists` no `POST`."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, expirado ou inválido.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": (
+                "O evento não existe ou não é visível (`Event not found`), ou o "
+                "usuário ainda não tem experiência nele (`Experience not found`)."
+            ),
+            "content": {
+                "application/json": {"example": {"detail": "Experience not found"}}
+            },
+        },
+    },
+)
+def read_my_experience(
+    event_id: UUID,
+    user: Annotated[User, Depends(get_current_user)],
+    service: Annotated[ExperienceService, Depends(get_experience_service)],
+) -> CreateExperienceOutput:
+    if user.user_id is None:
+        raise credentials_exception
+
+    try:
+        details = service.get_mine(event_id, user.user_id)
+    except ExperienceEventNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found",
+        ) from error
+    except ExperienceNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Experience not found",
+        ) from error
+    return ExperienceAssembler.to_details_dto(details)
 
 
 @router.get(

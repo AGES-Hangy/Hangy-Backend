@@ -21,6 +21,8 @@ class UsersAssembler:
             is_following=entity.is_following,
             connections_count=entity.connections_count,
             followers_count=entity.followers_count,
+            events_count=entity.events_count,
+            photos_count=entity.photos_count,
         )
 
 

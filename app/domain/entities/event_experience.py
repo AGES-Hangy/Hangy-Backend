@@ -8,14 +8,18 @@ from uuid import UUID
 if TYPE_CHECKING:
     from app.domain.entities.event import Event
     from app.domain.entities.event_participant import EventParticipant
+    from app.domain.enums import EventParticipantStatusEnum
 
 __all__ = [
     "EventExperience",
+    "EventExperienceOwnerAccess",
     "EventExperienceAccess",
     "EventPhoto",
     "EventPhotoListItem",
     "EventPhotosPage",
+    "ExperienceDetails",
     "ExperienceImage",
+    "ExperiencePhotoAccess",
     "NewEventExperience",
 ]
 
@@ -42,12 +46,29 @@ class EventExperienceAccess:
 
 
 @dataclass(frozen=True, slots=True)
+class EventExperienceOwnerAccess:
+    experience_id: UUID
+    author_id: UUID
+    participant_status: EventParticipantStatusEnum
+    active_photo_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class ExperienceImage:
     photo_id: UUID | None
     experience_id: UUID
     photo_url: str
     created_at: datetime
     deleted_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ExperienceDetails:
+    """An experience with its active photos, as its author sees it."""
+
+    experience: EventExperience
+    event_id: UUID
+    images: tuple[ExperienceImage, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,3 +90,11 @@ class EventPhotoListItem:
 class EventPhotosPage:
     items: tuple[EventPhotoListItem, ...]
     next_cursor: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class ExperiencePhotoAccess:
+    photo_id: UUID
+    photo_url: str
+    author_id: UUID
+    organizer_id: UUID

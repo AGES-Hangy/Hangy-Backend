@@ -162,10 +162,11 @@ run "s3_runtime_access" {
         Resource = [
           "${aws_s3_bucket.app.arn}/events/covers/*",
           "${aws_s3_bucket.app.arn}/experiences/*",
+          "${aws_s3_bucket.app.arn}/profile-photos/*",
         ]
       }),
     ])
-    error_message = "A role da EC2 deve apenas gravar e apagar nos dois prefixos de imagens, sem listar o bucket ou acessar outros prefixos."
+    error_message = "A role da EC2 deve apenas gravar e apagar nos três prefixos de imagens, sem listar o bucket ou acessar outros prefixos."
   }
   assert {
     condition = length(jsondecode(aws_s3_bucket_policy.app.policy).Statement) == 2 && toset([for statement in jsondecode(aws_s3_bucket_policy.app.policy).Statement : jsonencode(statement) if statement.Sid != "RequireTLS"]) == toset([
@@ -177,10 +178,11 @@ run "s3_runtime_access" {
         Resource = [
           "${aws_s3_bucket.app.arn}/events/covers/*",
           "${aws_s3_bucket.app.arn}/experiences/*",
+          "${aws_s3_bucket.app.arn}/profile-photos/*",
         ]
       }),
     ])
-    error_message = "Além de RequireTLS, a policy deve permitir somente leitura pública nos dois prefixos de imagens, sem escrita ou listagem pública."
+    error_message = "Além de RequireTLS, a policy deve permitir somente leitura pública nos três prefixos de imagens, sem escrita ou listagem pública."
   }
 }
 

@@ -25,7 +25,9 @@ def get_feed_service(db: Annotated[Session, Depends(get_db)]) -> FeedService:
     summary="Listar o feed da Home",
     description=(
         "Retorna os eventos futuros das tags de interesse do usuário "
-        "autenticado, agrupados pela tag macro de cada interesse."
+        "autenticado, agrupados pela tag macro de cada interesse. Eventos "
+        "criados pelo próprio usuário ou em que ele já está CONFIRMED não "
+        "entram: eles ficam no perfil."
     ),
 )
 def read_feed(

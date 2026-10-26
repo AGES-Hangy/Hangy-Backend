@@ -10,6 +10,8 @@ from app.domain.enums import (
 
 
 class ParticipationRepository(Protocol):
+    def is_blocked_between(self, user_a: UUID, user_b: UUID) -> bool: ...
+
     def get_event_for_update(self, event_id: UUID) -> Event | None: ...
 
     def get_existing_participant_for_update(
@@ -73,7 +75,9 @@ class ParticipationService:
         # including the capacity check below - two concurrent confirmations
         # can't both see room for the same last spot.
         event = self.repository.get_event_for_update(event_id)
-        if event is None:
+        if event is None or self.repository.is_blocked_between(
+            event.event_creator_id, user_id
+        ):
             raise EventNotFoundError
 
         if event.event_privacy is EventPrivacyEnum.INVITE_ONLY:

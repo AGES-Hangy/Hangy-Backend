@@ -93,6 +93,7 @@ class FeedService:
                 participation_status=feed_event.viewer_participation_status,
             ),
             cover_photo_url=event.cover_photo_url,
+            is_favorited=feed_event.viewer_favorited,
             tags=feed_event.tags,
         )
 

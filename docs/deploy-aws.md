@@ -26,7 +26,7 @@ Atualizações de `develop` e tags não publicam na AWS.
 | Rede | VPC própria, uma sub-rede pública para a EC2 e duas privadas para o RDS |
 | Banco | Criptografia, TLS obrigatório, backups por 7 dias e proteção contra exclusão |
 | ECR | Imagens privadas com tags imutáveis e scan no push |
-| S3 | Objetos Standard com SSE-S3, ACLs desabilitadas e TLS obrigatório; leitura pública somente em `events/covers/*` e `experiences/*` ([decisão e validação](s3.md)) |
+| S3 | Objetos Standard com SSE-S3, ACLs desabilitadas e TLS obrigatório; leitura pública somente em `events/covers/*`, `experiences/*` e `profile-photos/*` ([decisão e validação](s3.md)) |
 | State Terraform | Bucket S3 separado, privado, criptografado, versionado e com lock de execução |
 | Secrets Manager | Credenciais do banco e JWT geradas automaticamente, configurações da API |
 | IAM/OIDC | Role da EC2 e role do GitLab limitada à `main` do projeto informado |

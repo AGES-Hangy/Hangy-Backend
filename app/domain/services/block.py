@@ -61,8 +61,9 @@ class BlockService:
         if target is None or target.deleted_at is not None:
             raise BlockedUserNotFoundError
 
-        # create() relies on the primary key to detect a repeated block and
-        # raises UserAlreadyBlockedError itself.
+        # create() serializes pair writes and atomically removes connections,
+        # participations and notifications. Repeated blocks repair legacy
+        # effects before retaining UserAlreadyBlockedError.
         return self.repository.create(blocker_id, blocked_id)
 
     def unblock(self, blocker_id: UUID, blocked_id: UUID) -> None:
