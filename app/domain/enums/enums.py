@@ -11,6 +11,12 @@ class UserRoleEnum(StrEnum):
     ADMIN = "ADMIN"
 
 
+class ModerationStatusEnum(StrEnum):
+    ACTIVE = "ACTIVE"
+    SUSPENDED = "SUSPENDED"
+    BANNED = "BANNED"
+
+
 class EventPrivacyEnum(StrEnum):
     PUBLIC = "PUBLIC"
     PRIVATE = "PRIVATE"
