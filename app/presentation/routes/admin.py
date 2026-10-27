@@ -14,6 +14,8 @@ from app.presentation.dtos import AdminDashboardOutput
 
 router = APIRouter(tags=["Admin"])
 
+__all__ = ["router"]
+
 
 def get_admin_dashboard_service(
     db: Annotated[Session, Depends(get_db)],

@@ -6,7 +6,7 @@ from fastapi import Depends, HTTPException, status
 
 from app.domain.entities import User
 from app.domain.enums import UserRoleEnum
-from app.presentation.routes.auth import get_current_user
+from app.presentation.dependencies.auth import get_current_user
 
 
 def require_admin(current_user: Annotated[User, Depends(get_current_user)]) -> User:

@@ -18,6 +18,7 @@ from app.domain.services import (
 from app.domain.services.connection import DEFAULT_CONNECTIONS_LIMIT
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.connection import SqlAlchemyConnectionRepository
+from app.presentation.dependencies.auth import get_current_user
 from app.presentation.dtos import (
     ConnectionsOutput,
     PendingConnectionsOutput,
@@ -25,7 +26,6 @@ from app.presentation.dtos import (
     SendConnectionRequestOutput,
 )
 from app.presentation.mappers import ConnectionMapper
-from app.presentation.routes.auth import get_current_user
 from app.presentation.routes.events import get_notification_dispatcher
 from app.presentation.routes.users import get_block_service
 

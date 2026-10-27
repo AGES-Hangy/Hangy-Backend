@@ -15,9 +15,9 @@ from app.domain.services.experience import (
 )
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.experience import SqlAlchemyExperienceRepository
+from app.presentation.dependencies.auth import credentials_exception, get_current_user
 from app.presentation.dtos import CreateExperienceInput, CreateExperienceOutput
 from app.presentation.mappers import ExperienceMapper
-from app.presentation.routes.auth import credentials_exception, get_current_user
 
 __all__ = ["get_experience_service", "router"]
 

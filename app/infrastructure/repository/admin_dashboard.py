@@ -1,6 +1,8 @@
+__all__ = ["SqlAlchemyAdminDashboardRepository"]
+
 from datetime import UTC, datetime
 
-from sqlalchemy import false, func, or_, select, true
+from sqlalchemy import and_, false, func, or_, select, true
 from sqlalchemy.orm import Session, aliased
 
 from app.domain.entities import (
@@ -84,8 +86,14 @@ class SqlAlchemyAdminDashboardRepository:
             .where(
                 sibling.deleted_at.is_(None),
                 or_(
-                    sibling.reported_user_id == ReportModel.reported_user_id,
-                    sibling.reported_event_id == ReportModel.reported_event_id,
+                    and_(
+                        ReportModel.reported_user_id.isnot(None),
+                        sibling.reported_user_id == ReportModel.reported_user_id,
+                    ),
+                    and_(
+                        ReportModel.reported_event_id.isnot(None),
+                        sibling.reported_event_id == ReportModel.reported_event_id,
+                    ),
                 ),
             )
             .correlate(ReportModel)
