@@ -75,6 +75,7 @@ class BusinessProfileService:
             phone=user.user_phone,
             latitude=profile.business_latitude,
             longitude=profile.business_longitude,
+            photo_url=user.profile_photo_url,
         )
 
     def update_profile(

@@ -91,6 +91,10 @@ run "secure_arm_stack" {
     error_message = "O segredo deve incluir a URL do frontend e usá-la como origem CORS padrão."
   }
   assert {
+    condition     = random_password.production_admin.length == 10 && !random_password.production_admin.special && jsondecode(aws_secretsmanager_secret_version.app.secret_string).PRODUCTION_ADMIN_PASSWORD == random_password.production_admin.result
+    error_message = "The production admin password must be generated and stored in the app secret."
+  }
+  assert {
     condition     = toset(keys(output.deployment_variables)) == toset(["AWS_REGION", "AWS_ROLE_ARN", "ECR_REPOSITORY", "EC2_INSTANCE_ID", "APP_SECRET_ARN"])
     error_message = "Os outputs devem incluir exatamente as variáveis consumidas pelo deploy."
   }
@@ -158,10 +162,11 @@ run "s3_runtime_access" {
         Resource = [
           "${aws_s3_bucket.app.arn}/events/covers/*",
           "${aws_s3_bucket.app.arn}/experiences/*",
+          "${aws_s3_bucket.app.arn}/profile-photos/*",
         ]
       }),
     ])
-    error_message = "A role da EC2 deve apenas gravar e apagar nos dois prefixos de imagens, sem listar o bucket ou acessar outros prefixos."
+    error_message = "A role da EC2 deve apenas gravar e apagar nos três prefixos de imagens, sem listar o bucket ou acessar outros prefixos."
   }
   assert {
     condition = length(jsondecode(aws_s3_bucket_policy.app.policy).Statement) == 2 && toset([for statement in jsondecode(aws_s3_bucket_policy.app.policy).Statement : jsonencode(statement) if statement.Sid != "RequireTLS"]) == toset([
@@ -173,10 +178,11 @@ run "s3_runtime_access" {
         Resource = [
           "${aws_s3_bucket.app.arn}/events/covers/*",
           "${aws_s3_bucket.app.arn}/experiences/*",
+          "${aws_s3_bucket.app.arn}/profile-photos/*",
         ]
       }),
     ])
-    error_message = "Além de RequireTLS, a policy deve permitir somente leitura pública nos dois prefixos de imagens, sem escrita ou listagem pública."
+    error_message = "Além de RequireTLS, a policy deve permitir somente leitura pública nos três prefixos de imagens, sem escrita ou listagem pública."
   }
 }
 

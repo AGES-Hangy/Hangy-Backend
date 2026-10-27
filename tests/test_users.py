@@ -221,3 +221,215 @@ def test_get_profile_returns_404_if_blocked(
         f"/users/{target_id}", headers={"Authorization": f"Bearer {token}"}
     )
     assert response.status_code == 404
+
+
+def auth_headers(user_id: uuid.UUID) -> dict[str, str]:
+    import jwt
+
+    from app.config import settings
+
+    token = jwt.encode(
+        {"sub": str(user_id)},
+        settings.jwt_secret_key,
+        algorithm=settings.jwt_algorithm,
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
+def add_connection(
+    db: Session,
+    requester_id: uuid.UUID,
+    receiver_id: uuid.UUID,
+    status: UserConnectionStatusEnum,
+) -> uuid.UUID:
+    connection = UserConnectionModel(
+        requester_id=requester_id, receiver_id=receiver_id, status=status
+    )
+    db.add(connection)
+    db.commit()
+    return connection.connection_id
+
+
+def test_profile_pending_request_sent_by_viewer(
+    client: TestClient, db_session: Session
+) -> None:
+    viewer_id = create_user(db_session, "PERSONAL", "viewer@test.com", "Viewer")
+    target_id = create_user(db_session, "PERSONAL", "target@test.com", "Target")
+    connection_id = add_connection(
+        db_session, viewer_id, target_id, UserConnectionStatusEnum.PENDING
+    )
+
+    response = client.get(f"/users/{target_id}", headers=auth_headers(viewer_id))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["connection_status"] == "PENDING"
+    assert data["connection_id"] == str(connection_id)
+    assert data["connection_direction"] == "SENT"
+    assert data["followers_count"] is None
+
+
+def test_profile_pending_request_received_by_viewer(
+    client: TestClient, db_session: Session
+) -> None:
+    viewer_id = create_user(db_session, "PERSONAL", "viewer@test.com", "Viewer")
+    target_id = create_user(db_session, "PERSONAL", "target@test.com", "Target")
+    connection_id = add_connection(
+        db_session, target_id, viewer_id, UserConnectionStatusEnum.PENDING
+    )
+
+    response = client.get(f"/users/{target_id}", headers=auth_headers(viewer_id))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["connection_status"] == "PENDING"
+    assert data["connection_id"] == str(connection_id)
+    assert data["connection_direction"] == "RECEIVED"
+
+
+@pytest.mark.parametrize("viewer_is_requester", [True, False])
+def test_profile_confirmed_connection_has_id_and_no_direction(
+    client: TestClient, db_session: Session, viewer_is_requester: bool
+) -> None:
+    viewer_id = create_user(db_session, "PERSONAL", "viewer@test.com", "Viewer")
+    target_id = create_user(db_session, "PERSONAL", "target@test.com", "Target")
+    requester_id, receiver_id = (
+        (viewer_id, target_id) if viewer_is_requester else (target_id, viewer_id)
+    )
+    connection_id = add_connection(
+        db_session, requester_id, receiver_id, UserConnectionStatusEnum.CONFIRMED
+    )
+
+    response = client.get(f"/users/{target_id}", headers=auth_headers(viewer_id))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["connection_status"] == "CONFIRMED"
+    assert data["connection_id"] == str(connection_id)
+    assert data["connection_direction"] is None
+
+
+def test_profile_without_connection_has_null_fields(
+    client: TestClient, db_session: Session
+) -> None:
+    viewer_id = create_user(db_session, "PERSONAL", "viewer@test.com", "Viewer")
+    target_id = create_user(db_session, "PERSONAL", "target@test.com", "Target")
+
+    response = client.get(f"/users/{target_id}", headers=auth_headers(viewer_id))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["connection_status"] is None
+    assert data["connection_id"] is None
+    assert data["connection_direction"] is None
+
+
+def test_profile_rejected_connection_does_not_expose_id(
+    client: TestClient, db_session: Session
+) -> None:
+    viewer_id = create_user(db_session, "PERSONAL", "viewer@test.com", "Viewer")
+    target_id = create_user(db_session, "PERSONAL", "target@test.com", "Target")
+    add_connection(db_session, viewer_id, target_id, UserConnectionStatusEnum.REJECTED)
+
+    response = client.get(f"/users/{target_id}", headers=auth_headers(viewer_id))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["connection_status"] == "REJECTED"
+    assert data["connection_id"] is None
+    assert data["connection_direction"] is None
+
+
+def test_profile_own_profile_has_no_connection_fields(
+    client: TestClient, db_session: Session
+) -> None:
+    user_id = create_user(db_session, "PERSONAL", "me@test.com", "Me")
+
+    response = client.get(f"/users/{user_id}", headers=auth_headers(user_id))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["connection_id"] is None
+    assert data["connection_direction"] is None
+    assert data["followers_count"] is None
+
+
+@pytest.mark.parametrize("followers", [0, 1, 3])
+def test_business_profile_followers_count(
+    client: TestClient, db_session: Session, followers: int
+) -> None:
+    viewer_id = create_user(db_session, "PERSONAL", "viewer@test.com", "Viewer")
+    business_id = create_user(db_session, "BUSINESS", "biz@test.com", "Biz")
+    follower_ids = [
+        create_user(db_session, "PERSONAL", f"f{i}@test.com", f"F{i}")
+        for i in range(followers)
+    ]
+    for follower_id in follower_ids:
+        db_session.execute(
+            insert(user_follows).values(
+                follower_id=follower_id, followed_business_id=business_id
+            )
+        )
+    db_session.commit()
+
+    response = client.get(f"/users/{business_id}", headers=auth_headers(viewer_id))
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["followers_count"] == followers
+    assert data["is_following"] is False
+    assert data["connections_count"] == followers
+    assert data["connection_id"] is None
+    assert data["connection_direction"] is None
+
+
+def test_business_profile_followers_count_includes_viewer(
+    client: TestClient, db_session: Session
+) -> None:
+    viewer_id = create_user(db_session, "PERSONAL", "viewer@test.com", "Viewer")
+    other_id = create_user(db_session, "PERSONAL", "other@test.com", "Other")
+    business_id = create_user(db_session, "BUSINESS", "biz@test.com", "Biz")
+    for follower_id in (viewer_id, other_id):
+        db_session.execute(
+            insert(user_follows).values(
+                follower_id=follower_id, followed_business_id=business_id
+            )
+        )
+    db_session.commit()
+
+    response = client.get(f"/users/{business_id}", headers=auth_headers(viewer_id))
+
+    data = response.json()
+    assert data["followers_count"] == 2
+    assert data["is_following"] is True
+
+
+def test_profile_existing_fields_are_unchanged(
+    client: TestClient, db_session: Session
+) -> None:
+    viewer_id = create_user(db_session, "PERSONAL", "viewer@test.com", "Viewer")
+    target_id = create_user(db_session, "PERSONAL", "target@test.com", "Target")
+    other_id = create_user(db_session, "PERSONAL", "other@test.com", "Other")
+    add_connection(db_session, viewer_id, target_id, UserConnectionStatusEnum.PENDING)
+    add_connection(db_session, other_id, target_id, UserConnectionStatusEnum.CONFIRMED)
+
+    response = client.get(f"/users/{target_id}", headers=auth_headers(viewer_id))
+
+    data = response.json()
+    assert set(data) >= {
+        "id",
+        "user_type",
+        "name",
+        "description",
+        "photo_url",
+        "tags",
+        "connection_status",
+        "is_following",
+        "connections_count",
+    }
+    assert data["id"] == str(target_id)
+    assert data["user_type"] == "PERSONAL"
+    assert data["name"] == "Target"
+    assert data["connection_status"] == "PENDING"
+    assert data["is_following"] is False
+    assert data["connections_count"] == 1

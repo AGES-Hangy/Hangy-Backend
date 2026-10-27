@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.domain.enums import UserConnectionStatusEnum
@@ -17,6 +17,15 @@ if TYPE_CHECKING:
 
 class UserConnectionModel(Base):
     __tablename__ = "user_connection"
+
+    # The pair-uniqueness index (uq_user_connection_active_pair) uses
+    # LEAST/GREATEST, which SQLite cannot index, so it lives only in the
+    # Alembic migration 20261007_01 and is not declared here.
+    __table_args__ = (
+        CheckConstraint(
+            "requester_id <> receiver_id", name="ck_user_connection_not_self"
+        ),
+    )
 
     connection_id: Mapped[uuid.UUID] = mapped_column(
         primary_key=True, default=uuid.uuid4

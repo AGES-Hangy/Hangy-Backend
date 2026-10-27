@@ -13,6 +13,11 @@ resource "random_password" "location_obfuscation" {
   special = false
 }
 
+resource "random_password" "production_admin" {
+  length  = 10
+  special = false
+}
+
 resource "random_id" "final_snapshot" {
   byte_length = 4
 }
@@ -81,6 +86,7 @@ resource "aws_secretsmanager_secret_version" "app" {
     DATABASE_URL                = "postgresql+psycopg://hangy:${urlencode(random_password.database.result)}@${aws_db_instance.main.address}:5432/hangy?sslmode=require&connect_timeout=10"
     JWT_SECRET_KEY              = random_password.jwt.result
     LOCATION_OBFUSCATION_SECRET = random_password.location_obfuscation.result
+    PRODUCTION_ADMIN_PASSWORD   = random_password.production_admin.result
     JWT_ALGORITHM               = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES = "30"
     CORS_ORIGINS                = join(",", length(var.cors_origins) > 0 ? var.cors_origins : [trimsuffix(var.frontend_base_url, "/")])

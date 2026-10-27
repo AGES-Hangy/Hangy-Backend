@@ -91,7 +91,7 @@ def payload(**overrides: object) -> dict[str, object]:
         "max_participants": 20,
         "privacy": "PUBLIC",
         "tag_ids": [str(FOOTBALL_ID)],
-        "cover_photo_url": "https://storage/cover.png",
+        "cover_photo_url": "https://images.hangy.test/events/covers/cover.png",
     }
     body.update(overrides)
     return body
@@ -117,7 +117,39 @@ def test_a_valid_event_is_published_with_the_requester_as_organizer(
         assert event.event_creator_id == ORGANIZER_ID
         assert event.location_name == "Parcao"
         assert event.max_participants == 20
+        assert event.cover_photo_url == payload()["cover_photo_url"]
         assert [tag.tag_id for tag in event.tags] == [FOOTBALL_ID]
+
+
+@pytest.mark.parametrize("url", ["https://picsum.photos/400/300", ""])
+def test_external_cover_is_rejected_without_creating_event(client, url) -> None:
+    test_client, session_factory = client
+
+    response = test_client.post(
+        "/events", json=payload(cover_photo_url=url), headers=auth_header()
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid cover photo URL"}
+    with session_factory() as db:
+        assert db.scalars(select(EventModel)).all() == []
+
+
+@pytest.mark.parametrize("omit_cover", [False, True])
+def test_event_can_be_created_without_cover(client, omit_cover) -> None:
+    test_client, session_factory = client
+    body = payload(cover_photo_url=None)
+    if omit_cover:
+        del body["cover_photo_url"]
+
+    response = test_client.post("/events", json=body, headers=auth_header())
+
+    assert response.status_code == 201
+    with session_factory() as db:
+        assert (
+            db.get(EventModel, UUID(response.json()["event_id"])).cover_photo_url
+            is None
+        )
 
 
 def test_creating_an_event_requires_authentication(

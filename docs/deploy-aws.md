@@ -26,7 +26,7 @@ Atualizações de `develop` e tags não publicam na AWS.
 | Rede | VPC própria, uma sub-rede pública para a EC2 e duas privadas para o RDS |
 | Banco | Criptografia, TLS obrigatório, backups por 7 dias e proteção contra exclusão |
 | ECR | Imagens privadas com tags imutáveis e scan no push |
-| S3 | Objetos Standard com SSE-S3, ACLs desabilitadas e TLS obrigatório; leitura pública somente em `events/covers/*` e `experiences/*` ([decisão e validação](s3.md)) |
+| S3 | Objetos Standard com SSE-S3, ACLs desabilitadas e TLS obrigatório; leitura pública somente em `events/covers/*`, `experiences/*` e `profile-photos/*` ([decisão e validação](s3.md)) |
 | State Terraform | Bucket S3 separado, privado, criptografado, versionado e com lock de execução |
 | Secrets Manager | Credenciais do banco e JWT geradas automaticamente, configurações da API |
 | IAM/OIDC | Role da EC2 e role do GitLab limitada à `main` do projeto informado |
@@ -120,7 +120,7 @@ Variáveis opcionais, também com escopo `production`:
 | `TF_STATE_KEY` | `<CI_PROJECT_PATH>/production.tfstate`; informe a chave anterior se a infraestrutura já foi criada pelo GitHub |
 
 O caminho do projeto é obtido automaticamente do GitLab. Senha do PostgreSQL,
-chave JWT, `LOCATION_OBFUSCATION_SECRET` e `DATABASE_URL` são gerados pelo Terraform e guardados no Secrets
+chave JWT, `LOCATION_OBFUSCATION_SECRET`, `PRODUCTION_ADMIN_PASSWORD` e `DATABASE_URL` são gerados pelo Terraform e guardados no Secrets
 Manager. Não é necessário cadastrá-los nas variáveis do GitLab.
 
 `FRONTEND_BASE_URL` é o endereço do frontend usado para gerar `web_url` nos
@@ -129,6 +129,42 @@ compartilhamentos: `<FRONTEND_BASE_URL>/e/<id>` ou
 do aplicativo `hangy://event/<id>` ou `hangy://invite/<token>`.
 O endereço público da API é separado e aparece no log do deploy; é esse
 endereço que o frontend usa para fazer requisições ao backend.
+
+### Tags e administrador de produção
+
+O seed de produção usa o catálogo de `tagsHangy.xlsx`, aba `Planilha1`, intervalo
+`A1:H30`, versionado em `app/production_tags.json`: 8 tags macro e 154 subtags.
+Cada cabeçalho é uma macro; as células abaixo são suas subtags. Nomes iguais em
+categorias diferentes continuam sendo tags distintas. O seed reaproveita tags
+com o mesmo nome e pai, adiciona as ausentes e preserva tags e vínculos existentes.
+Não renomeia nem remove categorias antigas.
+
+A conta criada é `admin@hangy.com`, tipo `BUSINESS`, com papel `ADMIN` e o mesmo
+perfil do administrador de demonstração: nome `Admin Hangy`, CNPJ
+`11222333000181`, endereço `Av. Independência, 100 — Porto Alegre` e coordenadas
+`-30.0331, -51.23`. Não são criados eventos, notificações, interesses ou outros
+usuários de demonstração. O papel usa o enum existente; este seed não adiciona
+novas permissões ou rotas administrativas.
+
+A senha inicial tem 10 caracteres aleatórios, gerados uma única vez pelo
+Terraform e armazenados em `PRODUCTION_ADMIN_PASSWORD` no segredo
+`<name>/app` do AWS Secrets Manager. Para o primeiro login, consulte esse campo
+no console do Secrets Manager com uma identidade autorizada. Não copie a senha
+para o código, logs ou variáveis do GitLab. O estado Terraform também contém
+esse valor e permanece no backend protegido já configurado.
+
+O seed roda a cada deploy e mantém os IDs, a senha e o perfil já existentes.
+Após trocar a senha pela aplicação, o valor do Secrets Manager continua sendo
+somente a senha inicial; ele não substitui a senha atual no banco. Não recrie o
+recurso `random_password.production_admin` para tentar trocar a senha da conta.
+Se o e-mail ou o ID reservado pertencer a outra conta, ou se o administrador
+tiver sido excluído, rebaixado ou estiver sem perfil empresarial, o seed falha
+sem promover, reativar ou substituir essa conta. Conflitos de CNPJ também fazem
+a transação inteira falhar. Resolva o conflito antes de repetir o deploy.
+
+Para executar somente este seed manualmente em um contêiner já configurado com
+o ambiente de produção, use `python -m app.seed_production`. Nunca execute
+`python -m app.seed` contra o banco de produção.
 
 ## 3. Executar o deploy
 
@@ -144,7 +180,7 @@ use **Retry** no job `deploy` do pipeline da `main`. O pipeline executa:
 4. `terraform plan` e `terraform apply` para criar ou atualizar a infraestrutura.
 5. Leitura dos IDs dos recursos criados e autenticação OIDC com a role de deploy.
 6. Build e smoke test da imagem `linux/arm64`, publicação no ECR e deploy na EC2.
-7. Migrações no RDS e health check da aplicação.
+7. Migrações no RDS, seed de produção e health check da aplicação.
 
 **O apply é automático nos pushes da `main`**, sem etapa manual de aprovação.
 Isso inclui mudanças feitas nos arquivos Terraform. O primeiro deploy leva mais
@@ -212,7 +248,10 @@ Se usar um runner Linux ARM64, inclua também `-platform=linux_arm64` no comando
   no GitLab não necessariamente interrompe o comando SSM. Confira o Command ID
   registrado no log antes de repetir.
 - As migrações rodam enquanto a API anterior ainda atende. Elas devem ser
-  compatíveis com a versão anterior. Nenhum seed de desenvolvimento é executado.
+  compatíveis com a versão anterior. Em seguida, `python -m app.seed_production`
+  adiciona as tags e um administrador numa única transação, antes da troca da API.
+  Falhas nas migrações ou no seed preservam o contêiner que está atendendo.
+  Nenhum seed de desenvolvimento é executado.
 - Há uma breve indisponibilidade durante a troca de contêiner. Se o health check
   falhar, o script tenta restaurar o contêiner anterior. **O banco não sofre
   downgrade automático.** `/health` verifica a API; a migração testa a conexão

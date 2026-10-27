@@ -14,6 +14,7 @@ class FeedEvent:
     event: Event
     participants_count: int
     viewer_participation_status: EventParticipantStatusEnum | None
+    viewer_favorited: bool = False
     # The event's own micro tags under the section's macro tag.
     tags: tuple[Tag, ...] = ()
 
@@ -32,6 +33,9 @@ class FeedItem:
     # event they were not approved for.
     location: EventLocationView
     cover_photo_url: str | None = None
+    # Lets the card's favorite toggle start in the right state without
+    # fetching each event's details.
+    is_favorited: bool = False
     # The event's own micro tags under this section's macro tag — the reason
     # it matched here, and what the card should show instead of repeating the
     # section's own macro tag on every item.

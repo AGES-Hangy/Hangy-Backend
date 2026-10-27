@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import and_, exists, func, or_, select, update
+from sqlalchemy import and_, case, exists, func, or_, select, update
 from sqlalchemy.orm import Session, joinedload
 
 from app.domain.entities import (
@@ -13,7 +13,9 @@ from app.domain.entities import (
 from app.domain.entities.tag import Tag
 from app.domain.entities.user_profile import UserProfileData
 from app.domain.enums import (
+    ConnectionDirectionEnum,
     EventParticipantStatusEnum,
+    EventPrivacyEnum,
     EventStatusEnum,
     UserConnectionStatusEnum,
     UserTypeEnum,
@@ -37,6 +39,62 @@ from app.infrastructure.repository.models.experience_images_model import (
 
 def _now_utc() -> datetime:
     return datetime.now(UTC)
+
+
+def _created_events_count(user_id: UUID, *, public_only: bool):
+    """Every published event the user organized, upcoming or over.
+
+    Drafts are still being written and cancelled events never happened, so
+    neither counts. A visitor only sees the PUBLIC ones, like the `created`
+    and `history` lists of `GET /users/{user_id}/events`.
+    """
+    conditions = [
+        EventModel.event_creator_id == user_id,
+        EventModel.deleted_at.is_(None),
+        EventModel.event_status.in_(
+            (EventStatusEnum.PUBLISHED, EventStatusEnum.FINISHED)
+        ),
+    ]
+    if public_only:
+        conditions.append(EventModel.event_privacy == EventPrivacyEnum.PUBLIC)
+    return (
+        select(func.count())
+        .select_from(EventModel)
+        .where(*conditions)
+        .scalar_subquery()
+    )
+
+
+def _photos_count(user_id: UUID, *, public_only: bool, by_organizer: bool = False):
+    """The photos the user published, or (`by_organizer`) the photos published
+    on the events a business organized; the same filters as `list_for_user`."""
+    stmt = (
+        select(func.count())
+        .select_from(ExperienceImagesModel)
+        .join(
+            EventExperienceModel,
+            EventExperienceModel.experience_id == ExperienceImagesModel.experience_id,
+        )
+        .join(
+            EventParticipantModel,
+            EventParticipantModel.participant_id
+            == EventExperienceModel.event_participant_id,
+        )
+        .join(EventModel, EventModel.event_id == EventParticipantModel.event_id)
+        .where(
+            EventModel.event_creator_id == user_id
+            if by_organizer
+            else EventParticipantModel.user_id == user_id,
+            EventExperienceModel.deleted_at.is_(None),
+            ExperienceImagesModel.deleted_at.is_(None),
+        )
+    )
+    if public_only:
+        stmt = stmt.where(
+            EventModel.deleted_at.is_(None),
+            EventModel.event_privacy == EventPrivacyEnum.PUBLIC,
+        )
+    return stmt.scalar_subquery()
 
 
 class SqlAlchemyUserProfileRepository:
@@ -78,8 +136,6 @@ class SqlAlchemyUserProfileRepository:
         confirmed = confirmed_participations(
             EventModel.event_status == EventStatusEnum.PUBLISHED, ~is_over
         )
-        # Same rule as the `history` tab of GET /users/{user_id}/events: over
-        # events the user created count too, once even if they also attended.
         past = (
             select(func.count())
             .select_from(EventModel)
@@ -101,26 +157,8 @@ class SqlAlchemyUserProfileRepository:
             )
             .scalar_subquery()
         )
-        photos = (
-            select(func.count())
-            .select_from(ExperienceImagesModel)
-            .join(
-                EventExperienceModel,
-                EventExperienceModel.experience_id
-                == ExperienceImagesModel.experience_id,
-            )
-            .join(
-                EventParticipantModel,
-                EventParticipantModel.participant_id
-                == EventExperienceModel.event_participant_id,
-            )
-            .where(
-                EventParticipantModel.user_id == user_id,
-                EventExperienceModel.deleted_at.is_(None),
-                ExperienceImagesModel.deleted_at.is_(None),
-            )
-            .scalar_subquery()
-        )
+        created = _created_events_count(user_id, public_only=False)
+        photos = _photos_count(user_id, public_only=False)
         connections = (
             select(func.count())
             .select_from(UserConnectionModel)
@@ -135,9 +173,15 @@ class SqlAlchemyUserProfileRepository:
             .scalar_subquery()
         )
 
-        row = self.db.execute(select(past, confirmed, photos, connections)).one()
+        row = self.db.execute(
+            select(past, confirmed, created, photos, connections)
+        ).one()
         return UserProfileCounts(
-            past=row[0], confirmed=row[1], photos=row[2], connections=row[3]
+            past=row[0],
+            confirmed=row[1],
+            created=row[2],
+            photos=row[3],
+            connections=row[4],
         )
 
     def update_person_profile(
@@ -212,6 +256,25 @@ class SqlAlchemyUserProfileRepository:
         connections_count = 0
         is_following = False
         connection_status = None
+        connection_id = None
+        connection_direction = None
+        followers_count = None
+        events_count = None
+        photos_count = None
+
+        # A visitor sees what the profile lists to them: only PUBLIC events. A
+        # business gallery holds the photos published on the events it organized.
+        public_only = viewer_id != user_id
+        events_count, photos_count = self.db.execute(
+            select(
+                _created_events_count(user_id, public_only=public_only),
+                _photos_count(
+                    user_id,
+                    public_only=public_only,
+                    by_organizer=model.user_type != UserTypeEnum.PERSONAL,
+                ),
+            )
+        ).one()
 
         if model.user_type == UserTypeEnum.PERSONAL:
             connections_count = (
@@ -223,14 +286,20 @@ class SqlAlchemyUserProfileRepository:
                             UserConnectionModel.requester_id == user_id,
                             UserConnectionModel.receiver_id == user_id,
                         ),
+                        UserConnectionModel.deleted_at.is_(None),
                     )
                 )
                 or 0
             )
 
             if viewer_id != user_id:
-                connection_status = self.db.scalar(
-                    select(UserConnectionModel.status).where(
+                connection = self.db.execute(
+                    select(
+                        UserConnectionModel.connection_id,
+                        UserConnectionModel.requester_id,
+                        UserConnectionModel.status,
+                    ).where(
+                        UserConnectionModel.deleted_at.is_(None),
                         or_(
                             and_(
                                 UserConnectionModel.requester_id == viewer_id,
@@ -240,31 +309,38 @@ class SqlAlchemyUserProfileRepository:
                                 UserConnectionModel.requester_id == user_id,
                                 UserConnectionModel.receiver_id == viewer_id,
                             ),
-                        )
+                        ),
+                        # An undone connection keeps its row (soft delete).
+                        UserConnectionModel.deleted_at.is_(None),
                     )
-                )
-        else:
-            connections_count = (
-                self.db.scalar(
-                    select(func.count())
-                    .select_from(user_follows)
-                    .where(user_follows.c.followed_business_id == user_id)
-                )
-                or 0
-            )
+                ).first()
 
-            if viewer_id != user_id:
-                is_following = (
-                    self.db.scalar(
-                        select(func.count())
-                        .select_from(user_follows)
-                        .where(
-                            user_follows.c.follower_id == viewer_id,
-                            user_follows.c.followed_business_id == user_id,
+                if connection is not None:
+                    connection_status = connection.status
+                    if connection.status != UserConnectionStatusEnum.REJECTED:
+                        connection_id = connection.connection_id
+                    if connection.status == UserConnectionStatusEnum.PENDING:
+                        connection_direction = (
+                            ConnectionDirectionEnum.SENT
+                            if connection.requester_id == viewer_id
+                            else ConnectionDirectionEnum.RECEIVED
                         )
-                    )
-                    > 0
+        else:
+            followers_count, viewer_follows = self.db.execute(
+                select(
+                    func.count(),
+                    func.coalesce(
+                        func.sum(
+                            case((user_follows.c.follower_id == viewer_id, 1), else_=0)
+                        ),
+                        0,
+                    ),
                 )
+                .select_from(user_follows)
+                .where(user_follows.c.followed_business_id == user_id)
+            ).one()
+            connections_count = followers_count
+            is_following = viewer_id != user_id and viewer_follows > 0
 
         return UserProfileData(
             user_id=model.user_id,
@@ -290,6 +366,11 @@ class SqlAlchemyUserProfileRepository:
             connection_status=connection_status,
             is_following=is_following,
             connections_count=connections_count,
+            connection_id=connection_id,
+            connection_direction=connection_direction,
+            followers_count=followers_count,
+            events_count=events_count,
+            photos_count=photos_count,
         )
 
 

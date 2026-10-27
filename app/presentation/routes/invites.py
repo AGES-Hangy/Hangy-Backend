@@ -54,7 +54,10 @@ def get_invite_service(
             "description": "Token de acesso ausente ou invalido.",
         },
         status.HTTP_404_NOT_FOUND: {
-            "description": "O convite ou o evento nao existe.",
+            "description": (
+                "O convite/evento nao existe ou ha bloqueio "
+                "entre organizador e usuario."
+            ),
         },
         status.HTTP_409_CONFLICT: {
             "description": "O usuario ja participa do evento ou ele esta lotado.",

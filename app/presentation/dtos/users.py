@@ -2,7 +2,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from app.domain.enums import UserConnectionStatusEnum, UserTypeEnum
+from app.domain.enums import (
+    ConnectionDirectionEnum,
+    UserConnectionStatusEnum,
+    UserTypeEnum,
+)
 
 
 class UserProfileTagDTO(BaseModel):
@@ -20,8 +24,13 @@ class UserProfileDTO(BaseModel):
     photo_url: str | None
     tags: list[UserProfileTagDTO]
     connection_status: UserConnectionStatusEnum | None
+    connection_id: UUID | None
+    connection_direction: ConnectionDirectionEnum | None
     is_following: bool
     connections_count: int
+    followers_count: int | None
+    events_count: int | None = None
+    photos_count: int | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -9,14 +9,17 @@ from app.presentation.routes import (
     cancel_participation_router,
     connection_router,
     events_router,
+    experience_images_router,
     experiences_router,
     feed_router,
     following_router,
     health_router,
     invites_router,
     notifications_router,
+    profile_photo_router,
     tags_router,
     terms_router,
+    uploads_router,
     users_router,
 )
 
@@ -38,6 +41,7 @@ app.include_router(health_router)
 app.include_router(auth_router)
 app.include_router(events_router)
 app.include_router(experiences_router)
+app.include_router(experience_images_router)
 app.include_router(cancel_participation_router)
 app.include_router(connection_router)
 app.include_router(businesses_router)
@@ -47,5 +51,7 @@ app.include_router(notifications_router)
 app.include_router(tags_router)
 app.include_router(feed_router)
 app.include_router(terms_router)
+app.include_router(uploads_router)
+app.include_router(profile_photo_router)
 app.include_router(users_router)
 app.include_router(admin_router)

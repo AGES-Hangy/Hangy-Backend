@@ -52,6 +52,11 @@ class UserConnectionStatusEnum(StrEnum):
     REJECTED = "REJECTED"
 
 
+class ConnectionDirectionEnum(StrEnum):
+    SENT = "SENT"
+    RECEIVED = "RECEIVED"
+
+
 class ReportTypeEnum(StrEnum):
     SPAM = "SPAM"
     HARASSMENT = "HARASSMENT"

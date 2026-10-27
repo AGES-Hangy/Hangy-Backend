@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.config import settings
+from app.domain.enums import UserRoleEnum
 from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import UserModel
 from app.main import app
@@ -94,8 +95,41 @@ def test_valid_login_returns_200_with_a_token_whose_sub_is_the_user_id(
     )
     assert payload["sub"] == registered["user"]["id"]
     assert body["user"]["id"] == registered["user"]["id"]
-    assert body["user"]["user_type"] == "PERSONAL"
-    assert body["user"]["name"] == PERSONAL_PAYLOAD["name"]
+    assert body["user"] == {
+        "id": registered["user"]["id"],
+        "email": PERSONAL_PAYLOAD["email"],
+        "user_type": "PERSONAL",
+        "role": "USER",
+        "name": PERSONAL_PAYLOAD["name"],
+    }
+
+
+def test_login_returns_the_role_stored_for_the_account(client: TestClient) -> None:
+    registered = register(client, BUSINESS_PAYLOAD)
+    db: Session = client.db  # type: ignore[attr-defined]
+    user = db.scalar(
+        select(UserModel).where(UserModel.email == BUSINESS_PAYLOAD["email"])
+    )
+    assert user is not None
+    user.role = UserRoleEnum.ADMIN
+    db.commit()
+
+    response = client.post(
+        "/auth/login",
+        json={
+            "email": BUSINESS_PAYLOAD["email"],
+            "password": BUSINESS_PAYLOAD["password"],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["user"] == {
+        "id": registered["user"]["id"],
+        "email": BUSINESS_PAYLOAD["email"],
+        "user_type": "BUSINESS",
+        "role": "ADMIN",
+        "business_name": BUSINESS_PAYLOAD["business_name"],
+    }
 
 
 def test_wrong_password_and_unknown_email_return_the_same_401(

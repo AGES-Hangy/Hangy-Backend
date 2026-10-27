@@ -16,8 +16,13 @@ class UsersAssembler:
                 for tag in entity.tags
             ],
             connection_status=entity.connection_status,
+            connection_id=entity.connection_id,
+            connection_direction=entity.connection_direction,
             is_following=entity.is_following,
             connections_count=entity.connections_count,
+            followers_count=entity.followers_count,
+            events_count=entity.events_count,
+            photos_count=entity.photos_count,
         )
 
 

@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -11,6 +12,7 @@ from app.domain.enums import (
 )
 from app.domain.services.invite import InviteAcceptance, InviteAcceptanceOutcome
 from app.domain.services.notification_dispatcher import NotificationDispatcher
+from app.infrastructure.repository.block_access import is_blocked_for_write
 from app.infrastructure.repository.models import (
     EventInviteLinkModel,
     EventModel,
@@ -39,7 +41,9 @@ class SqlAlchemyInviteRepository:
             )
             .with_for_update()
         )
-        if event is None:
+        if event is None or is_blocked_for_write(
+            self.db, event.event_creator_id, user_id
+        ):
             self.db.rollback()
             return InviteAcceptance(InviteAcceptanceOutcome.EVENT_NOT_FOUND)
 
@@ -49,7 +53,10 @@ class SqlAlchemyInviteRepository:
                 EventParticipantModel.user_id == user_id,
             )
         )
-        if existing is not None:
+        if (
+            existing is not None
+            and existing.status is not EventParticipantStatusEnum.CANCELLED
+        ):
             self.db.rollback()
             return InviteAcceptance(InviteAcceptanceOutcome.PARTICIPANT_EXISTS)
 
@@ -65,11 +72,11 @@ class SqlAlchemyInviteRepository:
                 self.db.rollback()
                 return InviteAcceptance(InviteAcceptanceOutcome.EVENT_FULL)
 
-        participant = EventParticipantModel(
-            user_id=user_id,
-            event_id=event.event_id,
-            status=EventParticipantStatusEnum.CONFIRMED,
+        participant = existing or EventParticipantModel(
+            user_id=user_id, event_id=event.event_id
         )
+        participant.status = EventParticipantStatusEnum.CONFIRMED
+        participant.joined_at = datetime.now(UTC)
         self.db.add(participant)
         self.db.flush()
         self.dispatcher.dispatch(

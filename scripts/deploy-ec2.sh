@@ -73,11 +73,15 @@ registry="${image%%/*}"
 aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
 docker pull "$image"
 
-# Keep the serving container alive if migrations fail. Do not seed production data.
+# Keep the serving container alive if migrations or the production bootstrap fail.
 # Remove a migration container left behind by a killed SSM process.
 docker rm -f hangy-migrate >/dev/null 2>&1 || true
 timeout --signal=TERM --kill-after=30s 600s docker run --rm --name hangy-migrate \
   --env-file "$env_file" "$image" alembic upgrade head
+
+# Only the production catalog and admin; never execute the development demo seed.
+timeout --signal=TERM --kill-after=30s 600s docker run --rm --name hangy-migrate \
+  --env-file "$env_file" "$image" python -m app.seed_production
 
 if docker container inspect hangy-api >/dev/null 2>&1; then
   docker rename hangy-api hangy-api-previous
