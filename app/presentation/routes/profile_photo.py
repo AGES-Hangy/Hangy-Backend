@@ -17,9 +17,9 @@ from app.domain.services.profile_photo import (
 )
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
+from app.presentation.dependencies.auth import credentials_exception, get_current_user
 from app.presentation.dtos import ProfilePhotoOutput
 from app.presentation.mappers import read_image_upload
-from app.presentation.routes.auth import credentials_exception, get_current_user
 from app.presentation.routes.uploads import get_image_upload_service
 
 __all__ = ["router"]
