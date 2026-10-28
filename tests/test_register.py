@@ -72,9 +72,13 @@ def test_register_personal_returns_201_with_token_and_hashed_password(
     body = response.json()
     assert body["token_type"] == "bearer"
     assert body["access_token"]
-    assert body["user"]["user_type"] == "PERSONAL"
-    assert body["user"]["email"] == VALID_PERSONAL_PAYLOAD["email"]
-    assert body["user"]["name"] == VALID_PERSONAL_PAYLOAD["name"]
+    assert body["user"] == {
+        "id": body["user"]["id"],
+        "email": VALID_PERSONAL_PAYLOAD["email"],
+        "user_type": "PERSONAL",
+        "role": "USER",
+        "name": VALID_PERSONAL_PAYLOAD["name"],
+    }
 
     db: Session = client.db  # type: ignore[attr-defined]
     user = db.scalar(
@@ -92,7 +96,25 @@ def test_register_business_returns_201_with_token(client: TestClient) -> None:
     assert body["token_type"] == "bearer"
     assert body["access_token"]
     assert body["user"]["user_type"] == "BUSINESS"
+    assert body["user"]["role"] == "USER"
     assert body["user"]["business_name"] == VALID_BUSINESS_PAYLOAD["business_name"]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [VALID_PERSONAL_PAYLOAD, VALID_BUSINESS_PAYLOAD],
+    ids=["personal", "business"],
+)
+def test_role_in_the_register_body_returns_422_and_creates_no_account(
+    client: TestClient, payload: dict
+) -> None:
+    response = client.post("/auth/register", json={**payload, "role": "ADMIN"})
+
+    assert response.status_code == 422
+    db: Session = client.db  # type: ignore[attr-defined]
+    assert (
+        db.scalar(select(UserModel).where(UserModel.email == payload["email"])) is None
+    )
 
 
 def test_invalid_cpf_returns_400(client: TestClient) -> None:

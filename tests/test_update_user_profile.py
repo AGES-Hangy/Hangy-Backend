@@ -10,6 +10,7 @@ from sqlalchemy import create_engine, delete, update
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.domain.enums import UserRoleEnum
 from app.domain.services import user_profile as user_profile_service
 from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import PersonProfileModel, UserModel
@@ -209,6 +210,18 @@ def test_cpf_email_and_date_of_birth_are_ignored(ctx: Context) -> None:
     assert profile.cpf == PERSONAL_PAYLOAD["cpf"]
     assert profile.date_of_birth == date(2000, 4, 12)
     assert profile.city == "Canoas"
+
+
+def test_role_in_the_body_is_ignored(ctx: Context) -> None:
+    user_id, headers = register(ctx.client, PERSONAL_PAYLOAD)
+
+    response = patch_profile(ctx.client, headers, {"role": "ADMIN", "city": "Canoas"})
+
+    assert response.status_code == 200
+    user, _ = load(ctx.db, user_id)
+    assert user.role == UserRoleEnum.USER
+    me = ctx.client.get("/users/me", headers=headers)
+    assert me.json()["role"] == "USER"
 
 
 def test_business_account_returns_403(ctx: Context) -> None:

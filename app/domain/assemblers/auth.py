@@ -39,6 +39,7 @@ class AuthAssembler:
             id=user.user_id,
             email=user.email,
             user_type=user.user_type,
+            role=user.role,
             name=user.name,
             profile=profile_dto,
         )
@@ -54,6 +55,7 @@ class AuthAssembler:
                 id=user.user_id,
                 email=user.email,
                 user_type=UserTypeEnum.PERSONAL,
+                role=user.role,
                 name=user.name or "",
             )
         else:
@@ -61,6 +63,7 @@ class AuthAssembler:
                 id=user.user_id,
                 email=user.email,
                 user_type=UserTypeEnum.BUSINESS,
+                role=user.role,
                 business_name=user.name or "",
             )
         return AuthOutput(

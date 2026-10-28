@@ -1,42 +1,57 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, delete, func, select
+from sqlalchemy import create_engine, delete, func, select, update
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.domain.enums import (
     EventParticipantStatusEnum,
+    EventPrivacyEnum,
     EventStatusEnum,
     NotificationTypeEnum,
     UserConnectionStatusEnum,
+    UserRoleEnum,
 )
 from app.domain.services.event_location import approximate_point
 from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import (
+    ConnectionNotificationModel,
     EventCancelledNotificationModel,
+    EventExperienceModel,
     EventInviteLinkModel,
     EventModel,
     EventParticipantModel,
+    EventParticipantNotificationModel,
+    ExperienceImagesModel,
     NotificationModel,
     TagModel,
+    UserBlockModel,
     UserConnectionModel,
+    UserFollowModel,
     UserModel,
+    event_tag,
     user_tag,
 )
 from app.main import app
 from app.seed import (
+    SEED_BLOCKS,
     SEED_EVENTS,
+    SEED_EXPERIENCES,
+    SEED_FOLLOWS,
     SEED_INTERESTS,
     SEED_NOTIFICATIONS,
     SEED_TAGS,
     SEED_USERS,
     seed_event_id,
     seed_events,
+    seed_experiences,
     seed_notification_id,
     seed_notifications,
+    seed_social,
     seed_tags,
     seed_user_interests,
     seed_users,
@@ -65,10 +80,36 @@ def seed_everything(db: Session) -> None:
     seed_user_interests(db)
     seed_events(db)
     seed_notifications(db)
+    seed_social(db)
+    seed_experiences(db)
 
 
 def count(db: Session, entity: object) -> int:
     return db.scalar(select(func.count()).select_from(entity))
+
+
+def count_where(db: Session, entity: object, condition: object) -> int:
+    return db.scalar(select(func.count()).select_from(entity).where(condition))
+
+
+def seed_events_created_by(db: Session, creator: UserModel, title: str) -> UUID:
+    starts_at = datetime.now(UTC) + timedelta(days=2)
+    event = EventModel(
+        event_creator_id=creator.user_id,
+        event_title=title,
+        location_name="Parcão",
+        location_neighborhood="Moinhos de Vento",
+        location_city="Porto Alegre",
+        event_latitude=-30.03,
+        event_longitude=-51.2,
+        starts_at=starts_at,
+        ends_at=starts_at + timedelta(hours=2),
+        event_status=EventStatusEnum.PUBLISHED,
+        event_privacy=EventPrivacyEnum.PUBLIC,
+    )
+    db.add(event)
+    db.flush()
+    return event.event_id
 
 
 def test_seed_creates_the_sample_data_only_once(
@@ -91,8 +132,14 @@ def test_seed_creates_the_sample_data_only_once(
         assert count(db, user_tag) == sum(
             len(tag_names) for tag_names in SEED_INTERESTS.values()
         )
-        assert count(db, EventParticipantModel) == 15
+        assert count(db, EventParticipantModel) == 23
         assert count(db, NotificationModel) == len(SEED_NOTIFICATIONS)
+        assert count(db, UserFollowModel) == sum(map(len, SEED_FOLLOWS.values()))
+        assert count(db, UserBlockModel) == len(SEED_BLOCKS)
+        assert count(db, EventExperienceModel) == len(SEED_EXPERIENCES)
+        assert count(db, ExperienceImagesModel) == sum(
+            len(experience.photo_urls) for experience in SEED_EXPERIENCES
+        )
 
 
 def test_seed_creates_a_reusable_invite_only_link(
@@ -200,6 +247,108 @@ def test_seed_hangs_every_micro_tag_below_a_macro_tag(
         assert football.parent.tag_parent_id is None
 
 
+def test_seed_links_repeated_micro_names_to_the_intended_macro(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+
+        running = db.scalars(
+            select(TagModel).where(TagModel.tag_name == "Corrida")
+        ).all()
+        assert sorted(tag.parent.tag_name for tag in running) == ["Esportes", "Jogos"]
+
+        user = db.scalar(select(UserModel).where(UserModel.email == "user@hangy.com"))
+        interests = {(tag.parent.tag_name, tag.tag_name) for tag in user.tags}
+        assert ("Esportes", "Corrida") in interests
+        assert ("Jogos", "Corrida") not in interests
+
+        event = db.get(
+            EventModel, seed_event_id("user@hangy.com", "Corrida da Redenção")
+        )
+        assert [(tag.parent.tag_name, tag.tag_name) for tag in event.tags] == [
+            ("Esportes", "Corrida")
+        ]
+
+
+def test_seed_moves_users_and_events_off_the_legacy_tags(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_users(db)
+        music = TagModel(tag_name="Música")
+        culture = TagModel(tag_name="Arte e Cultura")
+        db.add_all([music, culture])
+        db.flush()
+        rock = TagModel(tag_name="Rock", tag_parent_id=music.tag_id)
+        theater = TagModel(tag_name="Teatro", tag_parent_id=culture.tag_id)
+        db.add_all([rock, theater])
+        db.flush()
+        users = {user.email: user for user in db.scalars(select(UserModel))}
+        creator = users["joao@hangy.com"]
+        starts_at = datetime.now(UTC) + timedelta(days=30)
+        own_event = EventModel(
+            event_creator_id=creator.user_id,
+            event_title="Evento criado pelo usuário",
+            event_latitude=-30.0,
+            event_longitude=-51.0,
+            starts_at=starts_at,
+            ends_at=starts_at + timedelta(hours=2),
+            event_status=EventStatusEnum.PUBLISHED,
+            event_privacy=SEED_EVENTS[0].privacy,
+        )
+        own_event.tags = [rock, theater]
+        db.add(own_event)
+        users["carla@hangy.com"].tags = [rock]
+        db.commit()
+        event_id = own_event.event_id
+
+        seed_everything(db)
+        seed_everything(db)
+
+        names = set(
+            db.execute(
+                select(TagModel.tag_name).where(TagModel.tag_parent_id.is_(None))
+            ).scalars()
+        )
+        assert names == set(SEED_TAGS)
+        assert count(db, TagModel) == SEED_TAG_COUNT
+
+        event = db.get(EventModel, event_id)
+        assert sorted((tag.parent.tag_name, tag.tag_name) for tag in event.tags) == [
+            ("Arte & Cultura", "Teatro"),
+            ("Vida Social", "Rock"),
+        ]
+        carla = db.scalar(select(UserModel).where(UserModel.email == "carla@hangy.com"))
+        assert [(tag.parent.tag_name, tag.tag_name) for tag in carla.tags] == [
+            ("Vida Social", "Rock")
+        ]
+        expected_interests = 1 + sum(
+            len(tag_keys) for tag_keys in SEED_INTERESTS.values()
+        )
+        assert count(db, user_tag) == expected_interests
+
+        # user@hangy.com already has the new Rock: the legacy link is dropped,
+        # not doubled.
+        legacy_music = TagModel(tag_name="Música")
+        db.add(legacy_music)
+        db.flush()
+        legacy_rock = TagModel(tag_name="Rock", tag_parent_id=legacy_music.tag_id)
+        db.add(legacy_rock)
+        db.flush()
+        db.execute(
+            user_tag.insert().values(
+                user_id=users["user@hangy.com"].user_id, tag_id=legacy_rock.tag_id
+            )
+        )
+        db.commit()
+
+        seed_tags(db)
+
+        assert count(db, TagModel) == SEED_TAG_COUNT
+        assert count(db, user_tag) == expected_interests
+
+
 def test_seeded_feed_matches_the_documented_sample(
     session_factory: sessionmaker[Session],
 ) -> None:
@@ -225,22 +374,167 @@ def test_seeded_feed_matches_the_documented_sample(
 
     assert response.status_code == 200
     sections = response.json()["sections"]
-    assert [section["tag"]["name"] for section in sections] == ["Esportes", "Música"]
+    assert [section["tag"]["name"] for section in sections] == [
+        "Esportes",
+        "Vida Social",
+    ]
 
     sports = [
         (item["title"], item["participants_count"], item["event_date"] is None)
         for item in sections[0]["items"]
     ]
-    # user@hangy.com already confirmed "Pelada no Parcão" and "Aniversário da
-    # Maria" and created "Corrida da Redenção": none of them is discovery.
+    # user@hangy.com already confirmed "Fut society no fim de tarde", "Pelada
+    # no Parcão" and "Aniversário da Maria" and created "Corrida da Redenção"
+    # and "Treino de corrida no Gasômetro": none of them is discovery.
     assert sports == [
-        # admin@hangy.com's PRIVATE event, with nobody in it: discoverable, but
-        # the schedule stays hidden.
+        # PUBLIC and without user@hangy.com: the one to join directly.
+        ("Corrida noturna na Orla", 2, False),
+        # estabelecimento@hangy.com's PRIVATE event, with nobody in it:
+        # discoverable, but the schedule stays hidden.
         ("Confraternização da equipe", 0, True),
     ]
     assert [item["title"] for item in sections[1]["items"]] == [
-        "Show de rock no Opinião"
+        "Show de rock no Opinião",
+        # user@hangy.com's request is still pending.
+        "Jam de rock no apê do João",
     ]
+
+
+def test_seed_makes_admin_hangy_an_admin_without_business_data(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        admin = db.scalar(select(UserModel).where(UserModel.email == "admin@hangy.com"))
+        assert admin.role == UserRoleEnum.ADMIN
+        assert admin.business_profile is not None
+        assert (
+            count_where(db, EventModel, EventModel.event_creator_id == admin.user_id)
+            == 0
+        )
+        assert (
+            count_where(
+                db,
+                UserFollowModel,
+                UserFollowModel.followed_business_id == admin.user_id,
+            )
+            == 0
+        )
+        others = db.scalars(
+            select(UserModel.role).where(UserModel.email != "admin@hangy.com")
+        ).all()
+        assert set(others) == {UserRoleEnum.USER}
+
+    def override_get_db() -> Iterator[Session]:
+        with session_factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as client:
+        login = client.post(
+            "/auth/login",
+            json={"email": "admin@hangy.com", "password": "admin-password"},
+        )
+    app.dependency_overrides.clear()
+
+    assert login.status_code == 200
+    assert login.json()["user"]["role"] == "ADMIN"
+
+
+def test_seed_hands_admin_hangy_business_data_over_to_the_business(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        users = {user.email: user for user in db.scalars(select(UserModel))}
+        admin = users["admin@hangy.com"]
+        business = users["estabelecimento@hangy.com"]
+        # The state an older seed left: admin@hangy.com owned the demo events,
+        # their invite links and the followers, was a USER, and a tester
+        # created one more event with it.
+        admin.role = UserRoleEnum.USER
+        db.execute(
+            update(EventModel)
+            .where(EventModel.event_creator_id == business.user_id)
+            .values(event_creator_id=admin.user_id)
+        )
+        db.execute(
+            update(EventInviteLinkModel)
+            .where(EventInviteLinkModel.created_by == business.user_id)
+            .values(created_by=admin.user_id)
+        )
+        db.execute(delete(UserFollowModel))
+        db.add_all(
+            [
+                UserFollowModel(
+                    follower_id=users[email].user_id,
+                    followed_business_id=admin.user_id,
+                )
+                for email in ("user@hangy.com", "maria@hangy.com", "joao@hangy.com")
+            ]
+        )
+        # Already follows both: must not end up with a duplicate follow.
+        db.add(
+            UserFollowModel(
+                follower_id=users["maria@hangy.com"].user_id,
+                followed_business_id=business.user_id,
+            )
+        )
+        created_while_testing = seed_events_created_by(db, admin, "Evento do teste")
+        db.commit()
+        event_ids = set(db.scalars(select(EventModel.event_id)))
+
+        seed_everything(db)
+        db.expire_all()
+
+        assert admin.role == UserRoleEnum.ADMIN
+        assert set(db.scalars(select(EventModel.event_id))) == event_ids
+        assert (
+            set(
+                db.scalars(
+                    select(EventModel.event_id).where(
+                        EventModel.event_creator_id == admin.user_id
+                    )
+                )
+            )
+            == set()
+        )
+        assert db.get(EventModel, created_while_testing).event_creator_id == (
+            business.user_id
+        )
+        assert (
+            count_where(
+                db,
+                EventInviteLinkModel,
+                EventInviteLinkModel.created_by == admin.user_id,
+            )
+            == 0
+        )
+        followers = db.scalars(
+            select(UserFollowModel.follower_id).where(
+                UserFollowModel.followed_business_id == business.user_id
+            )
+        ).all()
+        assert sorted(followers) == sorted(
+            users[email].user_id
+            for email in ("user@hangy.com", "maria@hangy.com", "joao@hangy.com")
+        )
+        assert count(db, UserFollowModel) == 3
+
+
+def test_seed_restores_the_admin_role_removed_while_testing(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        admin = db.scalar(select(UserModel).where(UserModel.email == "admin@hangy.com"))
+        admin.role = UserRoleEnum.USER
+        db.commit()
+
+        seed_everything(db)
+        db.refresh(admin)
+
+        assert admin.role == UserRoleEnum.ADMIN
 
 
 def test_seeded_business_user_has_an_empty_feed(
@@ -257,7 +551,10 @@ def test_seeded_business_user_has_an_empty_feed(
     with TestClient(app) as client:
         login = client.post(
             "/auth/login",
-            json={"email": "admin@hangy.com", "password": "admin-password"},
+            json={
+                "email": "estabelecimento@hangy.com",
+                "password": "estabelecimento-password",
+            },
         )
         response = client.get(
             "/feed",
@@ -280,24 +577,33 @@ def test_seeded_business_user_has_an_empty_feed(
                     "Evento encerrado para teste de experiência",
                     "Sarau de teatro",
                 ],
-                "created": ["Corrida da Redenção"],
+                "created": ["Corrida da Redenção", "Treino de corrida no Gasômetro"],
                 "interests": [
                     "Show de rock no Opinião",
                     "Roda de samba na Cidade Baixa",
                 ],
-                "confirmed": ["Pelada no Parcão", "Aniversário da Maria"],
+                "confirmed": [
+                    "Fut society no fim de tarde",
+                    "Pelada no Parcão",
+                    "Aniversário da Maria",
+                ],
             },
         ),
         # A business agenda seen by a visitor: PUBLIC only, so the PRIVATE,
         # INVITE_ONLY, DRAFT and CANCELLED events stay out.
         (
-            "admin@hangy.com",
+            "estabelecimento@hangy.com",
             {
                 "history": [
                     "Pelada de ontem",
                     "Evento encerrado para teste de experiência",
                 ],
-                "created": ["Pelada no Parcão", "Show de rock no Opinião"],
+                "created": [
+                    "Fut society no fim de tarde",
+                    "Pelada no Parcão",
+                    "Show de rock no Opinião",
+                    "Corrida noturna na Orla",
+                ],
                 "interests": None,
                 "confirmed": None,
             },
@@ -364,11 +670,11 @@ def test_seeded_user_events_match_the_documented_sample(
             "pedro@hangy.com",
             "pedro-password",
             [
-                ("Arte e Cultura", "Teatro"),
+                ("Arte & Cultura", "Teatro"),
                 ("Esportes", "Futebol"),
                 ("Gastronomia", "Churrasco"),
-                ("Gastronomia", "Confeitaria"),
-                ("Música", "Sertanejo"),
+                ("Gastronomia", "Doces"),
+                ("Vida Social", "Sertanejo"),
             ],
         ),
         ("ana@hangy.com", "ana-password", []),
@@ -590,7 +896,7 @@ def test_seed_restores_participants_changed_while_testing(
         assert (
             participants[maria.user_id].status == EventParticipantStatusEnum.CONFIRMED
         )
-        assert count(db, EventParticipantModel) == 15
+        assert count(db, EventParticipantModel) == 23
 
 
 def test_seed_recomputes_notification_dates_from_the_current_time(
@@ -653,8 +959,8 @@ def test_seed_resets_only_the_demo_notification_to_unread(
             {"name": "Carla Dias", "description": "Curto samba", "city": "Canoas"},
         ),
         (
-            "admin@hangy.com",
-            "admin-password",
+            "estabelecimento@hangy.com",
+            "estabelecimento-password",
             403,
             {"detail": "Not a personal profile"},
         ),
@@ -740,3 +1046,248 @@ def test_seed_events_have_a_neighborhood_a_city_and_an_approximate_point(
         assert missing.location_neighborhood == expected_neighborhood
         assert missing.location_city == "Porto Alegre"
         assert customized.location_neighborhood == "Bairro editado"
+
+
+# The participant state each participant notification implies, and whether it
+# goes to the event creator (True) or to the participant (False).
+PARTICIPANT_NOTIFICATION_RULES = {
+    NotificationTypeEnum.EVENT_PARTICIPATION_REQUEST: (
+        EventParticipantStatusEnum.PENDING,
+        True,
+    ),
+    NotificationTypeEnum.EVENT_PARTICIPANT_JOINED: (
+        EventParticipantStatusEnum.CONFIRMED,
+        True,
+    ),
+    NotificationTypeEnum.EVENT_PARTICIPANT_CANCELLED: (
+        EventParticipantStatusEnum.CANCELLED,
+        True,
+    ),
+    NotificationTypeEnum.EVENT_REQUEST_APPROVED: (
+        EventParticipantStatusEnum.CONFIRMED,
+        False,
+    ),
+    NotificationTypeEnum.EVENT_REQUEST_REJECTED: (
+        EventParticipantStatusEnum.REJECTED,
+        False,
+    ),
+    NotificationTypeEnum.EVENT_PARTICIPANT_REMOVED: (
+        EventParticipantStatusEnum.REMOVED,
+        False,
+    ),
+    NotificationTypeEnum.EVENT_STARTING_SOON: (
+        EventParticipantStatusEnum.CONFIRMED,
+        False,
+    ),
+}
+
+
+def test_every_seeded_notification_has_the_state_it_describes(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        notifications = db.scalars(select(NotificationModel)).all()
+        assert len(notifications) == len(SEED_NOTIFICATIONS)
+
+        for notification in notifications:
+            kind = notification.type
+            if kind in (
+                NotificationTypeEnum.CONNECTION_REQUEST,
+                NotificationTypeEnum.CONNECTION_ACCEPTED,
+            ):
+                detail = db.get(
+                    ConnectionNotificationModel, notification.notification_id
+                )
+                assert detail is not None, kind
+                connection = db.get(UserConnectionModel, detail.connection_id)
+                if kind == NotificationTypeEnum.CONNECTION_REQUEST:
+                    assert connection.status == UserConnectionStatusEnum.PENDING
+                    assert connection.receiver_id == notification.user_id
+                else:
+                    assert connection.status == UserConnectionStatusEnum.CONFIRMED
+                    assert connection.requester_id == notification.user_id
+            elif kind in PARTICIPANT_NOTIFICATION_RULES:
+                detail = db.get(
+                    EventParticipantNotificationModel, notification.notification_id
+                )
+                assert detail is not None, kind
+                participant = db.get(EventParticipantModel, detail.participant_id)
+                status, to_creator = PARTICIPANT_NOTIFICATION_RULES[kind]
+                assert participant.status == status, kind
+                event = db.get(EventModel, participant.event_id)
+                recipient = (
+                    event.event_creator_id if to_creator else participant.user_id
+                )
+                assert notification.user_id == recipient, kind
+                if kind == NotificationTypeEnum.EVENT_PARTICIPANT_JOINED:
+                    # Only a PUBLIC event confirms someone without approval.
+                    assert event.event_privacy == EventPrivacyEnum.PUBLIC
+                if kind == NotificationTypeEnum.EVENT_STARTING_SOON:
+                    sent_at = notification.created_at.replace(tzinfo=UTC)
+                    starts_at = event.starts_at.replace(tzinfo=UTC)
+                    assert sent_at < starts_at <= sent_at + timedelta(minutes=60)
+            else:
+                detail = db.get(
+                    EventCancelledNotificationModel, notification.notification_id
+                )
+                assert detail is not None, kind
+                event = db.get(EventModel, detail.event_id)
+                if kind == NotificationTypeEnum.EVENT_CANCELLED:
+                    assert event.event_status == EventStatusEnum.CANCELLED
+                else:
+                    assert event.event_status == EventStatusEnum.PUBLISHED
+                participant = db.scalar(
+                    select(EventParticipantModel).where(
+                        EventParticipantModel.event_id == event.event_id,
+                        EventParticipantModel.user_id == notification.user_id,
+                    )
+                )
+                assert participant is not None, kind
+                assert participant.status == EventParticipantStatusEnum.CONFIRMED
+
+
+def test_every_seeded_event_has_a_creator_and_a_tag(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+
+        for event in db.scalars(select(EventModel)).all():
+            assert db.get(UserModel, event.event_creator_id) is not None
+            assert (
+                db.scalar(
+                    select(func.count())
+                    .select_from(event_tag)
+                    .where(event_tag.c.event_id == event.event_id)
+                )
+                == 1
+            )
+        experiences = db.scalars(select(EventExperienceModel)).all()
+        for experience in experiences:
+            # Only someone who went to a finished event shares an experience.
+            assert experience.participant.status == EventParticipantStatusEnum.CONFIRMED
+            event = db.get(EventModel, experience.participant.event_id)
+            assert event.event_status == EventStatusEnum.FINISHED
+
+
+def test_user_hangy_can_demo_every_flow(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        user = db.scalar(select(UserModel).where(UserModel.email == "user@hangy.com"))
+        now = datetime.now(UTC)
+
+        def status_in(title: str) -> EventParticipantStatusEnum | None:
+            event = db.scalar(select(EventModel).where(EventModel.event_title == title))
+            return db.scalar(
+                select(EventParticipantModel.status).where(
+                    EventParticipantModel.event_id == event.event_id,
+                    EventParticipantModel.user_id == user.user_id,
+                )
+            )
+
+        created = db.scalars(
+            select(EventModel).where(EventModel.event_creator_id == user.user_id)
+        ).all()
+        assert {event.event_privacy for event in created} >= {
+            EventPrivacyEnum.PUBLIC,
+            EventPrivacyEnum.PRIVATE,
+        }
+        # A PUBLIC event to join and a PRIVATE one to ask to join.
+        assert status_in("Corrida noturna na Orla") is None
+        assert status_in("Confraternização da equipe") is None
+        assert status_in("Jam de rock no apê do João") == (
+            EventParticipantStatusEnum.PENDING
+        )
+        assert status_in("Aniversário da Maria") == EventParticipantStatusEnum.CONFIRMED
+        assert status_in("Sarau de teatro") == EventParticipantStatusEnum.CONFIRMED
+        # Past without a FINISHED status, still without an experience.
+        finished = db.scalar(
+            select(EventModel).where(
+                EventModel.event_title == "Evento encerrado para teste de experiência"
+            )
+        )
+        assert finished.starts_at.replace(tzinfo=UTC) < now
+        assert status_in(finished.event_title) == EventParticipantStatusEnum.CONFIRMED
+
+        business = db.scalar(
+            select(UserModel).where(UserModel.email == "estabelecimento@hangy.com")
+        )
+        assert db.get(UserFollowModel, (user.user_id, business.user_id)) is not None
+        assert (
+            db.scalar(
+                select(func.count())
+                .select_from(UserBlockModel)
+                .where(UserBlockModel.blocker_id == user.user_id)
+            )
+            == 1
+        )
+        statuses = db.scalars(
+            select(UserConnectionModel.status).where(
+                (UserConnectionModel.requester_id == user.user_id)
+                | (UserConnectionModel.receiver_id == user.user_id)
+            )
+        ).all()
+        assert set(statuses) == {
+            UserConnectionStatusEnum.PENDING,
+            UserConnectionStatusEnum.CONFIRMED,
+        }
+
+
+def test_seed_restores_connections_follows_blocks_and_photos(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        request = db.scalar(
+            select(UserConnectionModel).where(
+                UserConnectionModel.status == UserConnectionStatusEnum.PENDING
+            )
+        )
+        request.status = UserConnectionStatusEnum.CONFIRMED
+        db.execute(delete(UserFollowModel))
+        db.execute(delete(UserBlockModel))
+        photo = db.scalars(select(ExperienceImagesModel)).first()
+        photo.deleted_at = datetime.now(UTC)
+        db.commit()
+
+        seed_everything(db)
+        db.refresh(request)
+        db.refresh(photo)
+
+        assert request.status == UserConnectionStatusEnum.PENDING
+        assert count(db, UserFollowModel) == sum(map(len, SEED_FOLLOWS.values()))
+        assert count(db, UserBlockModel) == len(SEED_BLOCKS)
+        assert photo.deleted_at is None
+        assert count(db, ExperienceImagesModel) == sum(
+            len(experience.photo_urls) for experience in SEED_EXPERIENCES
+        )
+
+
+def test_seeded_photos_show_up_for_user_hangy(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+
+    def override_get_db() -> Iterator[Session]:
+        with session_factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as client:
+        login = client.post(
+            "/auth/login",
+            json={"email": "user@hangy.com", "password": "user-password"},
+        )
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        photos = client.get("/users/me/photos", headers=headers)
+        blocked = client.get("/users/me/blocked", headers=headers)
+    app.dependency_overrides.clear()
+
+    assert photos.status_code == 200
+    assert len(photos.json()["items"]) == 2
+    assert blocked.status_code == 200
+    assert blocked.json()

@@ -38,6 +38,7 @@ jobs:
       - run: terraform validate
       # Mocked providers: no AWS credentials, API calls or billable resources.
       - run: terraform test
-      - run: bash -n bootstrap-ec2.sh
+      - run: for script in bootstrap-ec2.sh ../../scripts/*.sh ../../scripts/tests/*.sh; do bash -n "$script" || exit 1; done
       - run: bash ../../scripts/tests/bootstrap-terraform-state.sh
       - run: bash ../../scripts/tests/deploy-gitlab.sh
+      - run: bash ../../scripts/tests/deploy-ec2.sh
