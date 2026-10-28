@@ -11,9 +11,9 @@ from app.domain.services import (
     UnsupportedImageTypeError,
 )
 from app.infrastructure.storage import get_image_storage
+from app.presentation.dependencies.auth import get_current_user
 from app.presentation.dtos import EventCoverUploadOutput
 from app.presentation.mappers import read_image_upload
-from app.presentation.routes.auth import get_current_user
 
 __all__ = ["get_image_upload_service", "router", "upload_event_cover"]
 

@@ -27,13 +27,13 @@ from app.domain.services.experience import (
     ExperiencePhotoNotFoundError,
     ExperienceService,
 )
+from app.presentation.dependencies.auth import credentials_exception, get_current_user
 from app.presentation.dtos import (
     CreateExperienceOutput,
     ExperienceImageOutput,
     UpdateExperienceInput,
 )
 from app.presentation.mappers import read_image_upload
-from app.presentation.routes.auth import credentials_exception, get_current_user
 from app.presentation.routes.experiences import get_experience_service
 
 __all__ = ["router"]

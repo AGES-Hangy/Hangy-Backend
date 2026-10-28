@@ -104,6 +104,12 @@ from app.infrastructure.repository.notification import SqlAlchemyNotificationRep
 from app.infrastructure.repository.participation import (
     SqlAlchemyParticipationRepository,
 )
+from app.presentation.dependencies.auth import (
+    credentials_exception,
+    get_access_token,
+    get_auth_service,
+    get_current_user,
+)
 from app.presentation.dtos import (
     CancelEventInput,
     CancelEventOutput,
@@ -121,12 +127,6 @@ from app.presentation.dtos import (
     UpdateEventParticipantOutput,
 )
 from app.presentation.mappers import EventMapper
-from app.presentation.routes.auth import (
-    credentials_exception,
-    get_access_token,
-    get_auth_service,
-    get_current_user,
-)
 from app.presentation.routes.uploads import get_image_upload_service
 
 router = APIRouter(prefix="/events", tags=["Events"])

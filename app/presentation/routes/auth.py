@@ -1,7 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, Security, status
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -23,7 +22,6 @@ from app.domain.services import (
     DuplicateCpfError,
     DuplicateEmailError,
     HasFutureEventsError,
-    InvalidAccessTokenError,
     InvalidCnpjError,
     InvalidCoordinatesError,
     InvalidCpfError,
@@ -56,6 +54,10 @@ from app.infrastructure.repository.person_profile import (
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
 from app.infrastructure.repository.user_profile import SqlAlchemyUserProfileRepository
 from app.infrastructure.repository.user_tags import SqlAlchemyUserTagsRepository
+from app.presentation.dependencies.auth import (
+    get_auth_service,
+    get_current_user,
+)
 from app.presentation.dtos import (
     AuthOutput,
     CurrentUserOutput,
@@ -80,23 +82,6 @@ from app.presentation.mappers import (
 )
 
 router = APIRouter(tags=["Authentication"])
-bearer_scheme = HTTPBearer(
-    scheme_name="BearerToken",
-    description="Paste an existing JWT access token.",
-    auto_error=False,
-)
-
-
-def get_auth_service(db: Annotated[Session, Depends(get_db)]) -> AuthService:
-    return AuthService(
-        repository=SqlAlchemyUserRepository(db),
-        jwt_secret_key=settings.jwt_secret_key,
-        jwt_algorithm=settings.jwt_algorithm,
-        access_token_expire_minutes=settings.access_token_expire_minutes,
-        password_reset_token_expire_minutes=(
-            settings.password_reset_token_expire_minutes
-        ),
-    )
 
 
 def get_register_service(db: Annotated[Session, Depends(get_db)]) -> RegisterService:
@@ -128,24 +113,6 @@ def get_user_profile_service(
         tags_repository=SqlAlchemyUserTagsRepository(db),
         description_max_length=settings.profile_description_max_length,
     )
-
-
-credentials_exception = HTTPException(
-    status_code=status.HTTP_401_UNAUTHORIZED,
-    detail="Could not validate credentials",
-    headers={"WWW-Authenticate": "Bearer"},
-)
-
-
-def get_access_token(
-    bearer_credentials: Annotated[
-        HTTPAuthorizationCredentials | None,
-        Security(bearer_scheme),
-    ],
-) -> str:
-    if bearer_credentials is not None:
-        return bearer_credentials.credentials
-    raise credentials_exception
 
 
 @router.post(
@@ -300,22 +267,6 @@ def confirm_password_reset(
             detail="Invalid or expired reset token",
         ) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-def get_current_user(
-    token: Annotated[str, Depends(get_access_token)],
-    auth_service: Annotated[AuthService, Depends(get_auth_service)],
-) -> User:
-    """Resolve the bearer token into the user every protected route needs."""
-    try:
-        return auth_service.get_user_from_token(token)
-    except AccountDeletedError as error:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Account has been deleted",
-        ) from error
-    except InvalidAccessTokenError as error:
-        raise credentials_exception from error
 
 
 @router.get(

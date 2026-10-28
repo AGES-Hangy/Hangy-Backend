@@ -34,6 +34,7 @@ from app.infrastructure.repository.user import SqlAlchemyUserRepository
 from app.infrastructure.repository.user_events import SqlAlchemyUserEventsRepository
 from app.infrastructure.repository.user_photos import SqlAlchemyUserPhotosRepository
 from app.infrastructure.repository.user_profile import SqlAlchemyUserProfileRepository
+from app.presentation.dependencies.auth import get_current_user
 from app.presentation.dtos import (
     BlockedUsersOutput,
     UserEventsOutput,
@@ -41,7 +42,6 @@ from app.presentation.dtos import (
     UserPhotosOutput,
 )
 from app.presentation.dtos.users import UserProfileDTO
-from app.presentation.routes.auth import get_current_user
 
 router = APIRouter(tags=["Profile"])
 

@@ -15,11 +15,11 @@ from app.domain.services import (
 )
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.notification import SqlAlchemyNotificationRepository
+from app.presentation.dependencies.auth import get_current_user
 from app.presentation.dtos import (
     NotificationsPaginatedResponse,
     UnreadNotificationCountOutput,
 )
-from app.presentation.routes.auth import get_current_user
 
 router = APIRouter(tags=["Notifications"])
 

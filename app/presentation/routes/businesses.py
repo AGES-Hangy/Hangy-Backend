@@ -25,6 +25,7 @@ from app.infrastructure.repository.business_profile import (
     SqlAlchemyBusinessProfileRepository,
 )
 from app.infrastructure.repository.follow import SqlAlchemyFollowRepository
+from app.presentation.dependencies.auth import credentials_exception, get_current_user
 from app.presentation.dtos import (
     BusinessFollowersOutput,
     BusinessMeOutput,
@@ -33,7 +34,6 @@ from app.presentation.dtos import (
     FollowingOutput,
 )
 from app.presentation.mappers.business_profile import BusinessProfileMapper
-from app.presentation.routes.auth import credentials_exception, get_current_user
 
 router = APIRouter(prefix="/businesses", tags=["Businesses"])
 following_router = APIRouter(tags=["Businesses"])

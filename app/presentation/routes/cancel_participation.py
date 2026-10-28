@@ -15,7 +15,7 @@ from app.infrastructure.repository import get_db
 from app.infrastructure.repository.cancel_participation import (
     SqlAlchemyCancelParticipationRepository,
 )
-from app.presentation.routes.auth import (
+from app.presentation.dependencies.auth import (
     credentials_exception,
     get_access_token,
     get_auth_service,
