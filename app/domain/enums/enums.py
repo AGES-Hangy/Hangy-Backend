@@ -75,6 +75,22 @@ class ReportStatusEnum(StrEnum):
     REJECTED = "REJECTED"
 
 
+class AuditActionEnum(StrEnum):
+    USER_BANNED = "USER_BANNED"
+    USER_SUSPENDED = "USER_SUSPENDED"
+    USER_REVERTED = "USER_REVERTED"
+    REPORT_ARCHIVED = "REPORT_ARCHIVED"
+    TAG_CREATED = "TAG_CREATED"
+    TAG_UPDATED = "TAG_UPDATED"
+    TAG_DELETED = "TAG_DELETED"
+
+
+class AuditTargetTypeEnum(StrEnum):
+    USER = "USER"
+    REPORT = "REPORT"
+    TAG = "TAG"
+
+
 class NotificationTypeEnum(StrEnum):
     CONNECTION_REQUEST = "CONNECTION_REQUEST"
     CONNECTION_ACCEPTED = "CONNECTION_ACCEPTED"

@@ -12,6 +12,7 @@ from app.domain.assemblers import (
     UserProfileAssembler,
 )
 from app.domain.entities import User
+from app.domain.enums import UserRoleEnum
 from app.domain.services import (
     AccountDeletedError,
     AuthService,
@@ -316,6 +317,18 @@ def get_current_user(
         ) from error
     except InvalidAccessTokenError as error:
         raise credentials_exception from error
+
+
+def get_current_admin(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """Gate admin-only routes; reused by every moderation endpoint."""
+    if current_user.role is not UserRoleEnum.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+    return current_user
 
 
 @router.get(

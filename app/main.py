@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.presentation.routes import (
+    audit_log_router,
     auth_router,
     businesses_router,
     cancel_participation_router,
@@ -38,6 +39,7 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(auth_router)
+app.include_router(audit_log_router)
 app.include_router(events_router)
 app.include_router(experiences_router)
 app.include_router(experience_images_router)
