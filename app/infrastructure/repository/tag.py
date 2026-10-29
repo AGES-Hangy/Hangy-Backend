@@ -42,6 +42,27 @@ class SqlAlchemyTagRepository:
         ).all()
         return [self._to_tree_entity(macro) for macro in macros]
 
+    def name_exists(self, name: str, parent_id: UUID | None) -> bool:
+        """Whether a tag with this name already exists at the given level."""
+        level = (
+            TagModel.tag_parent_id.is_(None)
+            if parent_id is None
+            else TagModel.tag_parent_id == parent_id
+        )
+        statement = select(TagModel.tag_id).where(TagModel.tag_name == name, level)
+        return self.db.scalar(statement.limit(1)) is not None
+
+    def create(self, tag: Tag) -> Tag:
+        model = TagModel(tag_name=tag.tag_name, tag_parent_id=tag.tag_parent_id)
+        self.db.add(model)
+        try:
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            raise
+        self.db.refresh(model)
+        return self._to_entity(model)
+
     def _list(self, statement: Select[tuple[TagModel]]) -> list[Tag]:
         models = self.db.scalars(statement.order_by(TagModel.tag_name)).all()
         return [self._to_entity(model) for model in models]

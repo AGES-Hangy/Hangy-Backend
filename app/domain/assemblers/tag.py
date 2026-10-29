@@ -1,5 +1,6 @@
 from app.domain.entities import Tag
 from app.presentation.dtos import (
+    AdminTagOutput,
     TagLeafOutput,
     TagNodeOutput,
     TagOutput,
@@ -21,6 +22,17 @@ class TagAssembler:
             name=tag.tag_name,
             type=tag.tag_type,
             parent_id=tag.tag_parent_id,
+        )
+
+    @staticmethod
+    def to_admin_dto(tag: Tag) -> AdminTagOutput:
+        if tag.tag_id is None:
+            raise ValueError("A persisted tag must have an id")
+        return AdminTagOutput(
+            tag_id=tag.tag_id,
+            name=tag.tag_name,
+            parent_id=tag.tag_parent_id,
+            type=tag.tag_type,
         )
 
     @staticmethod
