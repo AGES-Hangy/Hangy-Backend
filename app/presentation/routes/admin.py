@@ -34,6 +34,7 @@ def get_admin_dashboard_service(
 ) -> AdminDashboardService:
     return AdminDashboardService(repository=SqlAlchemyAdminDashboardRepository(db))
 
+
 def get_admin_tags_service(
     db: Annotated[Session, Depends(get_db)],
 ) -> AdminTagsService:
@@ -76,6 +77,7 @@ def read_admin_dashboard(
 ) -> AdminDashboardOutput:
     dashboard = dashboard_service.get_dashboard()
     return AdminDashboardAssembler.to_dto(dashboard)
+
 
 @router.post(
     "/admin/tags",
