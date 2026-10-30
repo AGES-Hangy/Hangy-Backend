@@ -65,8 +65,9 @@ def is_event_visible_to_viewer(
         return False
     if event.event_status is not EventStatusEnum.PUBLISHED:
         return False
-    if reference_time is not None and _as_utc(event.starts_at) <= _as_utc(
-        reference_time
+    if (
+        reference_time is not None
+        and _as_utc(event.starts_at) <= _as_utc(reference_time)
     ):
         return False
     if event.event_privacy is EventPrivacyEnum.INVITE_ONLY:
