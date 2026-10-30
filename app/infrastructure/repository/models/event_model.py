@@ -62,6 +62,13 @@ class EventModel(Base):
         Index("idx_event_coordinates", "event_latitude", "event_longitude"),
         # Same bounding box, for viewers who only get the approximate point.
         Index("idx_event_approx_coordinates", "approx_latitude", "approx_longitude"),
+        # Supports substring search on event titles (GIN + pg_trgm on Postgres).
+        Index(
+            "idx_event_title_trgm",
+            "event_title",
+            postgresql_using="gin",
+            postgresql_ops={"event_title": "gin_trgm_ops"},
+        ),
     )
 
     event_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)

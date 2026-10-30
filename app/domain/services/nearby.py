@@ -5,7 +5,10 @@ from uuid import UUID
 
 from app.domain.entities import NearbyEvent, NearbyEventCandidate, NearbyEvents
 from app.domain.enums import EventParticipantStatusEnum, LocationPrecisionEnum
-from app.domain.services.event_location import resolve_location
+from app.domain.services.event_visibility import (
+    is_event_visible_to_viewer,
+    resolve_event_visibility,
+)
 
 MAX_NEARBY_RADIUS_M = 50_000
 MIN_NEARBY_RADIUS_M = 1
@@ -67,11 +70,19 @@ class NearbyService:
         nearby: list[NearbyEvent] = []
         for candidate in candidates:
             event = candidate.event
-            location = resolve_location(
+            if not is_event_visible_to_viewer(
                 event,
-                is_organizer=event.event_creator_id == viewer_id,
+                viewer_id,
+                candidate.viewer_participation_status,
+            ):
+                continue
+            visibility = resolve_event_visibility(
+                event,
+                viewer_id=viewer_id,
                 participation_status=candidate.viewer_participation_status,
+                participants_count=candidate.participants_count,
             )
+            location = visibility.location
             distance_m = _distance_m(
                 latitude, longitude, location.latitude, location.longitude
             )
@@ -89,11 +100,7 @@ class NearbyService:
                     location_name=location.label,
                     cover_photo_url=event.cover_photo_url,
                     distance_m=distance_m,
-                    participants_count=(
-                        candidate.participants_count
-                        if location.precision is LocationPrecisionEnum.EXACT
-                        else None
-                    ),
+                    participants_count=visibility.participants_count,
                     is_confirmed=(
                         candidate.viewer_participation_status
                         is EventParticipantStatusEnum.CONFIRMED

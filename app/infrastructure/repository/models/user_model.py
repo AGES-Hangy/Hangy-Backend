@@ -90,6 +90,13 @@ class UserModel(Base):
             postgresql_where=text("deleted_at IS NULL"),
             sqlite_where=text("deleted_at IS NULL"),
         ),
+        # Supports substring search on personal and business display names.
+        Index(
+            "idx_user_name_trgm",
+            "name",
+            postgresql_using="gin",
+            postgresql_ops={"name": "gin_trgm_ops"},
+        ),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)

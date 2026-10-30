@@ -6,14 +6,10 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.domain.entities import NearbyEventCandidate
-from app.domain.enums import (
-    EventParticipantStatusEnum,
-    EventPrivacyEnum,
-    EventStatusEnum,
-)
-from app.infrastructure.repository.block import block_exists_between
+from app.domain.enums import EventParticipantStatusEnum
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
 from app.infrastructure.repository.models import EventModel, EventParticipantModel
+from app.infrastructure.repository.search import visible_events_filter
 
 METERS_PER_DEGREE = 111_320
 
@@ -76,12 +72,7 @@ class SqlAlchemyNearbyRepository:
                 ),
             )
             .where(
-                EventModel.deleted_at.is_(None),
-                EventModel.event_status == EventStatusEnum.PUBLISHED,
-                EventModel.starts_at > datetime.now(UTC),
-                EventModel.event_privacy.in_(
-                    (EventPrivacyEnum.PUBLIC, EventPrivacyEnum.PRIVATE)
-                ),
+                *visible_events_filter(viewer_id, datetime.now(UTC)),
                 or_(
                     coordinate_filter(
                         EventModel.event_latitude, EventModel.event_longitude
@@ -90,7 +81,6 @@ class SqlAlchemyNearbyRepository:
                         EventModel.approx_latitude, EventModel.approx_longitude
                     ),
                 ),
-                ~block_exists_between(EventModel.event_creator_id, viewer_id),
             )
         )
         rows = self.db.execute(statement).all()
