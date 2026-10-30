@@ -69,4 +69,3 @@ class SearchMapper:
 
 
 __all__ = ["SearchMapper"]
-

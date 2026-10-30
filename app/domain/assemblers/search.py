@@ -89,4 +89,3 @@ class SearchAssembler:
 
 
 __all__ = ["SearchAssembler"]
-

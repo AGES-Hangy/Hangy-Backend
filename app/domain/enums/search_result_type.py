@@ -10,4 +10,3 @@ class SearchResultType(StrEnum):
 SearchResultTypeEnum = SearchResultType
 
 __all__ = ["SearchResultType", "SearchResultTypeEnum"]
-
