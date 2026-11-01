@@ -16,3 +16,9 @@ class Report:
     reported_user_id: UUID | None = None
     reported_event_id: UUID | None = None
     deleted_at: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReportReason:
+    code: ReportTypeEnum
+    label: str
