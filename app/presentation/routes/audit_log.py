@@ -10,8 +10,8 @@ from app.domain.enums import AuditTargetTypeEnum
 from app.domain.services import AuditLogger, AuditLogService, InvalidPaginationError
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.audit_log import SqlAlchemyAuditLogRepository
+from app.presentation.dependencies.admin import require_admin
 from app.presentation.dtos import AuditLogPaginatedResponse
-from app.presentation.routes.auth import get_current_admin
 
 router = APIRouter(prefix="/admin/audit-log", tags=["Admin"])
 
@@ -63,7 +63,7 @@ def get_audit_logger(db: Annotated[Session, Depends(get_db)]) -> AuditLogger:
     },
 )
 def get_audit_log(
-    current_admin: Annotated[User, Depends(get_current_admin)],
+    current_admin: Annotated[User, Depends(require_admin)],
     audit_log_service: Annotated[AuditLogService, Depends(get_audit_log_service)],
     target_type: Annotated[
         AuditTargetTypeEnum | None,

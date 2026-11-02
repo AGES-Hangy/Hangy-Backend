@@ -195,6 +195,40 @@ def test_audit_logger_record_does_not_raise_on_repository_failure() -> None:
     )
 
 
+def test_audit_logger_db_failure_does_not_break_caller_transaction(
+    client: TestClient,
+) -> None:
+    """A failed audit INSERT must not poison the caller's session.
+
+    Without a savepoint the flush error leaves the session in a failed state
+    and the caller's own commit (e.g. the ban itself) would blow up.
+    """
+    _seed_users(client)
+
+    with _session(client) as db:
+        # The "main operation" the admin route is performing.
+        target = db.get(UserModel, TARGET_USER_ID)
+        assert target is not None
+        target.name = "Lucas Banido"
+
+        repository = SqlAlchemyAuditLogRepository(db)
+        audit_logger = AuditLogger(repository=repository, label_resolver=repository)
+        # target_id=None violates NOT NULL, so the INSERT really fails in the DB.
+        audit_logger.record(
+            actor_id=ADMIN_ID,
+            action=AuditActionEnum.USER_BANNED,
+            target_type=AuditTargetTypeEnum.USER,
+            target_id=None,  # type: ignore[arg-type]
+        )
+        db.commit()
+
+    with _session(client) as db:
+        target = db.get(UserModel, TARGET_USER_ID)
+        assert target is not None
+        assert target.name == "Lucas Banido"
+        assert db.query(AuditLogModel).count() == 0
+
+
 # ---------------------------------------------------------------------------
 # GET /admin/audit-log
 # ---------------------------------------------------------------------------

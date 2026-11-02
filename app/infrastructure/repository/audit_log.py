@@ -34,8 +34,10 @@ class SqlAlchemyAuditLogRepository:
             target_label=target_label,
             extra_metadata=metadata,
         )
-        self.db.add(model)
-        self.db.flush()
+        # Savepoint: if this insert fails, only the audit row is rolled back and
+        # the caller's session stays usable, so the main admin action commits.
+        with self.db.begin_nested():
+            self.db.add(model)
         return model.audit_log_id
 
     def resolve(self, target_type: AuditTargetTypeEnum, target_id: UUID) -> str | None:
