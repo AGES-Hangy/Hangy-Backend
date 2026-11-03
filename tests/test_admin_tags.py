@@ -5,14 +5,14 @@ from uuid import UUID, uuid4
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.config import settings
-from app.domain.enums import UserRoleEnum, UserTypeEnum
+from app.domain.enums import AuditActionEnum, UserRoleEnum, UserTypeEnum
 from app.infrastructure.repository import Base, get_db
-from app.infrastructure.repository.models import TagModel, UserModel
+from app.infrastructure.repository.models import AuditLogModel, TagModel, UserModel
 from app.main import app
 
 AdminTagsClient = tuple[TestClient, sessionmaker[Session]]
@@ -75,6 +75,11 @@ def add_tag(db: Session, name: str, parent_id: UUID | None = None) -> UUID:
 def admin_headers(session_factory: sessionmaker[Session]) -> dict[str, str]:
     with session_factory() as db:
         return header_for(add_user(db, UserRoleEnum.ADMIN))
+
+
+def audit_rows(session_factory: sessionmaker[Session]) -> list[AuditLogModel]:
+    with session_factory() as db:
+        return list(db.scalars(select(AuditLogModel)).all())
 
 
 def tree_by_name(client: TestClient) -> dict[str, dict]:
@@ -333,3 +338,97 @@ def test_malformed_parent_id_returns_422(tags_client: AdminTagsClient) -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_creating_a_tag_records_a_tag_created_audit_row(
+    tags_client: AdminTagsClient,
+) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        admin_id = add_user(db, UserRoleEnum.ADMIN)
+        category_id = add_tag(db, "Esportes")
+    before = datetime.now(UTC)
+
+    response = client.post(
+        "/admin/tags",
+        json={"name": "Escalada", "parent_id": str(category_id)},
+        headers=header_for(admin_id),
+    )
+
+    assert response.status_code == 201
+    [row] = audit_rows(session_factory)
+    assert row.action == AuditActionEnum.TAG_CREATED
+    assert row.actor_id == admin_id
+    assert str(row.target_id) == response.json()["tag_id"]
+    created_at = row.created_at.replace(tzinfo=UTC)
+    assert before - timedelta(seconds=1) <= created_at <= datetime.now(UTC)
+
+
+def test_creating_a_category_records_an_audit_row(
+    tags_client: AdminTagsClient,
+) -> None:
+    client, session_factory = tags_client
+
+    response = client.post(
+        "/admin/tags",
+        json={"name": "Vida Noturna", "parent_id": None},
+        headers=admin_headers(session_factory),
+    )
+
+    assert response.status_code == 201
+    [row] = audit_rows(session_factory)
+    assert row.action == AuditActionEnum.TAG_CREATED
+    assert str(row.target_id) == response.json()["tag_id"]
+
+
+def test_failed_requests_record_no_audit_row(tags_client: AdminTagsClient) -> None:
+    client, session_factory = tags_client
+    headers = admin_headers(session_factory)
+    with session_factory() as db:
+        category_id = add_tag(db, "Esportes")
+        micro_id = add_tag(db, "Escalada", category_id)
+        non_admin = header_for(add_user(db, UserRoleEnum.USER))
+
+    attempts = [
+        ({"name": "Esportes", "parent_id": None}, headers),  # 409
+        ({"name": "Boulder", "parent_id": str(micro_id)}, headers),  # 400
+        ({"name": "Boulder", "parent_id": str(uuid4())}, headers),  # 404
+        ({"name": "", "parent_id": None}, headers),  # 422
+        ({"name": "Cultura", "parent_id": None}, non_admin),  # 403
+    ]
+    codes = [
+        client.post("/admin/tags", json=body, headers=h).status_code
+        for body, h in attempts
+    ]
+
+    assert codes == [409, 400, 404, 422, 403]
+    assert audit_rows(session_factory) == []
+
+
+def test_audit_failure_rolls_back_the_tag(
+    tags_client: AdminTagsClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.infrastructure.repository.audit import SqlAlchemyAuditRepository
+
+    client, session_factory = tags_client
+    headers = admin_headers(session_factory)
+
+    def fail_commit(self: Session) -> None:
+        raise RuntimeError("audit failed")
+
+    original_add = SqlAlchemyAuditRepository.add
+
+    def add_with_failing_commit(self: SqlAlchemyAuditRepository, event) -> None:
+        monkeypatch.setattr(self.db, "commit", lambda: fail_commit(self.db))
+        original_add(self, event)
+
+    monkeypatch.setattr(SqlAlchemyAuditRepository, "add", add_with_failing_commit)
+
+    failing_client = TestClient(app, raise_server_exceptions=False)
+    response = failing_client.post(
+        "/admin/tags", json={"name": "Vida Noturna", "parent_id": None}, headers=headers
+    )
+
+    assert response.status_code == 500
+    assert tree_by_name(client) == {}
+    assert audit_rows(session_factory) == []

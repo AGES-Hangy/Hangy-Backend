@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.domain.assemblers import AdminDashboardAssembler, TagAssembler
+from app.domain.entities import User
 from app.domain.services import (
     AdminDashboardService,
     AdminTagsService,
@@ -15,6 +16,7 @@ from app.infrastructure.repository import get_db
 from app.infrastructure.repository.admin_dashboard import (
     SqlAlchemyAdminDashboardRepository,
 )
+from app.infrastructure.repository.audit import SqlAlchemyAuditRepository
 from app.infrastructure.repository.tag import SqlAlchemyTagRepository
 from app.presentation.dependencies.admin import require_admin
 from app.presentation.dtos import (
@@ -38,7 +40,10 @@ def get_admin_dashboard_service(
 def get_admin_tags_service(
     db: Annotated[Session, Depends(get_db)],
 ) -> AdminTagsService:
-    return AdminTagsService(repository=SqlAlchemyTagRepository(db))
+    return AdminTagsService(
+        repository=SqlAlchemyTagRepository(db),
+        audit_repository=SqlAlchemyAuditRepository(db),
+    )
 
 
 @router.get(
@@ -83,13 +88,13 @@ def read_admin_dashboard(
     "/admin/tags",
     response_model=AdminTagOutput,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_admin)],
     summary="Criar uma tag",
     description=(
         "Cria uma tag micro dentro de uma categoria existente (`parent_id` com "
         "o id da categoria) ou uma categoria nova, macro (`parent_id: null`). "
         "O nome e unico por nivel: entre as categorias, ou dentro da mesma "
-        "categoria. Exige Bearer token de um usuario com `role = ADMIN`."
+        "categoria. Registra o evento de auditoria `TAG_CREATED` com o admin e a "
+        "data. Exige Bearer token de um usuario com `role = ADMIN`."
     ),
     responses={
         status.HTTP_400_BAD_REQUEST: {
@@ -132,11 +137,12 @@ def read_admin_dashboard(
 )
 def create_admin_tag(
     payload: CreateAdminTagInput,
+    current_admin: Annotated[User, Depends(require_admin)],
     admin_tags_service: Annotated[AdminTagsService, Depends(get_admin_tags_service)],
 ) -> AdminTagOutput:
     tag = AdminTagMapper.to_entity(payload)
     try:
-        created = admin_tags_service.create_tag(tag)
+        created = admin_tags_service.create_tag(tag, actor_id=current_admin.user_id)
     except ParentTagNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

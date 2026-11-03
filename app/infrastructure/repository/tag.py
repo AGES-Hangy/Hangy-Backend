@@ -55,12 +55,9 @@ class SqlAlchemyTagRepository:
     def create(self, tag: Tag) -> Tag:
         model = TagModel(tag_name=tag.tag_name, tag_parent_id=tag.tag_parent_id)
         self.db.add(model)
-        try:
-            self.db.commit()
-        except Exception:
-            self.db.rollback()
-            raise
-        self.db.refresh(model)
+        # Flush only: the caller commits, so the tag and its audit row are one
+        # transaction (see SqlAlchemyAuditRepository.add).
+        self.db.flush()
         return self._to_entity(model)
 
     def _list(self, statement: Select[tuple[TagModel]]) -> list[Tag]:

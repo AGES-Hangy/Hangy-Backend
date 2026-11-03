@@ -1,3 +1,5 @@
+__all__ = ["TagAssembler"]
+
 from app.domain.entities import Tag
 from app.presentation.dtos import (
     AdminTagOutput,
