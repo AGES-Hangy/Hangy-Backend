@@ -5,7 +5,7 @@ from sqlalchemy import ColumnElement, and_, false, func, null, or_, select, true
 from sqlalchemy.orm import Session
 
 from app.domain.entities import AdminUserRecord
-from app.domain.enums import ModerationStatusEnum
+from app.domain.enums import ModerationStatusEnum, ReportStatusEnum
 from app.infrastructure.repository.models import UserModel
 from app.infrastructure.repository.models.event_model import EventModel
 from app.infrastructure.repository.models.report_model import ReportModel
@@ -39,13 +39,15 @@ class SqlAlchemyAdminUsersRepository:
             .scalar_subquery()
         )
         # A report counts against the user whether it targets their profile
-        # (personal or business) or one of the events they created.
+        # (personal or business) or one of the events they created. Archived
+        # reports (task 246: status REJECTED) do not count.
         report_count = (
             select(func.count())
             .select_from(ReportModel)
             .outerjoin(EventModel, EventModel.event_id == ReportModel.reported_event_id)
             .where(
                 ReportModel.deleted_at.is_(None),
+                ReportModel.status != ReportStatusEnum.REJECTED,
                 or_(
                     ReportModel.reported_user_id == UserModel.user_id,
                     EventModel.event_creator_id == UserModel.user_id,

@@ -183,16 +183,31 @@ def test_admin_lists_users_with_counts_and_derived_status(
         add_event(db, rafael, deleted_at=NOW)
         bar_event = add_event(db, bar)
 
-        # Against Rafael: his profile (any status), and one of his events.
+        # Against Rafael: his profile (non-archived statuses), and one of his
+        # events.
         add_report(db, marina, reported_user_id=rafael)
+        add_report(
+            db, marina, reported_user_id=rafael, status=ReportStatusEnum.REVIEWED
+        )
         add_report(
             db, marina, reported_user_id=rafael, status=ReportStatusEnum.RESOLVED
         )
         add_report(db, marina, reported_event_id=rafael_event)
-        # Archived reports do not count.
+        # Archived (REJECTED) reports do not count, against the profile or
+        # an event, and neither do deleted ones.
+        add_report(
+            db, marina, reported_user_id=rafael, status=ReportStatusEnum.REJECTED
+        )
+        add_report(
+            db, marina, reported_event_id=rafael_event, status=ReportStatusEnum.REJECTED
+        )
         add_report(db, marina, reported_user_id=rafael, deleted_at=NOW)
         # Against the business's event, not Rafael's.
         add_report(db, rafael, reported_event_id=bar_event)
+        # Marina's only report is archived, so her count is 0.
+        add_report(
+            db, rafael, reported_user_id=marina, status=ReportStatusEnum.REJECTED
+        )
 
     response = client.get("/admin/users", headers=header_for(admin_id))
 
@@ -205,7 +220,7 @@ def test_admin_lists_users_with_counts_and_derived_status(
                 "moderation_status": "ACTIVE",
                 "suspended_until": None,
                 "event_count": 2,
-                "report_count": 3,
+                "report_count": 4,
             },
             {
                 "user_id": str(bar),
