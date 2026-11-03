@@ -1,3 +1,5 @@
+__all__ = ["ReportReasonsService"]
+
 from app.domain.entities import ReportReason
 from app.domain.enums import ReportTargetEnum, ReportTypeEnum
 
@@ -5,18 +7,18 @@ from app.domain.enums import ReportTargetEnum, ReportTypeEnum
 # Estabelecimento e um USER, entao usa a lista de USER.
 _REASONS_BY_TARGET: dict[ReportTargetEnum, tuple[ReportReason, ...]] = {
     ReportTargetEnum.USER: (
-        ReportReason(ReportTypeEnum.HARASSMENT, "Abuso"),
-        ReportReason(ReportTypeEnum.INAPPROPRIATE_CONTENT, "Conteúdo inapropriado"),
-        ReportReason(ReportTypeEnum.FAKE_PROFILE, "Perfil fake"),
+        ReportReason(ReportTypeEnum.HARASSMENT, "Assédio ou intimidação"),
+        ReportReason(ReportTypeEnum.SPAM, "Spam ou golpe"),
         ReportReason(ReportTypeEnum.HATE_SPEECH, "Discurso de ódio"),
+        ReportReason(ReportTypeEnum.FAKE_PROFILE, "Perfil falso"),
+        ReportReason(ReportTypeEnum.INAPPROPRIATE_CONTENT, "Conteúdo inapropriado"),
         ReportReason(ReportTypeEnum.SAFETY_CONCERN, "Violação de segurança"),
         ReportReason(ReportTypeEnum.OTHER, "Outro"),
     ),
     ReportTargetEnum.EVENT: (
-        ReportReason(ReportTypeEnum.HARASSMENT, "Abuso"),
+        ReportReason(ReportTypeEnum.SPAM, "Spam ou golpe"),
         ReportReason(ReportTypeEnum.INAPPROPRIATE_CONTENT, "Conteúdo inapropriado"),
         ReportReason(ReportTypeEnum.HATE_SPEECH, "Discurso de ódio"),
-        ReportReason(ReportTypeEnum.SPAM, "Propaganda enganosa"),
         ReportReason(ReportTypeEnum.SAFETY_CONCERN, "Violação de segurança"),
         ReportReason(ReportTypeEnum.OTHER, "Outro"),
     ),

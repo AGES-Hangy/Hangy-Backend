@@ -67,7 +67,7 @@ def test_user_target_returns_the_user_reasons(client: TestClient) -> None:
 
     assert response.status_code == 200
     body = response.json()
-    assert body[0] == {"code": "HARASSMENT", "label": "Abuso"}
+    assert body[0] == {"code": "HARASSMENT", "label": "Assédio ou intimidação"}
     assert {reason["code"] for reason in body} <= {t.value for t in ReportTypeEnum}
     assert "FAKE_PROFILE" in {reason["code"] for reason in body}
 

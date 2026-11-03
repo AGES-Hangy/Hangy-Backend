@@ -1,3 +1,5 @@
+__all__ = ["ReportAssembler"]
+
 from app.domain.entities import ReportReason
 from app.presentation.dtos import ReportReasonOutput
 
