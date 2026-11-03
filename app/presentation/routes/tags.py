@@ -17,6 +17,7 @@ from app.domain.services import (
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.tag import SqlAlchemyTagRepository
 from app.infrastructure.repository.user_tags import SqlAlchemyUserTagsRepository
+from app.presentation.dependencies.auth import get_current_user
 from app.presentation.dtos import (
     ReplaceUserTagsInput,
     TagNodeOutput,
@@ -24,7 +25,6 @@ from app.presentation.dtos import (
     UserTagsOutput,
 )
 from app.presentation.mappers import TagMapper, UserTagsMapper
-from app.presentation.routes.auth import get_current_user
 
 router = APIRouter(tags=["Tags"])
 
