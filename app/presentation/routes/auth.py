@@ -13,6 +13,7 @@ from app.domain.assemblers import (
 from app.domain.entities import User
 from app.domain.services import (
     AccountDeletedError,
+    AccountModeratedError,
     AuthService,
     DeleteAccountService,
     DescriptionTooLongError,
@@ -186,6 +187,11 @@ def login(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account has been deleted",
+        ) from error
+    except AccountModeratedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is banned or suspended",
         ) from error
 
     token = auth_service.create_access_token(user)

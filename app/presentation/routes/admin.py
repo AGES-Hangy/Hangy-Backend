@@ -23,7 +23,9 @@ from app.domain.services import (
     ParentTagNotCategoryError,
     ParentTagNotFoundError,
     ReportAlreadyResolvedError,
+    ReportNotAboutUserError,
     ReportNotFoundError,
+    SelfModerationError,
     TagNameAlreadyExistsError,
 )
 from app.infrastructure.repository import get_db
@@ -285,11 +287,18 @@ def create_admin_tag(
         },
         status.HTTP_409_CONFLICT: {
             "description": (
-                "`SUSPEND` numa conta já banida, `REVERT` numa conta já ativa, "
-                "ou `report_id` de uma denúncia que não está mais aberta."
+                "`SUSPEND` numa conta já banida (`Account is already banned`), "
+                "`REVERT` numa conta já ativa (`User is not banned or "
+                "suspended`), `report_id` de uma denúncia já `RESOLVED`/"
+                "`REJECTED` (`Report already resolved`) ou que não denuncia "
+                "este usuário (`Report is not about this user`), ou admin "
+                "moderando a própria conta (`Admins cannot moderate their own "
+                "account`)."
             ),
             "content": {
-                "application/json": {"example": {"detail": "Account is not banned"}}
+                "application/json": {
+                    "example": {"detail": "User is not banned or suspended"}
+                }
             },
         },
     },
@@ -326,11 +335,21 @@ def patch_admin_user_moderation(
     except AccountNotModeratedError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Account is already active",
+            detail="User is not banned or suspended",
         ) from error
     except ReportAlreadyResolvedError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Report is no longer open",
+            detail="Report already resolved",
+        ) from error
+    except ReportNotAboutUserError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Report is not about this user",
+        ) from error
+    except SelfModerationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Admins cannot moderate their own account",
         ) from error
     return AdminUserModerationAssembler.to_dto(updated, now=now)

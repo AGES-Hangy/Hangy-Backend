@@ -27,7 +27,7 @@ AUDIT_ACTION_ENUM = "auditactionenum"
 AUDIT_ACTION_ENUM_OLD = "auditactionenum_old"
 
 RESOLUTION_ACTION_ENUM = "reportresolutionactionenum"
-RESOLUTION_ACTIONS = ("BANNED", "SUSPENDED")
+RESOLUTION_ACTIONS = ("BANNED", "SUSPENDED", "ARCHIVED")
 
 
 def upgrade() -> None:

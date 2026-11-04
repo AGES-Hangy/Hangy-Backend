@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 import jwt
 import pytest
 from fastapi.testclient import TestClient
+from httpx import Response
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -17,6 +18,7 @@ from app.domain.enums import (
     UserRoleEnum,
     UserTypeEnum,
 )
+from app.domain.services.auth import password_hash
 from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import AuditLogModel, UserModel
 from app.infrastructure.repository.models.report_model import ReportModel
@@ -214,6 +216,7 @@ def test_suspend_on_a_banned_account_is_rejected(
     )
 
     assert response.status_code == 409
+    assert response.json() == {"detail": "Account is already banned"}
 
 
 def test_revert_clears_moderation_and_restores_access(
@@ -255,6 +258,7 @@ def test_revert_on_an_active_account_returns_409(
     )
 
     assert response.status_code == 409
+    assert response.json() == {"detail": "User is not banned or suspended"}
 
 
 def test_missing_report_id_returns_404(moderation_client: ModerationClient) -> None:
@@ -270,6 +274,7 @@ def test_missing_report_id_returns_404(moderation_client: ModerationClient) -> N
     )
 
     assert response.status_code == 404
+    assert response.json() == {"detail": "Report not found"}
 
 
 def test_already_resolved_report_returns_409(
@@ -290,6 +295,7 @@ def test_already_resolved_report_returns_409(
     )
 
     assert response.status_code == 409
+    assert response.json() == {"detail": "Report already resolved"}
 
 
 def test_every_action_records_an_audit_row(
@@ -347,3 +353,118 @@ def test_moderating_an_unknown_user_returns_404(
     )
 
     assert response.status_code == 404
+
+
+def test_report_about_another_user_returns_409_and_stays_open(
+    moderation_client: ModerationClient,
+) -> None:
+    client, session_factory = moderation_client
+    admin_header = admin_headers(session_factory)
+    with session_factory() as db:
+        target_id = add_user(db)
+        other_id = add_user(db)
+        report_id = add_report(db, target_id, other_id)
+
+    response = client.patch(
+        f"/admin/users/{target_id}/moderation",
+        json={"action": "SUSPEND", "duration_days": 1, "report_id": str(report_id)},
+        headers=admin_header,
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Report is not about this user"}
+    assert report_row(session_factory, report_id).status == ReportStatusEnum.PENDING
+    with session_factory() as db:
+        target = db.get(UserModel, target_id)
+        assert target is not None
+        assert target.suspended_until is None
+    assert audit_rows(session_factory) == []
+
+
+def test_admin_cannot_moderate_own_account(
+    moderation_client: ModerationClient,
+) -> None:
+    client, session_factory = moderation_client
+    with session_factory() as db:
+        admin_id = add_user(db, role=UserRoleEnum.ADMIN)
+    admin_header = header_for(admin_id)
+
+    response = client.patch(
+        f"/admin/users/{admin_id}/moderation",
+        json={"action": "BAN"},
+        headers=admin_header,
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Admins cannot moderate their own account"}
+    assert client.get("/users/me", headers=admin_header).status_code == 200
+
+
+def test_ban_on_a_banned_account_keeps_the_original_ban_date(
+    moderation_client: ModerationClient,
+) -> None:
+    client, session_factory = moderation_client
+    admin_header = admin_headers(session_factory)
+    original_ban = datetime(2026, 1, 1, tzinfo=UTC)
+    with session_factory() as db:
+        target_id = add_user(db, banned_at=original_ban)
+        report_id = add_report(db, target_id, target_id)
+
+    response = client.patch(
+        f"/admin/users/{target_id}/moderation",
+        json={"action": "BAN", "report_id": str(report_id)},
+        headers=admin_header,
+    )
+
+    assert response.status_code == 200
+    with session_factory() as db:
+        target = db.get(UserModel, target_id)
+        assert target is not None
+        assert target.banned_at is not None
+        assert target.banned_at.replace(tzinfo=UTC) == original_ban
+    assert report_row(session_factory, report_id).status == ReportStatusEnum.RESOLVED
+
+
+def _login(
+    client: TestClient, session_factory: sessionmaker[Session], **kwargs: datetime
+) -> Response:
+    with session_factory() as db:
+        user_id = add_user(db, **kwargs)
+        user = db.get(UserModel, user_id)
+        assert user is not None
+        user.password_hash = password_hash.hash("Senha123!")
+        db.commit()
+        email = user.email
+    return client.post("/auth/login", json={"email": email, "password": "Senha123!"})
+
+
+@pytest.mark.parametrize(
+    "moderation",
+    [
+        {"banned_at": datetime(2026, 1, 1, tzinfo=UTC)},
+        {"suspended_until": datetime.now(UTC) + timedelta(days=1)},
+    ],
+)
+def test_moderated_account_cannot_log_in(
+    moderation_client: ModerationClient, moderation: dict[str, datetime]
+) -> None:
+    client, session_factory = moderation_client
+
+    response = _login(client, session_factory, **moderation)
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Account is banned or suspended"}
+
+
+def test_elapsed_suspension_can_log_in_again(
+    moderation_client: ModerationClient,
+) -> None:
+    client, session_factory = moderation_client
+
+    response = _login(
+        client,
+        session_factory,
+        suspended_until=datetime.now(UTC) - timedelta(seconds=1),
+    )
+
+    assert response.status_code == 200

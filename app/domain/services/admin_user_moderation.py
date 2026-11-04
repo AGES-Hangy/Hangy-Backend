@@ -12,8 +12,10 @@ __all__ = [
     "AuditRepository",
     "ModeratedUserNotFoundError",
     "ReportAlreadyResolvedError",
+    "ReportNotAboutUserError",
     "ReportNotFoundError",
     "ReportRepository",
+    "SelfModerationError",
     "UserModerationRepository",
     "derive_moderation_status",
 ]
@@ -91,6 +93,14 @@ class ReportAlreadyResolvedError(Exception):
     """Raised when the informed report_id is not PENDING or REVIEWED anymore."""
 
 
+class ReportNotAboutUserError(Exception):
+    """Raised when the informed report_id does not report the moderated user."""
+
+
+class SelfModerationError(Exception):
+    """Raised when an admin tries to moderate their own account."""
+
+
 def derive_moderation_status(
     banned_at: datetime | None, suspended_until: datetime | None, now: datetime
 ) -> ModerationStatusEnum:
@@ -135,17 +145,21 @@ class AdminUserModerationService:
         now: datetime | None = None,
     ) -> User:
         now = now or datetime.now(UTC)
+        if user_id == actor_id:
+            raise SelfModerationError
         current = self.user_repository.get_for_moderation(user_id)
         if current is None:
             raise ModeratedUserNotFoundError
 
         report_id = getattr(action, "report_id", None)
         if report_id is not None:
-            self._check_report_resolvable(report_id)
+            self._check_report_resolvable(report_id, user_id)
 
         if isinstance(action, BanUserAction):
+            # Banning an already banned account (e.g. to resolve another report)
+            # keeps the original ban date.
             updated = self.user_repository.set_moderation(
-                user_id, banned_at=now, suspended_until=None
+                user_id, banned_at=current.banned_at or now, suspended_until=None
             )
             audit_action = AuditActionEnum.USER_BANNED
             resolution_action = ReportResolutionActionEnum.BANNED
@@ -187,9 +201,11 @@ class AdminUserModerationService:
         )
         return updated
 
-    def _check_report_resolvable(self, report_id: UUID) -> None:
+    def _check_report_resolvable(self, report_id: UUID, user_id: UUID) -> None:
         report = self.report_repository.get_by_id(report_id)
         if report is None:
             raise ReportNotFoundError
+        if report.reported_user_id != user_id:
+            raise ReportNotAboutUserError
         if report.status not in _RESOLVABLE_REPORT_STATUSES:
             raise ReportAlreadyResolvedError

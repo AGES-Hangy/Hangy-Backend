@@ -84,6 +84,7 @@ class ReportStatusEnum(StrEnum):
 class ReportResolutionActionEnum(StrEnum):
     BANNED = "BANNED"
     SUSPENDED = "SUSPENDED"
+    ARCHIVED = "ARCHIVED"
 
 
 class NotificationTypeEnum(StrEnum):
