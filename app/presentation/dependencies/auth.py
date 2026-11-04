@@ -16,6 +16,7 @@ from app.config import settings
 from app.domain.entities import User
 from app.domain.services import (
     AccountDeletedError,
+    AccountModeratedError,
     AuthService,
     InvalidAccessTokenError,
 )
@@ -71,4 +72,6 @@ def get_current_user(
             detail="Account has been deleted",
         ) from error
     except InvalidAccessTokenError as error:
+        raise credentials_exception from error
+    except AccountModeratedError as error:
         raise credentials_exception from error

@@ -11,7 +11,8 @@ from app.domain.entities import (
     AdminReportUserSummary,
     ReportTargetType,
 )
-from app.domain.enums import ModerationStatusEnum, ReportStatusEnum, UserTypeEnum
+from app.domain.enums import ReportStatusEnum, UserTypeEnum
+from app.domain.services.admin_users import derive_moderation_status
 
 __all__ = [
     "AdminReportsRepository",
@@ -31,19 +32,6 @@ class AdminReportsRepository(Protocol):
 def _as_utc(value: datetime) -> datetime:
     # SQLite drops tzinfo on read; treat naive datetimes as UTC.
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
-
-
-def _derive_moderation_status(
-    banned_at: datetime | None,
-    suspended_until: datetime | None,
-    now: datetime,
-) -> ModerationStatusEnum:
-    """A ban wins over a suspension; an elapsed suspension is just ACTIVE."""
-    if banned_at is not None:
-        return ModerationStatusEnum.BANNED
-    if suspended_until is not None and _as_utc(suspended_until) > now:
-        return ModerationStatusEnum.SUSPENDED
-    return ModerationStatusEnum.ACTIVE
 
 
 class AdminReportsService:
@@ -69,7 +57,7 @@ class AdminReportsService:
             name=record.target_user_name,
             member_since=_as_utc(record.target_created_at).date(),
             event_count=record.target_event_count,
-            moderation_status=_derive_moderation_status(
+            moderation_status=derive_moderation_status(
                 record.target_banned_at,
                 record.target_suspended_until,
                 now,
