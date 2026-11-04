@@ -100,6 +100,10 @@ class TagTypeEnum(StrEnum):
     MICRO = "MICRO"
 
 
+class AuditActionEnum(StrEnum):
+    TAG_CREATED = "TAG_CREATED"
+
+
 class DevicePlatformEnum(StrEnum):
     ANDROID = "ANDROID"
     IOS = "IOS"
