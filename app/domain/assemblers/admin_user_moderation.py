@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from app.domain.entities import User
 from app.domain.enums import ModerationStatusEnum
-from app.domain.services.admin_user_moderation import derive_moderation_status
+from app.domain.services.admin_users import derive_moderation_status
 from app.presentation.dtos.admin_user_moderation import AdminUserModerationOutput
 
 

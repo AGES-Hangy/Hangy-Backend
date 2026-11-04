@@ -13,11 +13,9 @@ __all__ = [
     "ModeratedUserNotFoundError",
     "ReportAlreadyResolvedError",
     "ReportNotAboutUserError",
-    "ReportNotFoundError",
     "ReportRepository",
     "SelfModerationError",
     "UserModerationRepository",
-    "derive_moderation_status",
 ]
 
 from datetime import UTC, datetime, timedelta
@@ -39,6 +37,8 @@ from app.domain.enums import (
     ReportResolutionActionEnum,
     ReportStatusEnum,
 )
+from app.domain.services.admin_reports import ReportNotFoundError
+from app.domain.services.admin_users import derive_moderation_status
 
 # Reports still open for action; anything else (RESOLVED, REJECTED) is final.
 _RESOLVABLE_REPORT_STATUSES = (ReportStatusEnum.PENDING, ReportStatusEnum.REVIEWED)
@@ -85,10 +85,6 @@ class AccountNotModeratedError(Exception):
     """Raised when REVERT is requested for an account that is already active."""
 
 
-class ReportNotFoundError(Exception):
-    """Raised when the informed report_id matches no report."""
-
-
 class ReportAlreadyResolvedError(Exception):
     """Raised when the informed report_id is not PENDING or REVIEWED anymore."""
 
@@ -99,22 +95,6 @@ class ReportNotAboutUserError(Exception):
 
 class SelfModerationError(Exception):
     """Raised when an admin tries to moderate their own account."""
-
-
-def derive_moderation_status(
-    banned_at: datetime | None, suspended_until: datetime | None, now: datetime
-) -> ModerationStatusEnum:
-    """A ban wins over a suspension; an elapsed suspension is just ACTIVE."""
-    if banned_at is not None:
-        return ModerationStatusEnum.BANNED
-    if suspended_until is not None and _as_utc(suspended_until) > now:
-        return ModerationStatusEnum.SUSPENDED
-    return ModerationStatusEnum.ACTIVE
-
-
-def _as_utc(value: datetime) -> datetime:
-    # SQLite drops tzinfo on read; treat naive datetimes as UTC.
-    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 def _is_moderated(

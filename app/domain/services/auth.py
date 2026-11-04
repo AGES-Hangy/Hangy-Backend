@@ -7,7 +7,7 @@ from pwdlib import PasswordHash
 
 from app.domain.entities import AccessToken, PasswordResetToken, ResetToken, User
 from app.domain.enums import ModerationStatusEnum
-from app.domain.services.admin_user_moderation import derive_moderation_status
+from app.domain.services.admin_users import derive_moderation_status
 
 password_hash = PasswordHash.recommended()
 PASSWORD_RESET_SCOPE = "password_reset"
