@@ -309,7 +309,7 @@ def test_recent_reports_are_limited_to_five_newest_first(
             add_report(
                 db,
                 reporter,
-                reported_user_id=add_user(db),   # <- linha nova
+                reported_user_id=add_user(db),  # <- linha nova
                 report_id=report_id,
                 opened_at=now - timedelta(hours=len(ids) - index),
             )
