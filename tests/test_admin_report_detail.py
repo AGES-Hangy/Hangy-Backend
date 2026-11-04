@@ -148,6 +148,7 @@ def add_report(
             report_type=report_type,
             description=description,
             status=status,
+            created_at=opened_at or NOW,
             updated_at=opened_at or NOW,
             deleted_at=deleted_at,
             **extra,
@@ -487,43 +488,24 @@ def test_event_and_business_targets_resolve_to_responsible_account(
     }
 
 
-def test_report_number_follows_chronological_and_id_order(
+def test_report_number_is_the_stored_sequential_number(
     report_detail_client: ReportDetailClient,
 ) -> None:
     client, session_factory = report_detail_client
     admin_id = make_admin(session_factory)
+    # UUID order differs from insertion order, so the number cannot come from it.
     smaller_id, larger_id = sorted([uuid4(), uuid4()])
-    same_time = NOW - timedelta(hours=2)
     with session_factory() as db:
         reporter_id = add_user(db, name="Marina S.")
         target_id = add_user(db, name="Lucas Ferreira")
-        add_report(
-            db,
-            reporter_id,
-            reported_user_id=target_id,
-            report_id=larger_id,
-            opened_at=same_time,
-        )
-        add_report(
-            db,
-            reporter_id,
-            reported_user_id=target_id,
-            report_id=smaller_id,
-            opened_at=same_time,
-        )
-        newest_id = add_report(
-            db,
-            reporter_id,
-            reported_user_id=target_id,
-            opened_at=NOW,
-        )
+        add_report(db, reporter_id, reported_user_id=target_id, report_id=larger_id)
+        add_report(db, reporter_id, reported_user_id=target_id, report_id=smaller_id)
 
     headers = header_for(admin_id)
-    r1 = client.get(f"/admin/reports/{smaller_id}", headers=headers).json()
-    r2 = client.get(f"/admin/reports/{larger_id}", headers=headers).json()
-    r3 = client.get(f"/admin/reports/{newest_id}", headers=headers).json()
+    first = client.get(f"/admin/reports/{larger_id}", headers=headers).json()
+    second = client.get(f"/admin/reports/{smaller_id}", headers=headers).json()
 
-    assert [r1["report_number"], r2["report_number"], r3["report_number"]] == [1, 2, 3]
+    assert [first["report_number"], second["report_number"]] == [1, 2]
 
 
 def test_nonexistent_or_deleted_report_returns_404(
@@ -644,9 +626,9 @@ def test_repository_reads_explicit_report_number_and_resolver_when_set(
             resolved_by_id=resolver_id,
             resolved_at=resolved_at,
             resolution_action=ReportResolutionActionEnum.BANNED,
+            report_number=1042,
         )
 
-        monkeypatch.setattr(ReportModel, "report_number", 1042, raising=False)
         monkeypatch.setattr(ReportModel, "reported_at", reported_at, raising=False)
 
         repo = SqlAlchemyAdminReportsRepository(db)

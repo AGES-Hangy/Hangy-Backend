@@ -6,19 +6,43 @@ from app.domain.entities import (
     AdminReportDetail,
     AdminReportDetailRecord,
     AdminReportPreviousCounts,
+    AdminReportQueueItem,
     AdminReportResolution,
+    AdminReportsPage,
     AdminReportTarget,
     AdminReportUserSummary,
     ReportTargetType,
 )
 from app.domain.enums import ReportStatusEnum, UserTypeEnum
 from app.domain.services.admin_users import derive_moderation_status
+from app.domain.services.pagination import (
+    InvalidPaginationError,
+    decode_cursor,
+    encode_cursor,
+)
 
 __all__ = [
+    "DEFAULT_ADMIN_REPORTS_LIMIT",
+    "MAX_ADMIN_REPORTS_LIMIT",
+    "MAX_ADMIN_REPORTS_SEARCH_LENGTH",
+    "MIN_ADMIN_REPORTS_LIMIT",
     "AdminReportsRepository",
     "AdminReportsService",
     "ReportNotFoundError",
 ]
+
+
+DEFAULT_ADMIN_REPORTS_LIMIT = 20
+MIN_ADMIN_REPORTS_LIMIT = 1
+MAX_ADMIN_REPORTS_LIMIT = 100
+MAX_ADMIN_REPORTS_SEARCH_LENGTH = 100
+MAX_REPORT_NUMBER_DIGITS = 9
+# Archived (REJECTED) reports stay out of the queue unless asked for.
+DEFAULT_QUEUE_STATUSES = (
+    ReportStatusEnum.PENDING,
+    ReportStatusEnum.REVIEWED,
+    ReportStatusEnum.RESOLVED,
+)
 
 
 class ReportNotFoundError(Exception):
@@ -27,6 +51,15 @@ class ReportNotFoundError(Exception):
 
 class AdminReportsRepository(Protocol):
     def get_report_detail(self, report_id: UUID) -> AdminReportDetailRecord | None: ...
+
+    def list_queue(
+        self,
+        statuses: tuple[ReportStatusEnum, ...],
+        search: str | None,
+        report_number: int | None,
+        limit: int,
+        after: tuple[datetime, UUID] | None,
+    ) -> list[AdminReportQueueItem]: ...
 
 
 def _as_utc(value: datetime) -> datetime:
@@ -37,6 +70,46 @@ def _as_utc(value: datetime) -> datetime:
 class AdminReportsService:
     def __init__(self, repository: AdminReportsRepository) -> None:
         self.repository = repository
+
+    def list_reports(
+        self,
+        status: ReportStatusEnum | None = None,
+        search: str | None = None,
+        limit: int = DEFAULT_ADMIN_REPORTS_LIMIT,
+        cursor: str | None = None,
+    ) -> AdminReportsPage:
+        if not MIN_ADMIN_REPORTS_LIMIT <= limit <= MAX_ADMIN_REPORTS_LIMIT:
+            raise InvalidPaginationError("Limit out of bounds")
+        after = decode_cursor(cursor) if cursor else None
+        term, report_number = self._parse_search(search)
+        statuses = DEFAULT_QUEUE_STATUSES if status is None else (status,)
+
+        rows = self.repository.list_queue(
+            statuses=statuses,
+            search=term,
+            report_number=report_number,
+            limit=limit + 1,
+            after=after,
+        )
+        next_cursor = None
+        if len(rows) > limit:
+            rows = rows[:limit]
+            last = rows[-1]
+            next_cursor = encode_cursor(last.opened_at, last.report_id)
+        return AdminReportsPage(items=tuple(rows), next_cursor=next_cursor)
+
+    @staticmethod
+    def _parse_search(search: str | None) -> tuple[str | None, int | None]:
+        term = (search or "").strip()
+        if not term:
+            return None, None
+        digits = term.removeprefix("#")
+        is_number = (
+            digits.isascii()
+            and digits.isdigit()
+            and len(digits) <= MAX_REPORT_NUMBER_DIGITS
+        )
+        return term, int(digits) if is_number else None
 
     def get_report_detail(
         self, report_id: UUID, now: datetime | None = None
