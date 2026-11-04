@@ -7,7 +7,7 @@ from uuid import UUID
 import jwt
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -447,15 +447,29 @@ def test_search_is_case_insensitive_and_accent_insensitive(
     assert [item["name"] for item in body["users"]["items"]] == ["João Parcão"]
 
 
+def explain_event_search_query(
+    db: Session,
+    viewer_id: UUID,
+    query: str,
+) -> list[str]:
+    repo = SqlAlchemySearchRepository(db)
+    stmt = repo.build_events_search_statement(viewer_id, query=query).limit(5)
+    bind = db.get_bind()
+    compiled = str(stmt.compile(bind, compile_kwargs={"literal_binds": True}))
+    prefix = "EXPLAIN " if bind.dialect.name == "postgresql" else "EXPLAIN QUERY PLAN "
+    rows = db.execute(text(prefix + compiled)).fetchall()
+    return [" ".join(str(col) for col in row) for row in rows]
+
+
 def test_search_explain_shows_text_index_usage(context: SearchContext) -> None:
     creator_id = create_person(context.db, "Organizador")
     create_event(context.db, creator_id, "Pelada no Parcão")
 
-    repo = SqlAlchemySearchRepository(context.db)
-    plan_lines = repo.explain_event_search_query(context.user_id, "futebol")
+    plan_lines = explain_event_search_query(context.db, context.user_id, "futebol")
     joined_plan = "\n".join(plan_lines)
 
     assert "idx_event_title_trgm" in joined_plan
+    assert not hasattr(SqlAlchemySearchRepository, "explain_event_search_query")
 
 
 # ============================================================================

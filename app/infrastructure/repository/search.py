@@ -12,7 +12,6 @@ from sqlalchemy import (
     literal_column,
     or_,
     select,
-    text,
 )
 from sqlalchemy.orm import Session, aliased
 
@@ -153,6 +152,13 @@ class SqlAlchemySearchRepository:
                 normalized_col.like(pattern, escape="\\"),
             )
 
+        if model is UserModel:
+            matching_user_ids = select(UserModel.user_id).where(
+                column.is_not(None),
+                _unaccent_column_sqlite(column).ilike(pattern, escape="\\"),
+            )
+            return UserModel.user_id.in_(matching_user_ids)
+
         table_name = model.__tablename__
         rowid_col = literal_column(f'"{table_name}".rowid')
         matching_rowids = (
@@ -232,20 +238,6 @@ class SqlAlchemySearchRepository:
             .where(*conditions)
             .order_by(EventModel.starts_at.asc(), EventModel.event_id.asc())
         )
-
-    def explain_event_search_query(
-        self,
-        viewer_id: UUID,
-        query: str,
-    ) -> list[str]:
-        stmt = self.build_events_search_statement(viewer_id, query=query).limit(5)
-        bind = self.db.get_bind()
-        compiled = str(stmt.compile(bind, compile_kwargs={"literal_binds": True}))
-        prefix = (
-            "EXPLAIN " if bind.dialect.name == "postgresql" else "EXPLAIN QUERY PLAN "
-        )
-        rows = self.db.execute(text(prefix + compiled)).fetchall()
-        return [" ".join(str(col) for col in row) for row in rows]
 
     def search_events(
         self,

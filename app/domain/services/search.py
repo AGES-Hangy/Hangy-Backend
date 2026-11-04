@@ -14,10 +14,7 @@ from app.domain.entities import (
     Tag,
 )
 from app.domain.enums import SearchResultType
-from app.domain.services.event_visibility import (
-    is_event_visible_to_viewer,
-    resolve_event_visibility,
-)
+from app.domain.services.event_visibility import resolve_event_visibility
 
 MIN_SEARCH_QUERY_LENGTH = 2
 MAX_SEARCH_QUERY_LENGTH = 120
@@ -227,12 +224,6 @@ class SearchService:
         items = tuple(
             self._to_event_item(candidate, criteria.viewer_id)
             for candidate in candidates
-            if is_event_visible_to_viewer(
-                candidate.event,
-                criteria.viewer_id,
-                candidate.viewer_participation_status,
-                reference_time=reference_time,
-            )
         )
         return SearchResultBlock(
             items=items,
