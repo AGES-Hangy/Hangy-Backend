@@ -1,18 +1,17 @@
 __all__ = [
     "AdminTagRepository",
     "AdminTagsService",
-    "AuditRepository",
     "ParentTagNotCategoryError",
     "ParentTagNotFoundError",
     "TagNameAlreadyExistsError",
 ]
 
-from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
-from app.domain.entities import AuditEvent, Tag
-from app.domain.enums import AuditActionEnum, TagTypeEnum
+from app.domain.entities import Tag
+from app.domain.enums import AuditActionEnum, AuditTargetTypeEnum, TagTypeEnum
+from app.domain.services.audit_logger import AuditLogger
 
 
 class AdminTagRepository(Protocol):
@@ -22,9 +21,7 @@ class AdminTagRepository(Protocol):
 
     def create(self, tag: Tag) -> Tag: ...
 
-
-class AuditRepository(Protocol):
-    def add(self, event: AuditEvent) -> None: ...
+    def commit(self) -> None: ...
 
 
 class ParentTagNotFoundError(Exception):
@@ -43,12 +40,12 @@ class AdminTagsService:
     """Business rules for the admin tag management endpoints."""
 
     def __init__(
-        self, repository: AdminTagRepository, audit_repository: AuditRepository
+        self, repository: AdminTagRepository, audit_logger: AuditLogger
     ) -> None:
         self.repository = repository
-        self.audit_repository = audit_repository
+        self.audit_logger = audit_logger
 
-    def create_tag(self, tag: Tag, actor_id: UUID, now: datetime | None = None) -> Tag:
+    def create_tag(self, tag: Tag, actor_id: UUID) -> Tag:
         """Create a category (no parent) or a micro tag inside a category.
 
         Records a TAG_CREATED audit event with the admin who created it and when.
@@ -66,12 +63,13 @@ class AdminTagsService:
             raise TagNameAlreadyExistsError
 
         created = self.repository.create(tag)
-        self.audit_repository.add(
-            AuditEvent(
-                action=AuditActionEnum.TAG_CREATED,
-                actor_id=actor_id,
-                target_id=created.tag_id,
-                created_at=now or datetime.now(UTC),
-            )
+        self.audit_logger.record(
+            actor_id=actor_id,
+            action=AuditActionEnum.TAG_CREATED,
+            target_type=AuditTargetTypeEnum.TAG,
+            target_id=created.tag_id,
         )
+        # The audit write is a savepoint (see AuditLogger): it never fails this
+        # commit even when it was itself rolled back.
+        self.repository.commit()
         return created

@@ -382,3 +382,12 @@ def test_get_audit_log_requires_admin(client: TestClient) -> None:
 
     assert response.status_code == 403
     assert response.json() == {"detail": "Admin access required"}
+
+
+def test_get_audit_log_requires_authentication(client: TestClient) -> None:
+    _seed_users(client)
+
+    response = client.get(URL)
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Could not validate credentials"}

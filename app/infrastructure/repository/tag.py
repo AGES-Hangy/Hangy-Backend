@@ -55,10 +55,13 @@ class SqlAlchemyTagRepository:
     def create(self, tag: Tag) -> Tag:
         model = TagModel(tag_name=tag.tag_name, tag_parent_id=tag.tag_parent_id)
         self.db.add(model)
-        # Flush only: the caller commits, so the tag and its audit row are one
-        # transaction (see SqlAlchemyAuditRepository.add).
+        # Flush only: the caller (AdminTagsService.create_tag) commits after
+        # also recording the audit row, so both land in one transaction.
         self.db.flush()
         return self._to_entity(model)
+
+    def commit(self) -> None:
+        self.db.commit()
 
     def _list(self, statement: Select[tuple[TagModel]]) -> list[Tag]:
         models = self.db.scalars(statement.order_by(TagModel.tag_name)).all()

@@ -10,7 +10,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.config import settings
-from app.domain.enums import AuditActionEnum, UserRoleEnum, UserTypeEnum
+from app.domain.enums import (
+    AuditActionEnum,
+    AuditTargetTypeEnum,
+    UserRoleEnum,
+    UserTypeEnum,
+)
 from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import AuditLogModel, TagModel, UserModel
 from app.main import app
@@ -360,6 +365,8 @@ def test_creating_a_tag_records_a_tag_created_audit_row(
     assert row.action == AuditActionEnum.TAG_CREATED
     assert row.actor_id == admin_id
     assert str(row.target_id) == response.json()["tag_id"]
+    assert row.target_type == AuditTargetTypeEnum.TAG
+    assert row.target_label == "Escalada"
     created_at = row.created_at.replace(tzinfo=UTC)
     assert before - timedelta(seconds=1) <= created_at <= datetime.now(UTC)
 
@@ -379,6 +386,8 @@ def test_creating_a_category_records_an_audit_row(
     [row] = audit_rows(session_factory)
     assert row.action == AuditActionEnum.TAG_CREATED
     assert str(row.target_id) == response.json()["tag_id"]
+    assert row.target_type == AuditTargetTypeEnum.TAG
+    assert row.target_label == "Vida Noturna"
 
 
 def test_failed_requests_record_no_audit_row(tags_client: AdminTagsClient) -> None:
@@ -405,30 +414,27 @@ def test_failed_requests_record_no_audit_row(tags_client: AdminTagsClient) -> No
     assert audit_rows(session_factory) == []
 
 
-def test_audit_failure_rolls_back_the_tag(
+def test_audit_failure_does_not_roll_back_the_tag(
     tags_client: AdminTagsClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from app.infrastructure.repository.audit import SqlAlchemyAuditRepository
+    """The audit write is savepoint-isolated (see AuditLogger): a failure there
+    must not undo the tag creation, same as NotificationDispatcher failures
+    never undo the action that triggered them.
+    """
+    from app.infrastructure.repository.audit_log import SqlAlchemyAuditLogRepository
 
     client, session_factory = tags_client
     headers = admin_headers(session_factory)
 
-    def fail_commit(self: Session) -> None:
+    def failing_record(self: SqlAlchemyAuditLogRepository, **kwargs: object) -> None:
         raise RuntimeError("audit failed")
 
-    original_add = SqlAlchemyAuditRepository.add
+    monkeypatch.setattr(SqlAlchemyAuditLogRepository, "record", failing_record)
 
-    def add_with_failing_commit(self: SqlAlchemyAuditRepository, event) -> None:
-        monkeypatch.setattr(self.db, "commit", lambda: fail_commit(self.db))
-        original_add(self, event)
-
-    monkeypatch.setattr(SqlAlchemyAuditRepository, "add", add_with_failing_commit)
-
-    failing_client = TestClient(app, raise_server_exceptions=False)
-    response = failing_client.post(
+    response = client.post(
         "/admin/tags", json={"name": "Vida Noturna", "parent_id": None}, headers=headers
     )
 
-    assert response.status_code == 500
-    assert tree_by_name(client) == {}
+    assert response.status_code == 201
+    assert "Vida Noturna" in tree_by_name(client)
     assert audit_rows(session_factory) == []
