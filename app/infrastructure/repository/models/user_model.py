@@ -123,6 +123,10 @@ class UserModel(Base):
         onupdate=func.now(),
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # A ban is definitive and does not stack with a suspension: banned_at
+    # being set always wins over suspended_until (see derive_moderation_status).
+    banned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    suspended_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     person_profile: Mapped[PersonProfileModel | None] = relationship(
         back_populates="user", passive_deletes=True

@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING
 from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.domain.enums import ReportStatusEnum, ReportTypeEnum
+from app.domain.enums import (
+    ReportResolutionActionEnum,
+    ReportStatusEnum,
+    ReportTypeEnum,
+)
 from app.infrastructure.repository.base import Base
 from app.infrastructure.repository.models.types import enum_column
 
@@ -39,6 +43,15 @@ class ReportModel(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         onupdate=func.now(),
+    )
+    # Kept (as NULL) if the resolving admin's account is later deleted: the
+    # resolution itself must survive.
+    resolved_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("user.user_id", ondelete="SET NULL")
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    resolution_action: Mapped[ReportResolutionActionEnum | None] = mapped_column(
+        enum_column(ReportResolutionActionEnum)
     )
 
     creator: Mapped[UserModel] = relationship(

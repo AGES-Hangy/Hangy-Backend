@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -7,15 +8,21 @@ from sqlalchemy.orm import Session
 from app.domain.assemblers import (
     AdminDashboardAssembler,
     AdminReportAssembler,
+    AdminUserModerationAssembler,
     TagAssembler,
 )
 from app.domain.entities import User
 from app.domain.services import (
+    AccountAlreadyBannedError,
+    AccountNotModeratedError,
     AdminDashboardService,
     AdminReportsService,
     AdminTagsService,
+    AdminUserModerationService,
+    ModeratedUserNotFoundError,
     ParentTagNotCategoryError,
     ParentTagNotFoundError,
+    ReportAlreadyResolvedError,
     ReportNotFoundError,
     TagNameAlreadyExistsError,
 )
@@ -27,15 +34,19 @@ from app.infrastructure.repository.admin_report import (
     SqlAlchemyAdminReportsRepository,
 )
 from app.infrastructure.repository.audit import SqlAlchemyAuditRepository
+from app.infrastructure.repository.report import SqlAlchemyReportRepository
 from app.infrastructure.repository.tag import SqlAlchemyTagRepository
+from app.infrastructure.repository.user import SqlAlchemyUserRepository
 from app.presentation.dependencies.admin import require_admin
 from app.presentation.dtos import (
     AdminDashboardOutput,
     AdminReportDetailOutput,
     AdminTagOutput,
+    AdminUserModerationInput,
+    AdminUserModerationOutput,
     CreateAdminTagInput,
 )
-from app.presentation.mappers import AdminTagMapper
+from app.presentation.mappers import AdminTagMapper, AdminUserModerationMapper
 
 router = APIRouter(tags=["Admin"])
 
@@ -59,6 +70,16 @@ def get_admin_tags_service(
 ) -> AdminTagsService:
     return AdminTagsService(
         repository=SqlAlchemyTagRepository(db),
+        audit_repository=SqlAlchemyAuditRepository(db),
+    )
+
+
+def get_admin_user_moderation_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminUserModerationService:
+    return AdminUserModerationService(
+        user_repository=SqlAlchemyUserRepository(db),
+        report_repository=SqlAlchemyReportRepository(db),
         audit_repository=SqlAlchemyAuditRepository(db),
     )
 
@@ -226,3 +247,90 @@ def create_admin_tag(
             detail="Tag name already exists at this level",
         ) from error
     return TagAssembler.to_admin_dto(created)
+
+
+@router.patch(
+    "/admin/users/{user_id}/moderation",
+    response_model=AdminUserModerationOutput,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_admin)],
+    summary="Banir, suspender ou reverter a moderação de uma conta",
+    description=(
+        "Ponto único de escrita para toda ação de moderação sobre uma conta: "
+        "`BAN` (definitivo), `SUSPEND` (até `duration_days` dias) ou `REVERT` "
+        "(remove o banimento/suspensão e devolve o acesso imediatamente). "
+        "`report_id` é opcional em `BAN`/`SUSPEND` e, quando informado, marca "
+        "aquela denúncia como `RESOLVED` na mesma transação. Gera sempre uma "
+        "linha de auditoria. Exige Bearer token de um usuário com "
+        "`role = ADMIN`."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Usuário autenticado, mas `role != ADMIN`.",
+            "content": {
+                "application/json": {"example": {"detail": "Admin access required"}}
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "O `user_id` ou o `report_id` informado não existe.",
+            "content": {"application/json": {"example": {"detail": "User not found"}}},
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": (
+                "`SUSPEND` numa conta já banida, `REVERT` numa conta já ativa, "
+                "ou `report_id` de uma denúncia que não está mais aberta."
+            ),
+            "content": {
+                "application/json": {"example": {"detail": "Account is not banned"}}
+            },
+        },
+    },
+)
+def patch_admin_user_moderation(
+    user_id: UUID,
+    payload: AdminUserModerationInput,
+    current_admin: Annotated[User, Depends(require_admin)],
+    moderation_service: Annotated[
+        AdminUserModerationService, Depends(get_admin_user_moderation_service)
+    ],
+) -> AdminUserModerationOutput:
+    action = AdminUserModerationMapper.to_entity(payload)
+    now = datetime.now(UTC)
+    try:
+        updated = moderation_service.apply_action(
+            user_id, action, actor_id=current_admin.user_id, now=now
+        )
+    except ModeratedUserNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        ) from error
+    except ReportNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found",
+        ) from error
+    except AccountAlreadyBannedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Account is already banned",
+        ) from error
+    except AccountNotModeratedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Account is already active",
+        ) from error
+    except ReportAlreadyResolvedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Report is no longer open",
+        ) from error
+    return AdminUserModerationAssembler.to_dto(updated, now=now)

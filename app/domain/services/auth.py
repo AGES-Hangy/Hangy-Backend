@@ -33,6 +33,15 @@ class AccountDeletedError(Exception):
     """Raised when the credentials are correct but the account was deleted."""
 
 
+class AccountModeratedError(Exception):
+    """Raised when the token is valid but the account is banned or suspended.
+
+    No active-session revocation happens on BAN/SUSPEND (see task 249): the
+    JWT keeps decoding fine, but every request past this point is rejected
+    until the moderation is lifted or the suspension elapses.
+    """
+
+
 class AuthService:
     def __init__(
         self,
@@ -91,7 +100,8 @@ class AuthService:
             expires_in=int(expires_in.total_seconds()),
         )
 
-    def get_user_from_token(self, token: str) -> User:
+    def get_user_from_token(self, token: str, now: datetime | None = None) -> User:
+        now = now or datetime.now(UTC)
         try:
             payload = jwt.decode(
                 token,
@@ -113,6 +123,10 @@ class AuthService:
             raise InvalidAccessTokenError
         if user.deleted_at is not None:
             raise AccountDeletedError
+        if user.banned_at is not None or (
+            user.suspended_until is not None and _as_utc(user.suspended_until) > now
+        ):
+            raise AccountModeratedError
         # A token with no "iat" carries no freshness info to check, so it is
         # left alone here (e.g. tokens minted before this claim existed).
         if (
