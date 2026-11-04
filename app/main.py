@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.presentation.routes import (
     admin_router,
+    admin_users_router,
     auth_router,
     businesses_router,
     cancel_participation_router,
@@ -57,3 +58,4 @@ app.include_router(uploads_router)
 app.include_router(profile_photo_router)
 app.include_router(users_router)
 app.include_router(admin_router)
+app.include_router(admin_users_router)
