@@ -1,9 +1,3 @@
-__all__ = [
-    "AdminReportsRepository",
-    "AdminReportsService",
-    "ReportNotFoundError",
-]
-
 from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
@@ -18,6 +12,12 @@ from app.domain.entities import (
     ReportTargetType,
 )
 from app.domain.enums import ModerationStatusEnum, ReportStatusEnum, UserTypeEnum
+
+__all__ = [
+    "AdminReportsRepository",
+    "AdminReportsService",
+    "ReportNotFoundError",
+]
 
 
 class ReportNotFoundError(Exception):
@@ -128,4 +128,3 @@ class AdminReportsService:
             resolved_at=_as_utc(record.resolved_at),
             action=str(record.resolution_action),
         )
-

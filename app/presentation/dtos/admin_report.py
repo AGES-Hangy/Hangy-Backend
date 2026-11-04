@@ -1,11 +1,3 @@
-__all__ = [
-    "AdminReportDetailOutput",
-    "AdminReportPreviousReportsOutput",
-    "AdminReportResolutionOutput",
-    "AdminReportTargetOutput",
-    "AdminReportUserOutput",
-]
-
 from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
@@ -13,6 +5,14 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from app.domain.enums import ModerationStatusEnum, ReportStatusEnum, ReportTypeEnum
+
+__all__ = [
+    "AdminReportDetailOutput",
+    "AdminReportPreviousReportsOutput",
+    "AdminReportResolutionOutput",
+    "AdminReportTargetOutput",
+    "AdminReportUserOutput",
+]
 
 
 class AdminReportUserOutput(BaseModel):
@@ -53,4 +53,3 @@ class AdminReportDetailOutput(BaseModel):
     reported_at: datetime
     previous_reports: AdminReportPreviousReportsOutput
     resolution: AdminReportResolutionOutput | None
-

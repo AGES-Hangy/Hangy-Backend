@@ -1,13 +1,3 @@
-__all__ = [
-    "AdminReportDetail",
-    "AdminReportDetailRecord",
-    "AdminReportPreviousCounts",
-    "AdminReportResolution",
-    "AdminReportTarget",
-    "AdminReportUserSummary",
-    "ReportTargetType",
-]
-
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Literal
@@ -19,6 +9,16 @@ from app.domain.enums import (
     ReportTypeEnum,
     UserTypeEnum,
 )
+
+__all__ = [
+    "AdminReportDetail",
+    "AdminReportDetailRecord",
+    "AdminReportPreviousCounts",
+    "AdminReportResolution",
+    "AdminReportTarget",
+    "AdminReportUserSummary",
+    "ReportTargetType",
+]
 
 ReportTargetType = Literal["USER", "BUSINESS", "EVENT"]
 
@@ -95,4 +95,3 @@ class AdminReportDetail:
     reported_at: datetime
     previous_reports: AdminReportPreviousCounts
     resolution: AdminReportResolution | None = None
-

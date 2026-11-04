@@ -1,5 +1,3 @@
-__all__ = ["AdminReportAssembler"]
-
 from app.domain.entities import AdminReportDetail, AdminReportResolution
 from app.presentation.dtos.admin_report import (
     AdminReportDetailOutput,
@@ -8,6 +6,8 @@ from app.presentation.dtos.admin_report import (
     AdminReportTargetOutput,
     AdminReportUserOutput,
 )
+
+__all__ = ["AdminReportAssembler"]
 
 
 class AdminReportAssembler:
@@ -61,4 +61,3 @@ class AdminReportAssembler:
             resolved_at=resolution.resolved_at,
             action=resolution.action,
         )
-

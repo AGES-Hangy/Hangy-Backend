@@ -625,6 +625,7 @@ def test_repository_reads_explicit_report_number_and_resolver_when_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _, session_factory = report_detail_client
+    reported_at = datetime(2026, 9, 4, 11, 45)  # naive to verify UTC normalization
     resolved_at = datetime(2026, 9, 22, 14, 32)  # naive to verify UTC normalization
     with session_factory() as db:
         resolver_id = add_user(db, name="Gabriel N.", role=UserRoleEnum.ADMIN)
@@ -642,6 +643,7 @@ def test_repository_reads_explicit_report_number_and_resolver_when_set(
         )
 
         monkeypatch.setattr(ReportModel, "report_number", 1042, raising=False)
+        monkeypatch.setattr(ReportModel, "reported_at", reported_at, raising=False)
         monkeypatch.setattr(ReportModel, "resolved_by_id", resolver_id, raising=False)
         monkeypatch.setattr(ReportModel, "resolved_at", resolved_at, raising=False)
         monkeypatch.setattr(ReportModel, "resolution_action", "BANNED", raising=False)
@@ -652,10 +654,11 @@ def test_repository_reads_explicit_report_number_and_resolver_when_set(
         dto = AdminReportAssembler.to_dto(detail)
 
     assert dto.report_number == 1042
+    assert dto.opened_at == NOW
+    assert dto.reported_at == datetime(2026, 9, 4, 11, 45, tzinfo=UTC)
     assert dto.target.member_since == date(2025, 3, 1)
     assert dto.resolution is not None
     assert dto.resolution.resolved_by.id == resolver_id
     assert dto.resolution.resolved_by.name == "Gabriel N."
     assert dto.resolution.resolved_at == datetime(2026, 9, 22, 14, 32, tzinfo=UTC)
     assert dto.resolution.action == "BANNED"
-

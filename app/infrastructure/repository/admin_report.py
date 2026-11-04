@@ -1,5 +1,3 @@
-__all__ = ["SqlAlchemyAdminReportsRepository"]
-
 from datetime import UTC
 from uuid import UUID
 
@@ -11,6 +9,8 @@ from app.domain.enums import ReportStatusEnum
 from app.infrastructure.repository.models import UserModel
 from app.infrastructure.repository.models.event_model import EventModel
 from app.infrastructure.repository.models.report_model import ReportModel
+
+__all__ = ["SqlAlchemyAdminReportsRepository"]
 
 
 class SqlAlchemyAdminReportsRepository:
@@ -152,6 +152,19 @@ class SqlAlchemyAdminReportsRepository:
             if raw_opened_at.tzinfo is not None
             else raw_opened_at.replace(tzinfo=UTC)
         )
+        # ReportModel currently has no separate reported_at/created_at column
+        # (only updated_at in the report table), so opened_at and reported_at
+        # share the same timestamp unless reported_at is defined on the model.
+        raw_reported_at = getattr(model, "reported_at", None)
+        reported_at = (
+            (
+                raw_reported_at
+                if raw_reported_at.tzinfo is not None
+                else raw_reported_at.replace(tzinfo=UTC)
+            )
+            if raw_reported_at is not None
+            else opened_at
+        )
         target_created_at = (
             target.created_at
             if target.created_at.tzinfo is not None
@@ -162,7 +175,7 @@ class SqlAlchemyAdminReportsRepository:
             report_number=report_number,
             status=model.status,
             opened_at=opened_at,
-            reported_at=opened_at,
+            reported_at=reported_at,
             reason=model.report_type,
             description=model.description,
             reported_event_id=model.reported_event_id,
