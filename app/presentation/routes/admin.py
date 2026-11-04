@@ -14,8 +14,12 @@ from app.domain.assemblers import (
     TagAssembler,
 )
 from app.domain.entities import User
-from app.domain.enums import AuditTargetTypeEnum
+from app.domain.enums import AuditTargetTypeEnum, ReportStatusEnum
 from app.domain.services import (
+    DEFAULT_ADMIN_REPORTS_LIMIT,
+    MAX_ADMIN_REPORTS_LIMIT,
+    MAX_ADMIN_REPORTS_SEARCH_LENGTH,
+    MIN_ADMIN_REPORTS_LIMIT,
     AccountAlreadyBannedError,
     AccountNotModeratedError,
     AdminDashboardService,
@@ -49,6 +53,7 @@ from app.presentation.dependencies.admin import require_admin
 from app.presentation.dtos import (
     AdminDashboardOutput,
     AdminReportDetailOutput,
+    AdminReportsOutput,
     AdminTagOutput,
     AdminUserModerationInput,
     AdminUserModerationOutput,
@@ -151,6 +156,86 @@ def read_admin_dashboard(
 ) -> AdminDashboardOutput:
     dashboard = dashboard_service.get_dashboard()
     return AdminDashboardAssembler.to_dto(dashboard)
+
+
+@router.get(
+    "/admin/reports",
+    response_model=AdminReportsOutput,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_admin)],
+    summary="Fila de denúncias",
+    description=(
+        "Lista a fila administrativa agrupada por alvo: várias denúncias contra "
+        "o mesmo usuário, estabelecimento ou evento viram uma linha, com o "
+        "total em `report_count`. A linha mostra a denúncia aberta mais "
+        "recentemente para o alvo, da mais nova para a mais antiga. Sem "
+        "`status`, devolve tudo menos `REJECTED`. `search` busca pelo nome do "
+        "usuário, título do evento ou número da denúncia. Exige Bearer token "
+        "de um usuário com `role = ADMIN`."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "`cursor` malformado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid pagination parameters"}
+                }
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Usuário autenticado, mas `role != ADMIN`.",
+            "content": {
+                "application/json": {"example": {"detail": "Admin access required"}}
+            },
+        },
+    },
+)
+def list_admin_reports(
+    reports_service: Annotated[AdminReportsService, Depends(get_admin_reports_service)],
+    report_status: Annotated[
+        ReportStatusEnum | None,
+        Query(
+            alias="status",
+            description="`PENDING`, `REVIEWED`, `RESOLVED` ou `REJECTED`.",
+        ),
+    ] = None,
+    search: Annotated[
+        str | None,
+        Query(
+            max_length=MAX_ADMIN_REPORTS_SEARCH_LENGTH,
+            description="Nome do alvo, título do evento ou número da denúncia.",
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Query(
+            ge=MIN_ADMIN_REPORTS_LIMIT,
+            le=MAX_ADMIN_REPORTS_LIMIT,
+            description="Tamanho da página.",
+        ),
+    ] = DEFAULT_ADMIN_REPORTS_LIMIT,
+    cursor: Annotated[
+        str | None, Query(description="Cursor opaco de paginação.")
+    ] = None,
+) -> AdminReportsOutput:
+    try:
+        page = reports_service.list_reports(
+            status=report_status, search=search, limit=limit, cursor=cursor
+        )
+    except InvalidPaginationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters",
+        ) from error
+    return AdminReportAssembler.to_queue_dto(page)
 
 
 @router.get(

@@ -8,10 +8,12 @@ from app.domain.enums import ModerationStatusEnum, ReportStatusEnum, ReportTypeE
 
 __all__ = [
     "AdminReportDetailOutput",
+    "AdminReportItemOutput",
     "AdminReportPreviousReportsOutput",
     "AdminReportResolutionOutput",
     "AdminReportTargetOutput",
     "AdminReportUserOutput",
+    "AdminReportsOutput",
 ]
 
 
@@ -53,3 +55,20 @@ class AdminReportDetailOutput(BaseModel):
     reported_at: datetime
     previous_reports: AdminReportPreviousReportsOutput
     resolution: AdminReportResolutionOutput | None
+
+
+class AdminReportItemOutput(BaseModel):
+    report_id: UUID
+    report_number: int
+    target_type: Literal["USER", "BUSINESS", "EVENT"] | None
+    target_name: str | None
+    report_count: int
+    status: ReportStatusEnum
+    reason: ReportTypeEnum
+    description_excerpt: str
+    opened_at: datetime
+
+
+class AdminReportsOutput(BaseModel):
+    items: list[AdminReportItemOutput]
+    next_cursor: str | None
