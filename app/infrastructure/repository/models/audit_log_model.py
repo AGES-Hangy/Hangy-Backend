@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, func
+from sqlalchemy import JSON, DateTime, ForeignKey, Index, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.domain.enums import AuditActionEnum
@@ -23,6 +24,7 @@ class AuditLogModel(Base):
     )
     # No foreign key: the audited record may be deleted later and the row stays.
     target_id: Mapped[uuid.UUID | None] = mapped_column()
+    extra_metadata: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSON())
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

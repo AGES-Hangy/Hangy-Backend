@@ -96,6 +96,7 @@ class TagTypeEnum(StrEnum):
 
 class AuditActionEnum(StrEnum):
     TAG_CREATED = "TAG_CREATED"
+    TAG_DELETED = "TAG_DELETED"
 
 
 class DevicePlatformEnum(StrEnum):

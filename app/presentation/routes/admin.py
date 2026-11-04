@@ -1,15 +1,20 @@
 from typing import Annotated
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.domain.assemblers import AdminDashboardAssembler, TagAssembler
 from app.domain.entities import User
 from app.domain.services import (
     AdminDashboardService,
+    AdminTagNotFoundError,
     AdminTagsService,
+    CategoryHasTagsError,
     ParentTagNotCategoryError,
     ParentTagNotFoundError,
+    TagInUseError,
     TagNameAlreadyExistsError,
 )
 from app.infrastructure.repository import get_db
@@ -159,3 +164,74 @@ def create_admin_tag(
             detail="Tag name already exists at this level",
         ) from error
     return TagAssembler.to_admin_dto(created)
+
+
+@router.delete(
+    "/admin/tags/{tag_id}",
+    response_model=None,
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Remover uma tag ou categoria",
+    description=(
+        "Remove uma tag ou uma categoria vazia. Tags associadas a usuarios ou "
+        "eventos exigem `force=true`. Categorias com tags filhas nunca podem ser "
+        "removidas, mesmo com `force=true`. Registra `TAG_DELETED` na auditoria. "
+        "Exige Bearer token de um usuario com `role = ADMIN`."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, invalido ou expirado.",
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Usuario autenticado, mas `role != ADMIN`.",
+            "content": {
+                "application/json": {"example": {"detail": "Admin access required"}}
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "A tag informada nao existe.",
+            "content": {"application/json": {"example": {"detail": "Tag not found"}}},
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "A tag esta em uso ou a categoria ainda possui tags.",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "tag_in_use": {
+                            "value": {"detail": "Tag is in use", "usage_count": 34}
+                        },
+                        "category_has_tags": {"value": {"detail": "Category has tags"}},
+                    }
+                }
+            },
+        },
+    },
+)
+def delete_admin_tag(
+    tag_id: UUID,
+    current_admin: Annotated[User, Depends(require_admin)],
+    admin_tags_service: Annotated[AdminTagsService, Depends(get_admin_tags_service)],
+    *,
+    force: bool = False,
+) -> Response:
+    try:
+        admin_tags_service.delete_tag(
+            tag_id,
+            actor_id=current_admin.user_id,
+            force=force,
+        )
+    except AdminTagNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tag not found",
+        ) from error
+    except CategoryHasTagsError:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": "Category has tags"},
+        )
+    except TagInUseError as error:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={"detail": "Tag is in use", "usage_count": error.usage_count},
+        )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

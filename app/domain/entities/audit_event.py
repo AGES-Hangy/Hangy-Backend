@@ -2,6 +2,7 @@ __all__ = ["AuditEvent"]
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from app.domain.enums import AuditActionEnum
@@ -15,3 +16,4 @@ class AuditEvent:
     actor_id: UUID
     target_id: UUID | None
     created_at: datetime
+    metadata: dict[str, Any] | None = None
