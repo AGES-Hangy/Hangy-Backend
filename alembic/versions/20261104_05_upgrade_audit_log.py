@@ -1,7 +1,7 @@
-"""merge_and_upgrade_audit_log
+"""upgrade_audit_log
 
-Revision ID: 20261104_03
-Revises: 20261015_01, 20261103_01
+Revision ID: 20261104_05
+Revises: 20261104_04
 Create Date: 2026-11-04 00:00:00.000000
 """
 
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "20261104_03"
-down_revision: str | Sequence[str] | None = ("20261015_01", "20261103_01")
+revision: str = "20261104_05"
+down_revision: str | Sequence[str] | None = "20261104_04"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -36,9 +36,9 @@ TARGET_TYPES = ("USER", "REPORT", "TAG")
 def upgrade() -> None:
     # 20261027_01 (this branch's own table-creation migration) never applied
     # anywhere: PR #118 already created the `audit_log` table in `develop`
-    # first, under a minimal schema (TAG_CREATED-only). This migration joins
-    # the two heads that split there and upgrades that table in place to the
-    # full schema instead of creating a second one.
+    # first, under a minimal schema (TAG_CREATED-only). This migration
+    # upgrades that table in place to the full schema instead of creating a
+    # second one.
 
     # Postgres enums have no ADD VALUE that is safe to run and use in the same
     # transaction, so this swaps in a whole new type (same approach as

@@ -81,6 +81,12 @@ class ReportStatusEnum(StrEnum):
     REJECTED = "REJECTED"
 
 
+class ReportResolutionActionEnum(StrEnum):
+    BANNED = "BANNED"
+    SUSPENDED = "SUSPENDED"
+    ARCHIVED = "ARCHIVED"
+
+
 class AuditActionEnum(StrEnum):
     USER_BANNED = "USER_BANNED"
     USER_SUSPENDED = "USER_SUSPENDED"

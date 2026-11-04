@@ -11,7 +11,6 @@ from app.domain.enums import (
     EventPrivacyEnum,
     EventStatusEnum,
 )
-from app.infrastructure.repository.block import block_exists_between
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
 from app.infrastructure.repository.models import (
     EventFavoriteModel,
@@ -20,6 +19,10 @@ from app.infrastructure.repository.models import (
     TagModel,
     event_tag,
     user_tag,
+)
+from app.infrastructure.repository.search import (
+    viewer_confirmed_in_event,
+    visible_events_filter,
 )
 
 # PUBLISHED is the published state of an event: DRAFT is still being written and
@@ -81,15 +84,7 @@ class SqlAlchemyFeedRepository:
             )
             .correlate(EventModel)
         )
-        viewer_confirmed = (
-            exists()
-            .where(
-                EventParticipantModel.event_id == EventModel.event_id,
-                EventParticipantModel.user_id == viewer_id,
-                EventParticipantModel.status == EventParticipantStatusEnum.CONFIRMED,
-            )
-            .correlate(EventModel)
-        )
+        viewer_confirmed = viewer_confirmed_in_event(viewer_id)
         # Aliased so it does not capture the participant count subquery above.
         viewer_participation = aliased(EventParticipantModel)
         tagged_events = select(event_tag.c.event_id).where(
@@ -114,13 +109,7 @@ class SqlAlchemyFeedRepository:
             .options(selectinload(EventModel.tags))
             .where(
                 EventModel.event_id.in_(tagged_events),
-                EventModel.deleted_at.is_(None),
-                EventModel.event_status == PUBLISHED_EVENT_STATUS,
-                EventModel.starts_at > reference_time,
-                EventModel.event_privacy.in_(DISCOVERABLE_PRIVACIES),
-                # A block hides both sides from each other, so events created
-                # by someone the viewer blocked are dropped too.
-                ~block_exists_between(EventModel.event_creator_id, viewer_id),
+                *visible_events_filter(viewer_id, reference_time),
                 # The feed is for discovering: the viewer's own events and the
                 # ones they already confirmed live on their profile instead.
                 EventModel.event_creator_id != viewer_id,

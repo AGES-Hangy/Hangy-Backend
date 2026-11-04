@@ -16,6 +16,7 @@ from app.domain.enums import (
     EventPrivacyEnum,
     EventStatusEnum,
     ModerationStatusEnum,
+    ReportResolutionActionEnum,
     ReportStatusEnum,
     ReportTypeEnum,
     UserRoleEnum,
@@ -640,13 +641,13 @@ def test_repository_reads_explicit_report_number_and_resolver_when_set(
             reporter_id,
             reported_user_id=target_id,
             status=ReportStatusEnum.RESOLVED,
+            resolved_by_id=resolver_id,
+            resolved_at=resolved_at,
+            resolution_action=ReportResolutionActionEnum.BANNED,
         )
 
         monkeypatch.setattr(ReportModel, "report_number", 1042, raising=False)
         monkeypatch.setattr(ReportModel, "reported_at", reported_at, raising=False)
-        monkeypatch.setattr(ReportModel, "resolved_by_id", resolver_id, raising=False)
-        monkeypatch.setattr(ReportModel, "resolved_at", resolved_at, raising=False)
-        monkeypatch.setattr(ReportModel, "resolution_action", "BANNED", raising=False)
 
         repo = SqlAlchemyAdminReportsRepository(db)
         service = AdminReportsService(repository=repo)

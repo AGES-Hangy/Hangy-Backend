@@ -1,0 +1,190 @@
+"""AdminUserModerationService — single write path for ban/suspend/revert.
+
+Called from both the report-detail screen and the user record screen (hence
+the optional report_id on BAN/SUSPEND): see BanUserAction/SuspendUserAction/
+RevertUserModerationAction in app.domain.entities.
+"""
+
+__all__ = [
+    "AccountAlreadyBannedError",
+    "AccountNotModeratedError",
+    "AdminUserModerationService",
+    "ModeratedUserNotFoundError",
+    "ReportAlreadyResolvedError",
+    "ReportNotAboutUserError",
+    "ReportRepository",
+    "SelfModerationError",
+    "UserModerationRepository",
+]
+
+from datetime import UTC, datetime, timedelta
+from typing import Protocol
+from uuid import UUID
+
+from app.domain.entities import (
+    BanUserAction,
+    Report,
+    RevertUserModerationAction,
+    SuspendUserAction,
+    User,
+    UserModerationAction,
+)
+from app.domain.enums import (
+    AuditActionEnum,
+    AuditTargetTypeEnum,
+    ModerationStatusEnum,
+    ReportResolutionActionEnum,
+    ReportStatusEnum,
+)
+from app.domain.services.admin_reports import ReportNotFoundError
+from app.domain.services.admin_users import derive_moderation_status
+from app.domain.services.audit_logger import AuditLogger
+
+# Reports still open for action; anything else (RESOLVED, REJECTED) is final.
+_RESOLVABLE_REPORT_STATUSES = (ReportStatusEnum.PENDING, ReportStatusEnum.REVIEWED)
+
+
+class UserModerationRepository(Protocol):
+    def get_for_moderation(self, user_id: UUID) -> User | None: ...
+
+    def set_moderation(
+        self,
+        user_id: UUID,
+        *,
+        banned_at: datetime | None,
+        suspended_until: datetime | None,
+    ) -> User: ...
+
+    def commit(self) -> None: ...
+
+
+class ReportRepository(Protocol):
+    def get_by_id(self, report_id: UUID) -> Report | None: ...
+
+    def resolve(
+        self,
+        report_id: UUID,
+        *,
+        resolved_by_id: UUID,
+        resolved_at: datetime,
+        resolution_action: ReportResolutionActionEnum,
+    ) -> None: ...
+
+
+class ModeratedUserNotFoundError(Exception):
+    """Raised when user_id matches no active account."""
+
+
+class AccountAlreadyBannedError(Exception):
+    """Raised when SUSPEND is requested for an account that is already banned."""
+
+
+class AccountNotModeratedError(Exception):
+    """Raised when REVERT is requested for an account that is already active."""
+
+
+class ReportAlreadyResolvedError(Exception):
+    """Raised when the informed report_id is not PENDING or REVIEWED anymore."""
+
+
+class ReportNotAboutUserError(Exception):
+    """Raised when the informed report_id does not report the moderated user."""
+
+
+class SelfModerationError(Exception):
+    """Raised when an admin tries to moderate their own account."""
+
+
+def _is_moderated(
+    banned_at: datetime | None, suspended_until: datetime | None, now: datetime
+) -> bool:
+    return (
+        derive_moderation_status(banned_at, suspended_until, now)
+        != ModerationStatusEnum.ACTIVE
+    )
+
+
+class AdminUserModerationService:
+    def __init__(
+        self,
+        user_repository: UserModerationRepository,
+        report_repository: ReportRepository,
+        audit_logger: AuditLogger,
+    ) -> None:
+        self.user_repository = user_repository
+        self.report_repository = report_repository
+        self.audit_logger = audit_logger
+
+    def apply_action(
+        self,
+        user_id: UUID,
+        action: UserModerationAction,
+        actor_id: UUID,
+        now: datetime | None = None,
+    ) -> User:
+        now = now or datetime.now(UTC)
+        if user_id == actor_id:
+            raise SelfModerationError
+        current = self.user_repository.get_for_moderation(user_id)
+        if current is None:
+            raise ModeratedUserNotFoundError
+
+        report_id = getattr(action, "report_id", None)
+        if report_id is not None:
+            self._check_report_resolvable(report_id, user_id)
+
+        if isinstance(action, BanUserAction):
+            # Banning an already banned account (e.g. to resolve another report)
+            # keeps the original ban date.
+            updated = self.user_repository.set_moderation(
+                user_id, banned_at=current.banned_at or now, suspended_until=None
+            )
+            audit_action = AuditActionEnum.USER_BANNED
+            resolution_action = ReportResolutionActionEnum.BANNED
+        elif isinstance(action, SuspendUserAction):
+            if current.banned_at is not None:
+                raise AccountAlreadyBannedError
+            updated = self.user_repository.set_moderation(
+                user_id,
+                banned_at=None,
+                suspended_until=now + timedelta(days=action.duration_days),
+            )
+            audit_action = AuditActionEnum.USER_SUSPENDED
+            resolution_action = ReportResolutionActionEnum.SUSPENDED
+        else:
+            assert isinstance(action, RevertUserModerationAction)
+            if not _is_moderated(current.banned_at, current.suspended_until, now):
+                raise AccountNotModeratedError
+            updated = self.user_repository.set_moderation(
+                user_id, banned_at=None, suspended_until=None
+            )
+            audit_action = AuditActionEnum.USER_REVERTED
+            resolution_action = None
+
+        if report_id is not None and resolution_action is not None:
+            self.report_repository.resolve(
+                report_id,
+                resolved_by_id=actor_id,
+                resolved_at=now,
+                resolution_action=resolution_action,
+            )
+
+        self.audit_logger.record(
+            actor_id=actor_id,
+            action=audit_action,
+            target_type=AuditTargetTypeEnum.USER,
+            target_id=user_id,
+        )
+        # The audit write is a savepoint (see AuditLogger): it never fails this
+        # commit even when it was itself rolled back.
+        self.user_repository.commit()
+        return updated
+
+    def _check_report_resolvable(self, report_id: UUID, user_id: UUID) -> None:
+        report = self.report_repository.get_by_id(report_id)
+        if report is None:
+            raise ReportNotFoundError
+        if report.reported_user_id != user_id:
+            raise ReportNotAboutUserError
+        if report.status not in _RESOLVABLE_REPORT_STATUSES:
+            raise ReportAlreadyResolvedError
