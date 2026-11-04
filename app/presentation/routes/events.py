@@ -1,3 +1,4 @@
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -36,14 +37,17 @@ from app.domain.services import (
     InvalidCoverPhotoUrlError,
     InvalidEventCoordinatesError,
     InvalidNearbyCoordinatesError,
+    InvalidNearbyDateRangeError,
     InvalidNearbyLimitError,
     InvalidParticipantStatusTransitionError,
     NearbyRadiusExceededError,
     NearbyService,
+    NearbyTagNotFoundError,
     NotEventOrganizerError,
     NotificationDispatcher,
     OnlyPersonalAccountsCanFavoriteError,
     TooManyEventTagsError,
+    TooManyNearbyTagsError,
 )
 from app.domain.services.event_participant import (
     DEFAULT_PARTICIPANTS_LIMIT,
@@ -306,11 +310,14 @@ def create_event(
     description=(
         "Retorna eventos publicados e futuros dentro do raio informado, "
         "ordenados pela distancia ate o centro da busca. Eventos INVITE_ONLY "
-        "nao sao descobriveis neste endpoint."
+        "nao sao descobriveis neste endpoint. `starts_from` e `starts_until` "
+        "limitam o inicio do evento (inclusivo; sem fuso, vale UTC). Com "
+        "`tag_ids`, entra o evento que tiver ao menos uma das tags; uma tag "
+        "macro tambem casa com as subtags dela."
     ),
     responses={
         status.HTTP_400_BAD_REQUEST: {
-            "description": "Coordenadas, raio ou limite invalidos.",
+            "description": "Coordenadas, raio, limite ou filtros invalidos.",
             "content": {
                 "application/json": {
                     "examples": {
@@ -320,12 +327,20 @@ def create_event(
                         "radius_exceeded": {
                             "value": {"detail": "Radius exceeds maximum"}
                         },
+                        "invalid_date_range": {
+                            "value": {"detail": "Invalid date range"}
+                        },
+                        "too_many_tags": {"value": {"detail": "Too many tags"}},
                     }
                 }
             },
         },
         status.HTTP_401_UNAUTHORIZED: {
             "description": "Token de acesso ausente ou invalido."
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Uma das tags de `tag_ids` nao existe.",
+            "content": {"application/json": {"example": {"detail": "Tag not found"}}},
         },
     },
 )
@@ -334,6 +349,18 @@ def get_nearby_events(
     longitude: float,
     radius_m: int,
     limit: int = DEFAULT_NEARBY_LIMIT,
+    starts_from: Annotated[
+        datetime | None,
+        Query(description="Inicio minimo do evento (ISO 8601, inclusivo)."),
+    ] = None,
+    starts_until: Annotated[
+        datetime | None,
+        Query(description="Inicio maximo do evento (ISO 8601, inclusivo)."),
+    ] = None,
+    tag_ids: Annotated[
+        list[UUID] | None,
+        Query(description="Tags macro ou micro; basta o evento ter uma delas."),
+    ] = None,
     *,
     token: Annotated[str, Depends(get_access_token)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
@@ -353,6 +380,9 @@ def get_nearby_events(
             longitude=longitude,
             radius_m=radius_m,
             limit=limit,
+            starts_from=starts_from,
+            starts_until=starts_until,
+            tag_ids=tag_ids or (),
         )
     except InvalidNearbyCoordinatesError as error:
         raise HTTPException(
@@ -368,6 +398,21 @@ def get_nearby_events(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid limit",
+        ) from error
+    except InvalidNearbyDateRangeError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid date range",
+        ) from error
+    except TooManyNearbyTagsError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Too many tags",
+        ) from error
+    except NearbyTagNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tag not found",
         ) from error
     return NearbyEventAssembler.to_dto(events)
 

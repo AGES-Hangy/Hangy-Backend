@@ -21,6 +21,7 @@ from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import (
     EventModel,
     EventParticipantModel,
+    TagModel,
     UserBlockModel,
     UserModel,
 )
@@ -581,3 +582,208 @@ def test_nearby_rejects_limit_out_of_bounds(
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Invalid limit"}
+
+
+def _add_tag(db: Session, name: str, parent: TagModel | None = None) -> TagModel:
+    tag = TagModel(tag_id=uuid4(), tag_name=name, parent=parent)
+    db.add(tag)
+    return tag
+
+
+def _nearby_ids(client: TestClient, viewer_id, **filters) -> list[str]:
+    response = client.get(
+        "/events/nearby",
+        params={"latitude": 0, "longitude": 0, "radius_m": 10_000, **filters},
+        headers={"Authorization": f"Bearer {_token_for(viewer_id)}"},
+    )
+    assert response.status_code == 200, response.json()
+    return [item["event_id"] for item in response.json()["items"]]
+
+
+def test_nearby_filters_by_start_date(
+    events_client: tuple[TestClient, object],
+) -> None:
+    client, session_factory = events_client
+    viewer_id = uuid4()
+    organizer_id = uuid4()
+    now = datetime.now(UTC).replace(microsecond=0)
+    with session_factory() as db:
+        _add_user(db, viewer_id)
+        _add_user(db, organizer_id)
+        tomorrow = _add_event(db, organizer_id, 0.01)
+        tomorrow.starts_at = now + timedelta(days=1)
+        next_week = _add_event(db, organizer_id, 0.02)
+        next_week.starts_at = now + timedelta(days=7)
+        db.commit()
+        tomorrow_id = str(tomorrow.event_id)
+        next_week_id = str(next_week.event_id)
+
+    boundary = (now + timedelta(days=1)).isoformat()
+    assert _nearby_ids(client, viewer_id) == [tomorrow_id, next_week_id]
+    assert _nearby_ids(
+        client, viewer_id, starts_from=(now + timedelta(days=2)).isoformat()
+    ) == [next_week_id]
+    assert _nearby_ids(client, viewer_id, starts_until=boundary) == [tomorrow_id]
+    naive_boundary = (now + timedelta(days=1)).replace(tzinfo=None).isoformat()
+    assert _nearby_ids(client, viewer_id, starts_until=naive_boundary) == [tomorrow_id]
+    assert _nearby_ids(
+        client, viewer_id, starts_from=boundary, starts_until=boundary
+    ) == [tomorrow_id]
+    assert (
+        _nearby_ids(
+            client,
+            viewer_id,
+            starts_from=(now + timedelta(days=2)).isoformat(),
+            starts_until=(now + timedelta(days=3)).isoformat(),
+        )
+        == []
+    )
+
+
+def test_nearby_date_filter_respects_offset(
+    events_client: tuple[TestClient, object],
+) -> None:
+    client, session_factory = events_client
+    viewer_id = uuid4()
+    organizer_id = uuid4()
+    starts_at = (datetime.now(UTC) + timedelta(days=2)).replace(
+        hour=1, minute=0, second=0, microsecond=0
+    )
+    with session_factory() as db:
+        _add_user(db, viewer_id)
+        _add_user(db, organizer_id)
+        event = _add_event(db, organizer_id, 0.01)
+        event.starts_at = starts_at
+        db.commit()
+        event_id = str(event.event_id)
+
+    # 01:00 UTC is still the previous day at UTC-3.
+    previous_day = (starts_at - timedelta(days=1)).date()
+    assert _nearby_ids(
+        client,
+        viewer_id,
+        starts_from=f"{previous_day}T00:00:00-03:00",
+        starts_until=f"{previous_day}T23:59:59.999-03:00",
+    ) == [event_id]
+    assert (
+        _nearby_ids(
+            client,
+            viewer_id,
+            starts_from=f"{starts_at.date()}T00:00:00-03:00",
+            starts_until=f"{starts_at.date()}T23:59:59.999-03:00",
+        )
+        == []
+    )
+
+
+def test_nearby_filters_by_tags(
+    events_client: tuple[TestClient, object],
+) -> None:
+    client, session_factory = events_client
+    viewer_id = uuid4()
+    organizer_id = uuid4()
+    with session_factory() as db:
+        _add_user(db, viewer_id)
+        _add_user(db, organizer_id)
+        music = _add_tag(db, "Musica")
+        rock = _add_tag(db, "Rock", parent=music)
+        sports = _add_tag(db, "Esportes")
+        football = _add_tag(db, "Futebol", parent=sports)
+        rock_event = _add_event(db, organizer_id, 0.01)
+        rock_event.tags = [rock]
+        music_event = _add_event(db, organizer_id, 0.02)
+        music_event.tags = [music]
+        football_event = _add_event(db, organizer_id, 0.03)
+        football_event.tags = [football]
+        untagged = _add_event(db, organizer_id, 0.04)
+        db.commit()
+        ids = {
+            "rock": str(rock_event.event_id),
+            "music": str(music_event.event_id),
+            "football": str(football_event.event_id),
+            "untagged": str(untagged.event_id),
+        }
+        tag_ids = {
+            "music": str(music.tag_id),
+            "rock": str(rock.tag_id),
+            "football": str(football.tag_id),
+        }
+
+    assert _nearby_ids(client, viewer_id, tag_ids=[tag_ids["rock"]]) == [ids["rock"]]
+    assert _nearby_ids(client, viewer_id, tag_ids=[tag_ids["music"]]) == [
+        ids["rock"],
+        ids["music"],
+    ]
+    assert _nearby_ids(
+        client, viewer_id, tag_ids=[tag_ids["rock"], tag_ids["football"]]
+    ) == [ids["rock"], ids["football"]]
+    assert _nearby_ids(client, viewer_id) == list(ids.values())
+
+
+def test_nearby_combines_date_and_tag_filters(
+    events_client: tuple[TestClient, object],
+) -> None:
+    client, session_factory = events_client
+    viewer_id = uuid4()
+    organizer_id = uuid4()
+    now = datetime.now(UTC)
+    with session_factory() as db:
+        _add_user(db, viewer_id)
+        _add_user(db, organizer_id)
+        music = _add_tag(db, "Musica")
+        soon = _add_event(db, organizer_id, 0.01)
+        soon.tags = [music]
+        later = _add_event(db, organizer_id, 0.02)
+        later.tags = [music]
+        later.starts_at = now + timedelta(days=10)
+        _add_event(db, organizer_id, 0.03)  # soon, without the tag
+        db.commit()
+        soon_id = str(soon.event_id)
+        music_id = str(music.tag_id)
+
+    assert _nearby_ids(
+        client,
+        viewer_id,
+        tag_ids=[music_id],
+        starts_until=(now + timedelta(days=2)).isoformat(),
+    ) == [soon_id]
+
+
+def test_nearby_rejects_invalid_filters(
+    events_client: tuple[TestClient, object],
+) -> None:
+    client, session_factory = events_client
+    viewer_id = uuid4()
+    with session_factory() as db:
+        _add_user(db, viewer_id)
+        db.commit()
+
+    headers = {"Authorization": f"Bearer {_token_for(viewer_id)}"}
+    base = {"latitude": 0, "longitude": 0, "radius_m": 100}
+    now = datetime.now(UTC)
+    inverted_range = client.get(
+        "/events/nearby",
+        params={
+            **base,
+            "starts_from": (now + timedelta(days=2)).isoformat(),
+            "starts_until": (now + timedelta(days=1)).isoformat(),
+        },
+        headers=headers,
+    )
+    unknown_tag = client.get(
+        "/events/nearby",
+        params={**base, "tag_ids": [str(uuid4())]},
+        headers=headers,
+    )
+    too_many_tags = client.get(
+        "/events/nearby",
+        params={**base, "tag_ids": [str(uuid4()) for _ in range(51)]},
+        headers=headers,
+    )
+
+    assert inverted_range.status_code == 400
+    assert inverted_range.json() == {"detail": "Invalid date range"}
+    assert unknown_tag.status_code == 404
+    assert unknown_tag.json() == {"detail": "Tag not found"}
+    assert too_many_tags.status_code == 400
+    assert too_many_tags.json() == {"detail": "Too many tags"}
