@@ -4,8 +4,17 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, func
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Identity,
+    Integer,
+    String,
+    event,
+    func,
+    select,
+)
+from sqlalchemy.orm import Mapped, mapped_column, object_session, relationship
 
 from app.domain.enums import (
     ReportResolutionActionEnum,
@@ -24,6 +33,7 @@ class ReportModel(Base):
     __tablename__ = "report"
 
     report_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    report_number: Mapped[int] = mapped_column(Integer, Identity(), unique=True)
     report_creator_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("user.user_id", ondelete="CASCADE")
     )
@@ -39,6 +49,10 @@ class ReportModel(Base):
         enum_column(ReportStatusEnum), default=ReportStatusEnum.PENDING
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When the report was opened; updated_at moves on every status change.
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -63,3 +77,18 @@ class ReportModel(Base):
     reported_event: Mapped[EventModel | None] = relationship(
         back_populates="reports", foreign_keys=[reported_event_id]
     )
+
+
+@event.listens_for(ReportModel, "before_insert")
+def _fill_report_number(mapper, connection, target: ReportModel) -> None:
+    # Postgres numbers it through Identity; SQLite (tests) does not do that for
+    # a column that is not the primary key.
+    if target.report_number is not None or connection.dialect.name != "sqlite":
+        return
+    stored = connection.scalar(select(func.max(ReportModel.report_number))) or 0
+    pending = (
+        obj.report_number or 0
+        for obj in object_session(target).new
+        if isinstance(obj, ReportModel)
+    )
+    target.report_number = max(stored, *pending) + 1

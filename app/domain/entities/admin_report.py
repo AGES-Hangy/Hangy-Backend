@@ -14,9 +14,11 @@ __all__ = [
     "AdminReportDetail",
     "AdminReportDetailRecord",
     "AdminReportPreviousCounts",
+    "AdminReportQueueItem",
     "AdminReportResolution",
     "AdminReportTarget",
     "AdminReportUserSummary",
+    "AdminReportsPage",
     "ReportTargetType",
 ]
 
@@ -95,3 +97,23 @@ class AdminReportDetail:
     reported_at: datetime
     previous_reports: AdminReportPreviousCounts
     resolution: AdminReportResolution | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AdminReportQueueItem:
+    report_id: UUID
+    report_number: int
+    report_type: ReportTypeEnum
+    status: ReportStatusEnum
+    description: str
+    opened_at: datetime
+    report_count: int
+    reported_user_name: str | None
+    reported_user_type: UserTypeEnum | None
+    reported_event_title: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class AdminReportsPage:
+    items: tuple[AdminReportQueueItem, ...]
+    next_cursor: str | None
