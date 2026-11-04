@@ -18,6 +18,7 @@ from app.presentation.routes import (
     notifications_router,
     profile_photo_router,
     search_router,
+    reports_router,
     tags_router,
     terms_router,
     uploads_router,
