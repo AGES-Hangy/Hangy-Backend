@@ -1,4 +1,5 @@
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BeforeValidator
@@ -6,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.assemblers import (
     AdminDashboardAssembler,
+    AdminReportAssembler,
     AuditLogAssembler,
     TagAssembler,
 )
@@ -13,23 +15,29 @@ from app.domain.entities import User
 from app.domain.enums import AuditTargetTypeEnum
 from app.domain.services import (
     AdminDashboardService,
+    AdminReportsService,
     AdminTagsService,
     AuditLogger,
     AuditLogService,
     InvalidPaginationError,
     ParentTagNotCategoryError,
     ParentTagNotFoundError,
+    ReportNotFoundError,
     TagNameAlreadyExistsError,
 )
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.admin_dashboard import (
     SqlAlchemyAdminDashboardRepository,
 )
+from app.infrastructure.repository.admin_report import (
+    SqlAlchemyAdminReportsRepository,
+)
 from app.infrastructure.repository.audit_log import SqlAlchemyAuditLogRepository
 from app.infrastructure.repository.tag import SqlAlchemyTagRepository
 from app.presentation.dependencies.admin import require_admin
 from app.presentation.dtos import (
     AdminDashboardOutput,
+    AdminReportDetailOutput,
     AdminTagOutput,
     AuditLogPaginatedResponse,
     CreateAdminTagInput,
@@ -65,6 +73,12 @@ def get_audit_logger(db: Annotated[Session, Depends(get_db)]) -> AuditLogger:
     """Shared factory for other admin routes (ban, suspend, report, tag CRUD)."""
     repository = SqlAlchemyAuditLogRepository(db)
     return AuditLogger(repository=repository, label_resolver=repository)
+
+
+def get_admin_reports_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminReportsService:
+    return AdminReportsService(repository=SqlAlchemyAdminReportsRepository(db))
 
 
 def get_admin_tags_service(
@@ -113,6 +127,56 @@ def read_admin_dashboard(
 ) -> AdminDashboardOutput:
     dashboard = dashboard_service.get_dashboard()
     return AdminDashboardAssembler.to_dto(dashboard)
+
+
+@router.get(
+    "/admin/reports/{report_id}",
+    response_model=AdminReportDetailOutput,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_admin)],
+    summary="Detalhe de uma denúncia",
+    description=(
+        "Retorna o detalhe completo de uma denúncia: conta responsável pelo alvo "
+        "(usuário, estabelecimento ou organizador do evento denunciado), motivo, "
+        "relato de quem denunciou, histórico de denúncias anteriores fechadas "
+        "contra o mesmo alvo e, quando já resolvida, os dados da resolução. "
+        "Exige Bearer token de um usuário com `role = ADMIN`."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Usuário autenticado, mas `role != ADMIN`.",
+            "content": {
+                "application/json": {"example": {"detail": "Admin access required"}}
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Denúncia não encontrada.",
+            "content": {
+                "application/json": {"example": {"detail": "Report not found"}}
+            },
+        },
+    },
+)
+def read_admin_report_detail(
+    report_id: UUID,
+    reports_service: Annotated[AdminReportsService, Depends(get_admin_reports_service)],
+) -> AdminReportDetailOutput:
+    try:
+        detail = reports_service.get_report_detail(report_id)
+    except ReportNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found",
+        ) from error
+    return AdminReportAssembler.to_detail_dto(detail)
 
 
 @router.post(
