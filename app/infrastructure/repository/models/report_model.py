@@ -4,11 +4,6 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, func, text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-
-from app.domain.entities.report import REPORT_DESCRIPTION_MAX_LENGTH
-from app.domain.enums import ReportStatusEnum, ReportTypeEnum
 from sqlalchemy import (
     CheckConstraint,
     DateTime,
@@ -24,6 +19,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, object_session, relationship
 
+from app.domain.entities.report import REPORT_DESCRIPTION_MAX_LENGTH
 from app.domain.enums import (
     ReportResolutionActionEnum,
     ReportStatusEnum,
