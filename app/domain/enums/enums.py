@@ -108,6 +108,7 @@ class TagTypeEnum(StrEnum):
 
 class AuditActionEnum(StrEnum):
     TAG_CREATED = "TAG_CREATED"
+    TAG_DELETED = "TAG_DELETED"
     USER_BANNED = "USER_BANNED"
     USER_SUSPENDED = "USER_SUSPENDED"
     USER_REVERTED = "USER_REVERTED"

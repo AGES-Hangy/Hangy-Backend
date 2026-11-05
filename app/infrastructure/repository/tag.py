@@ -1,11 +1,11 @@
 from uuid import UUID
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.domain.entities import Tag
 from app.domain.enums import TagTypeEnum
-from app.infrastructure.repository.models import TagModel
+from app.infrastructure.repository.models import TagModel, event_tag, user_tag
 
 
 class SqlAlchemyTagRepository:
@@ -59,6 +59,36 @@ class SqlAlchemyTagRepository:
         # transaction (see SqlAlchemyAuditRepository.add).
         self.db.flush()
         return self._to_entity(model)
+
+    def count_children(self, tag_id: UUID) -> int:
+        statement = (
+            select(func.count())
+            .select_from(TagModel)
+            .where(TagModel.tag_parent_id == tag_id)
+        )
+        return self.db.scalar(statement) or 0
+
+    def count_usage(self, tag_id: UUID) -> int:
+        user_count = self.db.scalar(
+            select(func.count())
+            .select_from(user_tag)
+            .where(user_tag.c.tag_id == tag_id)
+        )
+        event_count = self.db.scalar(
+            select(func.count())
+            .select_from(event_tag)
+            .where(event_tag.c.tag_id == tag_id)
+        )
+        return (user_count or 0) + (event_count or 0)
+
+    def delete(self, tag_id: UUID) -> None:
+        # Explicitly remove links as well as relying on ON DELETE CASCADE. This
+        # keeps the behavior correct in SQLite tests and other DB configurations
+        # where foreign-key cascades may not be enabled.
+        self.db.execute(delete(user_tag).where(user_tag.c.tag_id == tag_id))
+        self.db.execute(delete(event_tag).where(event_tag.c.tag_id == tag_id))
+        self.db.execute(delete(TagModel).where(TagModel.tag_id == tag_id))
+        self.db.flush()
 
     def _list(self, statement: Select[tuple[TagModel]]) -> list[Tag]:
         models = self.db.scalars(statement.order_by(TagModel.tag_name)).all()

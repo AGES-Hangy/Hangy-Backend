@@ -20,6 +20,7 @@ class SqlAlchemyAuditRepository:
                 actor_id=event.actor_id,
                 target_id=event.target_id,
                 created_at=event.created_at,
+                extra_metadata=event.metadata,
             )
         )
         try:
