@@ -7,6 +7,13 @@ from app.domain.entities import REPORT_DESCRIPTION_MAX_LENGTH
 from app.domain.enums import ReportStatusEnum, ReportTypeEnum
 
 
+class ReportReasonOutput(BaseModel):
+    """A report reason as returned to API clients."""
+
+    code: ReportTypeEnum
+    label: str
+
+
 class ReportCreateInput(BaseModel):
     report_type: str = Field(max_length=50)
     reported_user_id: UUID | None = None

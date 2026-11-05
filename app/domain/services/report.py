@@ -1,12 +1,52 @@
+__all__ = [
+    "ExactlyOneReportTargetError",
+    "InvalidReportReasonError",
+    "ReportAlreadyUnderReviewError",
+    "ReportEventVisibility",
+    "ReportReasonsService",
+    "ReportRepository",
+    "ReportService",
+    "ReportTargetNotFoundError",
+]
+
 from typing import Protocol
 from uuid import UUID
 
-from app.domain.entities import EventDetails, NewReport, Report
+from app.domain.entities import EventDetails, NewReport, Report, ReportReason
+from app.domain.enums import ReportTargetEnum, ReportTypeEnum
 from app.domain.services.auth import UserRepository
 from app.domain.services.event_details import (
     EventCancelledError,
     EventDetailsNotFoundError,
 )
+
+# Motivos exibidos na tela de denuncia, por tipo de alvo (ordem = ordem da lista).
+# Estabelecimento e um USER, entao usa a lista de USER.
+_REASONS_BY_TARGET: dict[ReportTargetEnum, tuple[ReportReason, ...]] = {
+    ReportTargetEnum.USER: (
+        ReportReason(ReportTypeEnum.HARASSMENT, "Assédio ou intimidação"),
+        ReportReason(ReportTypeEnum.SPAM, "Spam ou golpe"),
+        ReportReason(ReportTypeEnum.HATE_SPEECH, "Discurso de ódio"),
+        ReportReason(ReportTypeEnum.FAKE_PROFILE, "Perfil falso"),
+        ReportReason(ReportTypeEnum.INAPPROPRIATE_CONTENT, "Conteúdo inapropriado"),
+        ReportReason(ReportTypeEnum.SAFETY_CONCERN, "Violação de segurança"),
+        ReportReason(ReportTypeEnum.OTHER, "Outro"),
+    ),
+    ReportTargetEnum.EVENT: (
+        ReportReason(ReportTypeEnum.SPAM, "Spam ou golpe"),
+        ReportReason(ReportTypeEnum.INAPPROPRIATE_CONTENT, "Conteúdo inapropriado"),
+        ReportReason(ReportTypeEnum.HATE_SPEECH, "Discurso de ódio"),
+        ReportReason(ReportTypeEnum.SAFETY_CONCERN, "Violação de segurança"),
+        ReportReason(ReportTypeEnum.OTHER, "Outro"),
+    ),
+}
+
+
+class ReportReasonsService:
+    """List the report reasons available for a given kind of target."""
+
+    def get_reasons(self, target: ReportTargetEnum) -> list[ReportReason]:
+        return list(_REASONS_BY_TARGET[target])
 
 
 class ReportRepository(Protocol):

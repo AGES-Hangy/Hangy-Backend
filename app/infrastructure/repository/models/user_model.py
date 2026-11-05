@@ -90,6 +90,13 @@ class UserModel(Base):
             postgresql_where=text("deleted_at IS NULL"),
             sqlite_where=text("deleted_at IS NULL"),
         ),
+        # Supports substring search on personal and business display names.
+        Index(
+            "idx_user_name_trgm",
+            "name",
+            postgresql_using="gin",
+            postgresql_ops={"name": "gin_trgm_ops"},
+        ),
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -123,6 +130,10 @@ class UserModel(Base):
         onupdate=func.now(),
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # A ban is definitive and does not stack with a suspension: banned_at
+    # being set always wins over suspended_until (see derive_moderation_status).
+    banned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    suspended_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     person_profile: Mapped[PersonProfileModel | None] = relationship(
         back_populates="user", passive_deletes=True

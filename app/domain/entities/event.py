@@ -87,3 +87,22 @@ class EventLocationView:
     # Only set for an approximate location: the area drawn instead of a pin.
     radius_m: int | None
     label: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class EventVisibilityView:
+    """How an event is rendered in listings for a specific viewer."""
+
+    is_preview: bool
+    location: EventLocationView
+    description: str | None
+    participants_count: int | None
+
+
+__all__ = [
+    "Event",
+    "EventLocationView",
+    "EventUpdate",
+    "EventVisibilityView",
+    "NewEvent",
+]

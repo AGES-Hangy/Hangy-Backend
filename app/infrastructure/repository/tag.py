@@ -1,11 +1,11 @@
 from uuid import UUID
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.domain.entities import Tag
 from app.domain.enums import TagTypeEnum
-from app.infrastructure.repository.models import TagModel
+from app.infrastructure.repository.models import TagModel, event_tag, user_tag
 
 
 class SqlAlchemyTagRepository:
@@ -41,6 +41,54 @@ class SqlAlchemyTagRepository:
             .order_by(TagModel.tag_name)
         ).all()
         return [self._to_tree_entity(macro) for macro in macros]
+
+    def name_exists(self, name: str, parent_id: UUID | None) -> bool:
+        """Whether a tag with this name already exists at the given level."""
+        level = (
+            TagModel.tag_parent_id.is_(None)
+            if parent_id is None
+            else TagModel.tag_parent_id == parent_id
+        )
+        statement = select(TagModel.tag_id).where(TagModel.tag_name == name, level)
+        return self.db.scalar(statement.limit(1)) is not None
+
+    def create(self, tag: Tag) -> Tag:
+        model = TagModel(tag_name=tag.tag_name, tag_parent_id=tag.tag_parent_id)
+        self.db.add(model)
+        # Flush only: the caller commits, so the tag and its audit row are one
+        # transaction (see SqlAlchemyAuditRepository.add).
+        self.db.flush()
+        return self._to_entity(model)
+
+    def count_children(self, tag_id: UUID) -> int:
+        statement = (
+            select(func.count())
+            .select_from(TagModel)
+            .where(TagModel.tag_parent_id == tag_id)
+        )
+        return self.db.scalar(statement) or 0
+
+    def count_usage(self, tag_id: UUID) -> int:
+        user_count = self.db.scalar(
+            select(func.count())
+            .select_from(user_tag)
+            .where(user_tag.c.tag_id == tag_id)
+        )
+        event_count = self.db.scalar(
+            select(func.count())
+            .select_from(event_tag)
+            .where(event_tag.c.tag_id == tag_id)
+        )
+        return (user_count or 0) + (event_count or 0)
+
+    def delete(self, tag_id: UUID) -> None:
+        # Explicitly remove links as well as relying on ON DELETE CASCADE. This
+        # keeps the behavior correct in SQLite tests and other DB configurations
+        # where foreign-key cascades may not be enabled.
+        self.db.execute(delete(user_tag).where(user_tag.c.tag_id == tag_id))
+        self.db.execute(delete(event_tag).where(event_tag.c.tag_id == tag_id))
+        self.db.execute(delete(TagModel).where(TagModel.tag_id == tag_id))
+        self.db.flush()
 
     def _list(self, statement: Select[tuple[TagModel]]) -> list[Tag]:
         models = self.db.scalars(statement.order_by(TagModel.tag_name)).all()

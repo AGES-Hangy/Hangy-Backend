@@ -1,8 +1,20 @@
-from app.domain.entities import Report
-from app.presentation.dtos import ReportCreatedOutput
+__all__ = ["ReportAssembler"]
+
+from app.domain.entities import Report, ReportReason
+from app.presentation.dtos import ReportCreatedOutput, ReportReasonOutput
 
 
 class ReportAssembler:
+    """Build report response DTOs from domain entities."""
+
+    @staticmethod
+    def to_reason_dto(reason: ReportReason) -> ReportReasonOutput:
+        return ReportReasonOutput(code=reason.code, label=reason.label)
+
+    @staticmethod
+    def to_reason_dtos(reasons: list[ReportReason]) -> list[ReportReasonOutput]:
+        return [ReportAssembler.to_reason_dto(reason) for reason in reasons]
+
     @staticmethod
     def to_created_dto(report: Report) -> ReportCreatedOutput:
         assert report.report_id is not None

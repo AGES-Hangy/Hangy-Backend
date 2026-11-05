@@ -11,6 +11,12 @@ class UserRoleEnum(StrEnum):
     ADMIN = "ADMIN"
 
 
+class ModerationStatusEnum(StrEnum):
+    ACTIVE = "ACTIVE"
+    SUSPENDED = "SUSPENDED"
+    BANNED = "BANNED"
+
+
 class EventPrivacyEnum(StrEnum):
     PUBLIC = "PUBLIC"
     PRIVATE = "PRIVATE"
@@ -75,6 +81,12 @@ class ReportStatusEnum(StrEnum):
     REJECTED = "REJECTED"
 
 
+class ReportResolutionActionEnum(StrEnum):
+    BANNED = "BANNED"
+    SUSPENDED = "SUSPENDED"
+    ARCHIVED = "ARCHIVED"
+
+
 class NotificationTypeEnum(StrEnum):
     CONNECTION_REQUEST = "CONNECTION_REQUEST"
     CONNECTION_ACCEPTED = "CONNECTION_ACCEPTED"
@@ -92,6 +104,14 @@ class NotificationTypeEnum(StrEnum):
 class TagTypeEnum(StrEnum):
     MACRO = "MACRO"
     MICRO = "MICRO"
+
+
+class AuditActionEnum(StrEnum):
+    TAG_CREATED = "TAG_CREATED"
+    TAG_DELETED = "TAG_DELETED"
+    USER_BANNED = "USER_BANNED"
+    USER_SUSPENDED = "USER_SUSPENDED"
+    USER_REVERTED = "USER_REVERTED"
 
 
 class DevicePlatformEnum(StrEnum):
