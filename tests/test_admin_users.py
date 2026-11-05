@@ -182,7 +182,7 @@ def test_admin_lists_users_with_counts_and_derived_status(
         add_event(db, rafael)
         add_event(db, rafael, deleted_at=NOW)
         bar_event = add_event(db, bar)
-        
+
         rep1 = add_user(
             db, name="Rep 1", created_at=NOW - timedelta(days=3), deleted_at=NOW
         )
