@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone, UTC
 from uuid import UUID
 
 from sqlalchemy import select
@@ -87,7 +87,7 @@ class SqlAlchemyReportRepository:
             report_creator_id=model.report_creator_id,
             report_type=model.report_type,
             description=model.description,
-            created_at=model.created_at,
+            created_at=getattr(model, "created_at", None) or datetime.now(UTC),
             updated_at=model.updated_at,
             status=model.status,
             reported_user_id=model.reported_user_id,

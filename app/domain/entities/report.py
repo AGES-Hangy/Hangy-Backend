@@ -1,4 +1,9 @@
-__all__ = ["Report", "ReportReason"]
+__all__ = [
+    "REPORT_DESCRIPTION_MAX_LENGTH",
+    "NewReport",
+    "Report",
+    "ReportReason",
+]
 
 from dataclasses import dataclass
 from datetime import datetime
