@@ -78,9 +78,6 @@ class ReportModel(Base):
     status: Mapped[ReportStatusEnum] = mapped_column(
         enum_column(ReportStatusEnum), default=ReportStatusEnum.PENDING
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # When the report was opened; updated_at moves on every status change.
     created_at: Mapped[datetime] = mapped_column(
