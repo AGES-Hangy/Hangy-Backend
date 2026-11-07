@@ -2,7 +2,6 @@ __all__ = [
     "AdminTagNotFoundError",
     "AdminTagRepository",
     "AdminTagsService",
-    "AuditRepository",
     "CategoryHasTagsError",
     "ParentTagNotCategoryError",
     "ParentTagNotFoundError",
@@ -10,12 +9,12 @@ __all__ = [
     "TagNameAlreadyExistsError",
 ]
 
-from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
-from app.domain.entities import AuditEvent, Tag
-from app.domain.enums import AuditActionEnum, TagTypeEnum
+from app.domain.entities import Tag
+from app.domain.enums import AuditActionEnum, AuditTargetTypeEnum, TagTypeEnum
+from app.domain.services.audit_logger import AuditLogger
 
 
 class AdminTagRepository(Protocol):
@@ -31,9 +30,7 @@ class AdminTagRepository(Protocol):
 
     def delete(self, tag_id: UUID) -> None: ...
 
-
-class AuditRepository(Protocol):
-    def add(self, event: AuditEvent) -> None: ...
+    def commit(self) -> None: ...
 
 
 class ParentTagNotFoundError(Exception):
@@ -68,12 +65,12 @@ class AdminTagsService:
     """Business rules for the admin tag management endpoints."""
 
     def __init__(
-        self, repository: AdminTagRepository, audit_repository: AuditRepository
+        self, repository: AdminTagRepository, audit_logger: AuditLogger
     ) -> None:
         self.repository = repository
-        self.audit_repository = audit_repository
+        self.audit_logger = audit_logger
 
-    def create_tag(self, tag: Tag, actor_id: UUID, now: datetime | None = None) -> Tag:
+    def create_tag(self, tag: Tag, actor_id: UUID) -> Tag:
         """Create a category (no parent) or a micro tag inside a category.
 
         Records a TAG_CREATED audit event with the admin who created it and when.
@@ -91,14 +88,15 @@ class AdminTagsService:
             raise TagNameAlreadyExistsError
 
         created = self.repository.create(tag)
-        self.audit_repository.add(
-            AuditEvent(
-                action=AuditActionEnum.TAG_CREATED,
-                actor_id=actor_id,
-                target_id=created.tag_id,
-                created_at=now or datetime.now(UTC),
-            )
+        self.audit_logger.record(
+            actor_id=actor_id,
+            action=AuditActionEnum.TAG_CREATED,
+            target_type=AuditTargetTypeEnum.TAG,
+            target_id=created.tag_id,
         )
+        # The audit write is a savepoint (see AuditLogger): it never fails this
+        # commit even when it was itself rolled back.
+        self.repository.commit()
         return created
 
     def delete_tag(
@@ -107,7 +105,6 @@ class AdminTagsService:
         actor_id: UUID,
         *,
         force: bool = False,
-        now: datetime | None = None,
     ) -> None:
         """Delete a tag while protecting non-empty categories and active links."""
         tag = self.repository.get_by_id(tag_id)
@@ -124,13 +121,15 @@ class AdminTagsService:
         if usage_count > 0 and not force:
             raise TagInUseError(usage_count)
 
-        self.repository.delete(tag_id)
-        self.audit_repository.add(
-            AuditEvent(
-                action=AuditActionEnum.TAG_DELETED,
-                actor_id=actor_id,
-                target_id=tag_id,
-                created_at=now or datetime.now(UTC),
-                metadata={"name": tag.tag_name, "usage_count": usage_count},
-            )
+        # Recorded before the delete so the snapshot label still finds the tag
+        # name. Nothing is committed until the commit below, so a failed delete
+        # leaves no audit row behind.
+        self.audit_logger.record(
+            actor_id=actor_id,
+            action=AuditActionEnum.TAG_DELETED,
+            target_type=AuditTargetTypeEnum.TAG,
+            target_id=tag_id,
+            metadata={"name": tag.tag_name, "usage_count": usage_count},
         )
+        self.repository.delete(tag_id)
+        self.repository.commit()

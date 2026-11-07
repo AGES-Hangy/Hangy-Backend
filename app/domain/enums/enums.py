@@ -87,6 +87,22 @@ class ReportResolutionActionEnum(StrEnum):
     ARCHIVED = "ARCHIVED"
 
 
+class AuditActionEnum(StrEnum):
+    USER_BANNED = "USER_BANNED"
+    USER_SUSPENDED = "USER_SUSPENDED"
+    USER_REVERTED = "USER_REVERTED"
+    REPORT_ARCHIVED = "REPORT_ARCHIVED"
+    TAG_CREATED = "TAG_CREATED"
+    TAG_UPDATED = "TAG_UPDATED"
+    TAG_DELETED = "TAG_DELETED"
+
+
+class AuditTargetTypeEnum(StrEnum):
+    USER = "USER"
+    REPORT = "REPORT"
+    TAG = "TAG"
+
+
 class NotificationTypeEnum(StrEnum):
     CONNECTION_REQUEST = "CONNECTION_REQUEST"
     CONNECTION_ACCEPTED = "CONNECTION_ACCEPTED"
@@ -104,14 +120,6 @@ class NotificationTypeEnum(StrEnum):
 class TagTypeEnum(StrEnum):
     MACRO = "MACRO"
     MICRO = "MICRO"
-
-
-class AuditActionEnum(StrEnum):
-    TAG_CREATED = "TAG_CREATED"
-    TAG_DELETED = "TAG_DELETED"
-    USER_BANNED = "USER_BANNED"
-    USER_SUSPENDED = "USER_SUSPENDED"
-    USER_REVERTED = "USER_REVERTED"
 
 
 class DevicePlatformEnum(StrEnum):
