@@ -13,11 +13,20 @@ from app.config import settings
 from app.domain.enums import (
     AuditActionEnum,
     AuditTargetTypeEnum,
+    EventPrivacyEnum,
+    EventStatusEnum,
     UserRoleEnum,
     UserTypeEnum,
 )
 from app.infrastructure.repository import Base, get_db
-from app.infrastructure.repository.models import AuditLogModel, TagModel, UserModel
+from app.infrastructure.repository.models import (
+    AuditLogModel,
+    EventModel,
+    TagModel,
+    UserModel,
+    event_tag,
+    user_tag,
+)
 from app.main import app
 
 AdminTagsClient = tuple[TestClient, sessionmaker[Session]]
@@ -75,6 +84,25 @@ def add_tag(db: Session, name: str, parent_id: UUID | None = None) -> UUID:
     db.add(TagModel(tag_id=tag_id, tag_name=name, tag_parent_id=parent_id))
     db.commit()
     return tag_id
+
+
+def add_event_with_tag(db: Session, creator_id: UUID, tag_id: UUID) -> UUID:
+    starts_at = datetime.now(UTC) + timedelta(days=1)
+    event = EventModel(
+        event_creator_id=creator_id,
+        event_title="Evento com tag",
+        event_latitude=-30.0,
+        event_longitude=-51.0,
+        starts_at=starts_at,
+        ends_at=starts_at + timedelta(hours=2),
+        event_status=EventStatusEnum.PUBLISHED,
+        event_privacy=EventPrivacyEnum.PUBLIC,
+    )
+    db.add(event)
+    db.flush()
+    db.execute(event_tag.insert().values(event_id=event.event_id, tag_id=tag_id))
+    db.commit()
+    return event.event_id
 
 
 def admin_headers(session_factory: sessionmaker[Session]) -> dict[str, str]:
@@ -437,4 +465,144 @@ def test_audit_failure_does_not_roll_back_the_tag(
 
     assert response.status_code == 201
     assert "Vida Noturna" in tree_by_name(client)
+    assert audit_rows(session_factory) == []
+
+
+def test_delete_unused_micro_tag_returns_204_and_removes_it_from_tree(
+    tags_client: AdminTagsClient,
+) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        admin_id = add_user(db, UserRoleEnum.ADMIN)
+        category_id = add_tag(db, "Esportes")
+        tag_id = add_tag(db, "Escalada", category_id)
+
+    response = client.delete(f"/admin/tags/{tag_id}", headers=header_for(admin_id))
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert tree_by_name(client)["Esportes"]["children"] == []
+    [row] = audit_rows(session_factory)
+    assert row.action == AuditActionEnum.TAG_DELETED
+    assert row.actor_id == admin_id
+    assert row.target_id == tag_id
+    assert row.target_type == AuditTargetTypeEnum.TAG
+    assert row.target_label == "Escalada"
+    assert row.extra_metadata == {"name": "Escalada", "usage_count": 0}
+
+
+def test_delete_tag_in_use_without_force_returns_usage_count_and_keeps_tag(
+    tags_client: AdminTagsClient,
+) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        admin_id = add_user(db, UserRoleEnum.ADMIN)
+        interested_user_id = add_user(db, UserRoleEnum.USER)
+        category_id = add_tag(db, "Esportes")
+        tag_id = add_tag(db, "Escalada", category_id)
+        db.execute(user_tag.insert().values(user_id=interested_user_id, tag_id=tag_id))
+        db.commit()
+        add_event_with_tag(db, admin_id, tag_id)
+
+    response = client.delete(f"/admin/tags/{tag_id}", headers=header_for(admin_id))
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Tag is in use", "usage_count": 2}
+    assert tree_by_name(client)["Esportes"]["children"] == [
+        {"id": str(tag_id), "name": "Escalada", "type": "MICRO"}
+    ]
+    assert audit_rows(session_factory) == []
+
+
+def test_delete_tag_in_use_with_force_returns_204_and_removes_associations(
+    tags_client: AdminTagsClient,
+) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        admin_id = add_user(db, UserRoleEnum.ADMIN)
+        interested_user_id = add_user(db, UserRoleEnum.USER)
+        category_id = add_tag(db, "Esportes")
+        tag_id = add_tag(db, "Escalada", category_id)
+        db.execute(user_tag.insert().values(user_id=interested_user_id, tag_id=tag_id))
+        db.commit()
+        add_event_with_tag(db, admin_id, tag_id)
+
+    response = client.delete(
+        f"/admin/tags/{tag_id}",
+        params={"force": "true"},
+        headers=header_for(admin_id),
+    )
+
+    assert response.status_code == 204
+    with session_factory() as db:
+        assert (
+            db.scalar(select(user_tag.c.tag_id).where(user_tag.c.tag_id == tag_id))
+            is None
+        )
+        assert (
+            db.scalar(select(event_tag.c.tag_id).where(event_tag.c.tag_id == tag_id))
+            is None
+        )
+        assert db.get(TagModel, tag_id) is None
+    [row] = audit_rows(session_factory)
+    assert row.extra_metadata == {"name": "Escalada", "usage_count": 2}
+
+
+def test_delete_empty_category_returns_204(tags_client: AdminTagsClient) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        category_id = add_tag(db, "Esportes")
+
+    response = client.delete(
+        f"/admin/tags/{category_id}", headers=admin_headers(session_factory)
+    )
+
+    assert response.status_code == 204
+    assert tree_by_name(client) == {}
+
+
+@pytest.mark.parametrize("force", [False, True], ids=["without force", "with force"])
+def test_delete_category_with_children_returns_409_even_with_force(
+    tags_client: AdminTagsClient, force: bool
+) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        category_id = add_tag(db, "Esportes")
+        add_tag(db, "Escalada", category_id)
+
+    response = client.delete(
+        f"/admin/tags/{category_id}",
+        params={"force": str(force).lower()},
+        headers=admin_headers(session_factory),
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Category has tags"}
+    assert tree_by_name(client)["Esportes"]["children"][0]["name"] == "Escalada"
+    assert audit_rows(session_factory) == []
+
+
+def test_delete_unknown_tag_returns_404(tags_client: AdminTagsClient) -> None:
+    client, session_factory = tags_client
+
+    response = client.delete(
+        f"/admin/tags/{uuid4()}", headers=admin_headers(session_factory)
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Tag not found"}
+    assert audit_rows(session_factory) == []
+
+
+def test_non_admin_cannot_delete_tag(tags_client: AdminTagsClient) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        tag_id = add_tag(db, "Esportes")
+        user_id = add_user(db, UserRoleEnum.USER)
+
+    response = client.delete(f"/admin/tags/{tag_id}", headers=header_for(user_id))
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Admin access required"}
+    assert tree_by_name(client)["Esportes"]["id"] == str(tag_id)
     assert audit_rows(session_factory) == []

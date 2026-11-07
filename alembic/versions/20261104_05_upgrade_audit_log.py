@@ -1,7 +1,7 @@
 """upgrade_audit_log
 
 Revision ID: 20261104_05
-Revises: 20261104_04
+Revises: 20261105_01
 Create Date: 2026-11-04 00:00:00.000000
 """
 
@@ -12,11 +12,17 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "20261104_05"
-down_revision: str | Sequence[str] | None = "20261104_04"
+down_revision: str | Sequence[str] | None = "20261105_01"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-OLD_AUDIT_ACTIONS = ("TAG_CREATED",)
+OLD_AUDIT_ACTIONS = (
+    "TAG_CREATED",
+    "USER_BANNED",
+    "USER_SUSPENDED",
+    "USER_REVERTED",
+    "TAG_DELETED",
+)
 NEW_AUDIT_ACTIONS = (
     "USER_BANNED",
     "USER_SUSPENDED",
@@ -65,15 +71,36 @@ def upgrade() -> None:
             nullable=True,
         ),
     )
-    # Every pre-existing row came from the old TAG_CREATED-only schema. Plain
-    # SQL, not an ORM UPDATE: a bind param would infer VARCHAR and Postgres
-    # refuses to assign that to an enum column without an explicit cast.
-    op.execute("UPDATE audit_log SET target_type = 'TAG'")
+    # Pre-existing rows come from tag CRUD (#118, #125) and user moderation
+    # (#123); derive the target type from the action. Plain SQL, not an ORM
+    # UPDATE: a bind param would infer VARCHAR and Postgres refuses to assign
+    # that to an enum column without an explicit cast.
+    op.execute(
+        "UPDATE audit_log SET target_type = CASE "
+        "WHEN action::text LIKE 'USER\\_%' THEN 'USER'::audittargettypeenum "
+        "WHEN action::text LIKE 'REPORT\\_%' THEN 'REPORT'::audittargettypeenum "
+        "ELSE 'TAG'::audittargettypeenum END"
+    )
     op.alter_column("audit_log", "target_type", nullable=False)
 
     op.add_column("audit_log", sa.Column("target_label", sa.String(255)))
-    op.add_column("audit_log", sa.Column("metadata", sa.JSON()))
+    # `metadata` already exists: 20261105_01 (PR #125) added it.
     op.alter_column("audit_log", "target_id", nullable=False)
+
+    # Backfill the snapshot label for rows written before this column existed.
+    op.execute(
+        'UPDATE audit_log SET target_label = "user".name FROM "user" '
+        "WHERE audit_log.target_type = 'USER' "
+        'AND "user".user_id = audit_log.target_id'
+    )
+    op.execute(
+        "UPDATE audit_log SET target_label = tag.tag_name FROM tag "
+        "WHERE audit_log.target_type = 'TAG' AND tag.tag_id = audit_log.target_id"
+    )
+    op.execute(
+        "UPDATE audit_log SET target_label = metadata->>'name' "
+        "WHERE target_label IS NULL AND action = 'TAG_DELETED'"
+    )
 
     op.drop_index("ix_audit_log_action_created_at", table_name="audit_log")
     op.create_index(
@@ -90,7 +117,6 @@ def downgrade() -> None:
     )
 
     op.alter_column("audit_log", "target_id", nullable=True)
-    op.drop_column("audit_log", "metadata")
     op.drop_column("audit_log", "target_label")
 
     op.drop_column("audit_log", "target_type")
