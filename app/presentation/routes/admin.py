@@ -57,6 +57,7 @@ from app.presentation.dtos import (
     AdminUserModerationInput,
     AdminUserModerationOutput,
     CreateAdminTagInput,
+    RenameAdminTagInput,
 )
 from app.presentation.mappers import AdminTagMapper, AdminUserModerationMapper
 
@@ -339,6 +340,71 @@ def create_admin_tag(
             detail="Tag name already exists at this level",
         ) from error
     return TagAssembler.to_admin_dto(created)
+
+
+@router.patch(
+    "/admin/tags/{tag_id}",
+    response_model=AdminTagOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Renomear uma tag ou categoria",
+    description=(
+        "Renomeia uma tag micro ou uma categoria existente, mantendo o "
+        "`parent_id` atual — mover uma tag entre categorias nao e suportado "
+        "por este endpoint. O novo nome deve ser unico no mesmo nivel, exceto "
+        "quando igual ao nome atual. Registra o evento de auditoria "
+        "`TAG_UPDATED` com o nome antigo e o novo. Exige Bearer token de um "
+        "usuario com `role = ADMIN`."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Usuário autenticado, mas `role != ADMIN`.",
+            "content": {
+                "application/json": {"example": {"detail": "Admin access required"}}
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "A tag informada nao existe.",
+            "content": {"application/json": {"example": {"detail": "Tag not found"}}},
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "Ja existe uma tag com esse nome no mesmo nivel.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Tag name already exists at this level"}
+                }
+            },
+        },
+    },
+)
+def rename_admin_tag(
+    tag_id: UUID,
+    payload: RenameAdminTagInput,
+    current_admin: Annotated[User, Depends(require_admin)],
+    admin_tags_service: Annotated[AdminTagsService, Depends(get_admin_tags_service)],
+) -> AdminTagOutput:
+    try:
+        renamed = admin_tags_service.rename_tag(
+            tag_id, payload.name, actor_id=current_admin.user_id
+        )
+    except AdminTagNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tag not found",
+        ) from error
+    except TagNameAlreadyExistsError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Tag name already exists at this level",
+        ) from error
+    return TagAssembler.to_admin_dto(renamed)
 
 
 @router.delete(

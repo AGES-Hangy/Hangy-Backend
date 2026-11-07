@@ -21,9 +21,13 @@ from app.domain.enums import AuditActionEnum, TagTypeEnum
 class AdminTagRepository(Protocol):
     def get_by_id(self, tag_id: UUID) -> Tag | None: ...
 
-    def name_exists(self, name: str, parent_id: UUID | None) -> bool: ...
+    def name_exists(
+        self, name: str, parent_id: UUID | None, *, exclude_tag_id: UUID | None = None
+    ) -> bool: ...
 
     def create(self, tag: Tag) -> Tag: ...
+
+    def rename(self, tag_id: UUID, name: str) -> Tag: ...
 
     def count_children(self, tag_id: UUID) -> int: ...
 
@@ -100,6 +104,36 @@ class AdminTagsService:
             )
         )
         return created
+
+    def rename_tag(
+        self, tag_id: UUID, name: str, actor_id: UUID, now: datetime | None = None
+    ) -> Tag:
+        """Rename a category or micro tag; its parent_id never changes.
+
+        Records a TAG_UPDATED audit event with the old and new name, unless
+        the name is unchanged.
+        """
+        tag = self.repository.get_by_id(tag_id)
+        if tag is None:
+            raise AdminTagNotFoundError
+
+        if name == tag.tag_name:
+            return tag
+
+        if self.repository.name_exists(name, tag.tag_parent_id, exclude_tag_id=tag_id):
+            raise TagNameAlreadyExistsError
+
+        renamed = self.repository.rename(tag_id, name)
+        self.audit_repository.add(
+            AuditEvent(
+                action=AuditActionEnum.TAG_UPDATED,
+                actor_id=actor_id,
+                target_id=tag_id,
+                created_at=now or datetime.now(UTC),
+                metadata={"old_name": tag.tag_name, "new_name": name},
+            )
+        )
+        return renamed
 
     def delete_tag(
         self,
