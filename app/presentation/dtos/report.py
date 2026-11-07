@@ -15,7 +15,7 @@ class ReportReasonOutput(BaseModel):
 
 
 class ReportCreateInput(BaseModel):
-    report_type: str = Field(max_length=50)
+    report_type: ReportTypeEnum
     reported_user_id: UUID | None = None
     reported_event_id: UUID | None = None
     description: str | None = Field(

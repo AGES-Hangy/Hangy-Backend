@@ -215,7 +215,7 @@ def test_no_target_returns_400(client: TestClient, users: dict[str, UUID]) -> No
     assert response.json() == {"detail": "Exactly one target is required"}
 
 
-def test_reason_outside_the_enum_returns_400(
+def test_reason_outside_the_enum_returns_422(
     client: TestClient, users: dict[str, UUID]
 ) -> None:
     response = client.post(
@@ -224,8 +224,8 @@ def test_reason_outside_the_enum_returns_400(
         json={"report_type": "NOT_A_REASON", "reported_user_id": str(users["b"])},
     )
 
-    assert response.status_code == 400
-    assert response.json() == {"detail": "Invalid report reason"}
+    assert response.status_code == 422
+    assert query_scalar(select(func.count()).select_from(ReportModel)) == 0
 
 
 @pytest.mark.parametrize("report_type", [reason.value for reason in ReportTypeEnum])

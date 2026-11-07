@@ -9,7 +9,6 @@ from app.domain.enums import ReportTargetEnum
 from app.domain.services import (
     EventDetailsService,
     ExactlyOneReportTargetError,
-    InvalidReportReasonError,
     ReportAlreadyUnderReviewError,
     ReportReasonsService,
     ReportService,
@@ -46,15 +45,10 @@ def get_report_service(db: Annotated[Session, Depends(get_db)]) -> ReportService
 
 CREATE_REPORT_RESPONSES = {
     status.HTTP_400_BAD_REQUEST: {
-        "description": (
-            "Os dois alvos preenchidos, nenhum alvo, ou motivo fora da lista."
-        ),
+        "description": ("Os dois alvos preenchidos ou nenhum alvo."),
         "content": {
             "application/json": {
-                "examples": {
-                    "target": {"value": {"detail": "Exactly one target is required"}},
-                    "reason": {"value": {"detail": "Invalid report reason"}},
-                }
+                "example": {"detail": "Exactly one target is required"}
             }
         },
     },
@@ -85,11 +79,6 @@ _REPORT_ERRORS: tuple[tuple[type[Exception], int, str], ...] = (
         ExactlyOneReportTargetError,
         status.HTTP_400_BAD_REQUEST,
         "Exactly one target is required",
-    ),
-    (
-        InvalidReportReasonError,
-        status.HTTP_400_BAD_REQUEST,
-        "Invalid report reason",
     ),
     (ReportTargetNotFoundError, status.HTTP_404_NOT_FOUND, "Target not found"),
     (
@@ -166,7 +155,6 @@ def create_report(
         report = report_service.create_report(new_report)
     except (
         ExactlyOneReportTargetError,
-        InvalidReportReasonError,
         ReportTargetNotFoundError,
         ReportAlreadyUnderReviewError,
     ) as error:

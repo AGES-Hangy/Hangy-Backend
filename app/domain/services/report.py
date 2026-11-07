@@ -1,6 +1,5 @@
 __all__ = [
     "ExactlyOneReportTargetError",
-    "InvalidReportReasonError",
     "ReportAlreadyUnderReviewError",
     "ReportEventVisibility",
     "ReportReasonsService",
@@ -61,10 +60,6 @@ class ReportEventVisibility(Protocol):
 
 class ExactlyOneReportTargetError(Exception):
     """Raised when a report names both a user and an event, or neither."""
-
-
-class InvalidReportReasonError(Exception):
-    """Raised when the report reason is not one of the known report types."""
 
 
 class ReportTargetNotFoundError(Exception):
