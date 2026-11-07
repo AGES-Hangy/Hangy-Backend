@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import select
@@ -9,6 +9,8 @@ from app.domain.entities import NewReport, Report
 from app.domain.enums import ReportResolutionActionEnum, ReportStatusEnum
 from app.domain.services.report import ReportAlreadyUnderReviewError
 from app.infrastructure.repository.models.report_model import ReportModel
+
+PENDING_UNIQUE_INDEXES = ("uq_report_pending_user", "uq_report_pending_event")
 
 
 class SqlAlchemyReportRepository:
@@ -29,7 +31,7 @@ class SqlAlchemyReportRepository:
             self.db.commit()
         except IntegrityError as error:
             self.db.rollback()
-            if self._pending_exists(new_report):
+            if self._is_pending_uniqueness_violation(error):
                 raise ReportAlreadyUnderReviewError from error
             raise
         self.db.refresh(model)
@@ -68,17 +70,18 @@ class SqlAlchemyReportRepository:
         model.resolution_action = resolution_action
         self.db.flush()
 
-    def _pending_exists(self, new_report: NewReport) -> bool:
-        # Mirrors the partial unique indexes, deleted_at included: a soft
-        # deleted PENDING report still occupies the index.
-        query = select(ReportModel.report_id).where(
-            ReportModel.report_creator_id == new_report.report_creator_id,
-            ReportModel.status == ReportStatusEnum.PENDING,
-            ReportModel.reported_user_id == new_report.reported_user_id
-            if new_report.reported_user_id is not None
-            else ReportModel.reported_event_id == new_report.reported_event_id,
-        )
-        return self.db.scalar(query) is not None
+    @staticmethod
+    def _is_pending_uniqueness_violation(error: IntegrityError) -> bool:
+        """Tell the open-report unique indexes apart from any other violation.
+
+        PostgreSQL names the violated index in the message. SQLite (tests) only
+        lists the columns, so the author column of the index is used instead:
+        report_number and the primary key do not contain it.
+        """
+        message = str(error.orig)
+        if any(name in message for name in PENDING_UNIQUE_INDEXES):
+            return True
+        return "UNIQUE constraint failed: report.report_creator_id" in message
 
     @staticmethod
     def _to_entity(model: ReportModel) -> Report:
@@ -87,7 +90,7 @@ class SqlAlchemyReportRepository:
             report_creator_id=model.report_creator_id,
             report_type=model.report_type,
             description=model.description,
-            created_at=getattr(model, "created_at", None) or datetime.now(UTC),
+            created_at=model.created_at,
             updated_at=model.updated_at,
             status=model.status,
             reported_user_id=model.reported_user_id,
