@@ -5,9 +5,11 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.domain.entities import NewReport
 from app.domain.enums import (
     EventPrivacyEnum,
     EventStatusEnum,
@@ -23,6 +25,7 @@ from app.infrastructure.repository.models import (
     UserConnectionModel,
     UserModel,
 )
+from app.infrastructure.repository.report import SqlAlchemyReportRepository
 from app.main import app
 
 USER_A_EMAIL = "ana@hangy.com"
@@ -460,3 +463,31 @@ def test_reporting_has_no_side_effects(
     assert (
         client.get("/users/me", headers=login(client, USER_B_EMAIL)).status_code == 200
     )
+
+
+def test_other_integrity_errors_are_not_reported_as_409(
+    client: TestClient, users: dict[str, UUID]
+) -> None:
+    headers = login(client, USER_A_EMAIL)
+    first = client.post(
+        "/reports",
+        headers=headers,
+        json={"report_type": "SPAM", "reported_user_id": str(users["b"])},
+    )
+    assert first.status_code == 201
+
+    db_generator = db_session()
+    db = next(db_generator)
+    try:
+        # A PENDING report by the same author exists, but this insert breaks the
+        # exclusive-target CHECK, not the open-report unique indexes: the real
+        # error must surface instead of being answered as "already under review".
+        with pytest.raises(IntegrityError):
+            SqlAlchemyReportRepository(db).create(
+                NewReport(
+                    report_creator_id=users["a"],
+                    report_type=ReportTypeEnum.SPAM,
+                )
+            )
+    finally:
+        db_generator.close()
