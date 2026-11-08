@@ -180,6 +180,11 @@ class SqlAlchemyAdminReportsRepository:
             return None
 
         target_event_count = self._count_target_events(target.user_id)
+        target_reports_count = (
+            self._count_target_reports(target.user_id)
+            if model.reported_event_id is not None
+            else 0
+        )
         previous_archived, previous_resolved = self._count_previous_reports(
             report_id=model.report_id,
             target_user_id=target.user_id,
@@ -199,6 +204,7 @@ class SqlAlchemyAdminReportsRepository:
             previous_archived=previous_archived,
             previous_resolved=previous_resolved,
             resolved_by_name=resolved_by_name,
+            target_reports_count=target_reports_count,
         )
 
     def _count_target_events(self, target_user_id: UUID) -> int:
@@ -209,6 +215,29 @@ class SqlAlchemyAdminReportsRepository:
                 .where(
                     EventModel.event_creator_id == target_user_id,
                     EventModel.deleted_at.is_(None),
+                )
+            ).scalar_one()
+        )
+
+    def _count_target_reports(self, target_user_id: UUID) -> int:
+        """Reports against the user or their events, archived ones excluded.
+
+        Same rule as the `report_count` of the admin user list.
+        """
+        return int(
+            self.db.execute(
+                select(func.count())
+                .select_from(ReportModel)
+                .outerjoin(
+                    EventModel, EventModel.event_id == ReportModel.reported_event_id
+                )
+                .where(
+                    ReportModel.deleted_at.is_(None),
+                    ReportModel.status != ReportStatusEnum.REJECTED,
+                    or_(
+                        ReportModel.reported_user_id == target_user_id,
+                        EventModel.event_creator_id == target_user_id,
+                    ),
                 )
             ).scalar_one()
         )
@@ -246,6 +275,7 @@ class SqlAlchemyAdminReportsRepository:
         previous_archived: int,
         previous_resolved: int,
         resolved_by_name: str | None,
+        target_reports_count: int,
     ) -> AdminReportDetailRecord:
         opened_at = _as_utc(model.created_at)
         # ReportModel has no separate reported_at column, so opened_at and
@@ -290,4 +320,6 @@ class SqlAlchemyAdminReportsRepository:
             resolved_by_name=resolved_by_name,
             resolved_at=model.resolved_at,
             resolution_action=model.resolution_action,
+            target_photo_url=target.profile_photo_url,
+            target_reports_count=target_reports_count,
         )

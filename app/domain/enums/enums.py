@@ -23,6 +23,11 @@ class EventPrivacyEnum(StrEnum):
     INVITE_ONLY = "INVITE_ONLY"
 
 
+class EventModerationStatusEnum(StrEnum):
+    ACTIVE = "ACTIVE"
+    REMOVED = "REMOVED"
+
+
 class EventStatusEnum(StrEnum):
     DRAFT = "DRAFT"
     # The Figma flow publishes straight away; DRAFT has no screen yet.
@@ -85,6 +90,7 @@ class ReportResolutionActionEnum(StrEnum):
     BANNED = "BANNED"
     SUSPENDED = "SUSPENDED"
     ARCHIVED = "ARCHIVED"
+    EVENT_REMOVED = "EVENT_REMOVED"
 
 
 class AuditActionEnum(StrEnum):
@@ -92,6 +98,7 @@ class AuditActionEnum(StrEnum):
     USER_SUSPENDED = "USER_SUSPENDED"
     USER_REVERTED = "USER_REVERTED"
     REPORT_ARCHIVED = "REPORT_ARCHIVED"
+    EVENT_REMOVED = "EVENT_REMOVED"
     TAG_CREATED = "TAG_CREATED"
     TAG_UPDATED = "TAG_UPDATED"
     TAG_DELETED = "TAG_DELETED"
@@ -101,6 +108,7 @@ class AuditTargetTypeEnum(StrEnum):
     USER = "USER"
     REPORT = "REPORT"
     TAG = "TAG"
+    EVENT = "EVENT"
 
 
 class NotificationTypeEnum(StrEnum):
@@ -114,6 +122,7 @@ class NotificationTypeEnum(StrEnum):
     EVENT_PARTICIPANT_JOINED = "EVENT_PARTICIPANT_JOINED"
     EVENT_UPDATED = "EVENT_UPDATED"
     EVENT_CANCELLED = "EVENT_CANCELLED"
+    EVENT_REMOVED = "EVENT_REMOVED"
     EVENT_STARTING_SOON = "EVENT_STARTING_SOON"
 
 

@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.domain.entities import Report
@@ -45,6 +45,37 @@ class SqlAlchemyReportRepository:
         model.resolved_at = resolved_at
         model.resolution_action = resolution_action
         self.db.flush()
+
+    def resolve_open_for_event(
+        self,
+        event_id: UUID,
+        *,
+        resolved_by_id: UUID,
+        resolved_at: datetime,
+        resolution_action: ReportResolutionActionEnum,
+    ) -> int:
+        """Mark every PENDING/REVIEWED report about the event as RESOLVED.
+
+        Flush only: the caller commits. Returns how many reports were closed.
+        """
+        result = self.db.execute(
+            update(ReportModel)
+            .where(
+                ReportModel.reported_event_id == event_id,
+                ReportModel.deleted_at.is_(None),
+                ReportModel.status.in_(
+                    (ReportStatusEnum.PENDING, ReportStatusEnum.REVIEWED)
+                ),
+            )
+            .values(
+                status=ReportStatusEnum.RESOLVED,
+                resolved_by_id=resolved_by_id,
+                resolved_at=resolved_at,
+                resolution_action=resolution_action,
+            )
+        )
+        self.db.flush()
+        return result.rowcount
 
     @staticmethod
     def _to_entity(model: ReportModel) -> Report:
