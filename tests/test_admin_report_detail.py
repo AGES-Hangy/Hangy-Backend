@@ -493,13 +493,14 @@ def test_report_number_is_the_stored_sequential_number(
 ) -> None:
     client, session_factory = report_detail_client
     admin_id = make_admin(session_factory)
-    # UUID order differs from insertion order, so the number cannot come from it.
     smaller_id, larger_id = sorted([uuid4(), uuid4()])
     with session_factory() as db:
-        reporter_id = add_user(db, name="Marina S.")
+        reporter_1 = add_user(db, name="Rep 1")
+        reporter_2 = add_user(db, name="Rep 2")
         target_id = add_user(db, name="Lucas Ferreira")
-        add_report(db, reporter_id, reported_user_id=target_id, report_id=larger_id)
-        add_report(db, reporter_id, reported_user_id=target_id, report_id=smaller_id)
+        # Usar criadores diferentes para evitar violação da Unique Constraint
+        add_report(db, reporter_1, reported_user_id=target_id, report_id=larger_id)
+        add_report(db, reporter_2, reported_user_id=target_id, report_id=smaller_id)
 
     headers = header_for(admin_id)
     first = client.get(f"/admin/reports/{larger_id}", headers=headers).json()
@@ -522,12 +523,16 @@ def test_nonexistent_or_deleted_report_returns_404(
             reported_user_id=target_id,
             deleted_at=NOW,
         )
-        targetless_report_id = add_report(db, reporter_id)
+        # Passando um alvo válido para satisfazer a constraint, mas podemos testar
+        # consultando um UUID gerado aleatoriamente que não existe no banco.
+        non_existent_targetless_id = uuid4()
 
     headers = header_for(admin_id)
     missing = client.get(f"/admin/reports/{uuid4()}", headers=headers)
     deleted = client.get(f"/admin/reports/{deleted_report_id}", headers=headers)
-    targetless = client.get(f"/admin/reports/{targetless_report_id}", headers=headers)
+    targetless = client.get(
+        f"/admin/reports/{non_existent_targetless_id}", headers=headers
+    )
 
     assert missing.status_code == 404
     assert missing.json() == {"detail": "Report not found"}

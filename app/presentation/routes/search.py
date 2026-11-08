@@ -6,7 +6,10 @@ from sqlalchemy.orm import Session
 from app.domain.assemblers import SearchAssembler
 from app.domain.entities import User
 from app.domain.services import (
+    DEFAULT_SEARCH_LIMIT,
     DEFAULT_SEARCH_PREVIEW_LIMIT,
+    MAX_SEARCH_QUERY_LENGTH,
+    InvalidPaginationError,
     InvalidSearchDateFormatError,
     InvalidSearchDateRangeError,
     InvalidSearchPreviewLimitError,
@@ -17,7 +20,7 @@ from app.domain.services import (
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.search import SqlAlchemySearchRepository
 from app.presentation.dependencies.auth import credentials_exception, get_current_user
-from app.presentation.dtos import SearchOutput
+from app.presentation.dtos import SearchEventsPageOutput, SearchOutput
 from app.presentation.mappers import SearchMapper
 
 router = APIRouter(tags=["Search"])
@@ -143,4 +146,93 @@ def search(
     return SearchAssembler.to_dto(result)
 
 
-__all__ = ["get_search_service", "router", "search"]
+@router.get(
+    "/search/events",
+    response_model=SearchEventsPageOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Listar todos os eventos da busca",
+    description=(
+        "Mantém o termo, as tags e as datas do bloco de eventos da busca. "
+        "Ordena por data crescente e ID, com paginação por cursor (padrão 20, "
+        "máximo 50). Eventos privados em preview exibem apenas bairro/cidade "
+        "e location_precision APPROXIMATE."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "Paginação, termo ou datas inválidos.",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        **BAD_REQUEST_EXAMPLES,
+                        "invalid_pagination": {
+                            "value": {"detail": "Invalid pagination parameters"}
+                        },
+                    }
+                }
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, expirado ou inválido.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Algum tag_id informado não existe.",
+            "content": {"application/json": {"example": {"detail": "Tag not found"}}},
+        },
+    },
+)
+def search_events(
+    current_user: Annotated[User, Depends(get_current_user)],
+    search_service: Annotated[SearchService, Depends(get_search_service)],
+    q: Annotated[str | None, Query(max_length=MAX_SEARCH_QUERY_LENGTH)] = None,
+    tag_ids: Annotated[str | None, Query(max_length=4096)] = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: Annotated[str, Query(description="Tamanho da página: 1 a 50.")] = str(
+        DEFAULT_SEARCH_LIMIT
+    ),
+    cursor: str | None = None,
+) -> SearchEventsPageOutput:
+    if current_user.user_id is None:
+        raise credentials_exception
+    try:
+        criteria = SearchMapper.to_events_query(
+            current_user.user_id,
+            q=q,
+            limit=limit,
+            tag_ids=tag_ids,
+            date_from=date_from,
+            date_to=date_to,
+            cursor=cursor,
+        )
+        page = search_service.search_events(criteria)
+    except InvalidPaginationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters",
+        ) from error
+    except SearchQueryTooShortError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Query is too short"
+        ) from error
+    except InvalidSearchDateFormatError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid date format"
+        ) from error
+    except InvalidSearchDateRangeError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="date_from must be before date_to",
+        ) from error
+    except SearchTagNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Tag not found"
+        ) from error
+    return SearchAssembler.to_events_page_dto(page)
+
+
+__all__ = ["get_search_service", "router", "search", "search_events"]

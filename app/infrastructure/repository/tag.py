@@ -42,7 +42,9 @@ class SqlAlchemyTagRepository:
         ).all()
         return [self._to_tree_entity(macro) for macro in macros]
 
-    def name_exists(self, name: str, parent_id: UUID | None) -> bool:
+    def name_exists(
+        self, name: str, parent_id: UUID | None, *, exclude_tag_id: UUID | None = None
+    ) -> bool:
         """Whether a tag with this name already exists at the given level."""
         level = (
             TagModel.tag_parent_id.is_(None)
@@ -50,6 +52,8 @@ class SqlAlchemyTagRepository:
             else TagModel.tag_parent_id == parent_id
         )
         statement = select(TagModel.tag_id).where(TagModel.tag_name == name, level)
+        if exclude_tag_id is not None:
+            statement = statement.where(TagModel.tag_id != exclude_tag_id)
         return self.db.scalar(statement.limit(1)) is not None
 
     def create(self, tag: Tag) -> Tag:
@@ -57,6 +61,15 @@ class SqlAlchemyTagRepository:
         self.db.add(model)
         # Flush only: the caller (AdminTagsService.create_tag) commits after
         # also recording the audit row, so both land in one transaction.
+        self.db.flush()
+        return self._to_entity(model)
+
+    def rename(self, tag_id: UUID, name: str) -> Tag:
+        model = self.db.get(TagModel, tag_id)
+        assert model is not None  # service already verified existence
+        model.tag_name = name
+        # Flush only: the caller commits, so the rename and its audit row are
+        # one transaction (see SqlAlchemyAuditRepository.add).
         self.db.flush()
         return self._to_entity(model)
 

@@ -20,9 +20,13 @@ from app.domain.services.audit_logger import AuditLogger
 class AdminTagRepository(Protocol):
     def get_by_id(self, tag_id: UUID) -> Tag | None: ...
 
-    def name_exists(self, name: str, parent_id: UUID | None) -> bool: ...
+    def name_exists(
+        self, name: str, parent_id: UUID | None, *, exclude_tag_id: UUID | None = None
+    ) -> bool: ...
 
     def create(self, tag: Tag) -> Tag: ...
+
+    def rename(self, tag_id: UUID, name: str) -> Tag: ...
 
     def count_children(self, tag_id: UUID) -> int: ...
 
@@ -98,6 +102,33 @@ class AdminTagsService:
         # commit even when it was itself rolled back.
         self.repository.commit()
         return created
+
+    def rename_tag(self, tag_id: UUID, name: str, actor_id: UUID) -> Tag:
+        """Rename a category or micro tag; its parent_id never changes.
+
+        Records a TAG_UPDATED audit event with the old and new name, unless
+        the name is unchanged.
+        """
+        tag = self.repository.get_by_id(tag_id)
+        if tag is None:
+            raise AdminTagNotFoundError
+
+        if name == tag.tag_name:
+            return tag
+
+        if self.repository.name_exists(name, tag.tag_parent_id, exclude_tag_id=tag_id):
+            raise TagNameAlreadyExistsError
+
+        renamed = self.repository.rename(tag_id, name)
+        self.audit_logger.record(
+            actor_id=actor_id,
+            action=AuditActionEnum.TAG_UPDATED,
+            target_type=AuditTargetTypeEnum.TAG,
+            target_id=tag_id,
+            metadata={"old_name": tag.tag_name, "new_name": name},
+        )
+        self.repository.commit()
+        return renamed
 
     def delete_tag(
         self,

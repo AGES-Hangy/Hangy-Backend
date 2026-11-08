@@ -1,6 +1,7 @@
 from app.domain.entities import (
     SearchBusinessItem,
     SearchEventItem,
+    SearchEventsPage,
     SearchResult,
     SearchUserItem,
 )
@@ -10,6 +11,7 @@ from app.presentation.dtos import (
     SearchBusinessItemOutput,
     SearchEventItemOutput,
     SearchEventsBlockOutput,
+    SearchEventsPageOutput,
     SearchOutput,
     SearchUserItemOutput,
     SearchUsersBlockOutput,
@@ -17,6 +19,14 @@ from app.presentation.dtos import (
 
 
 class SearchAssembler:
+    @staticmethod
+    def to_events_page_dto(page: SearchEventsPage) -> SearchEventsPageOutput:
+        return SearchEventsPageOutput(
+            items=[SearchAssembler._to_event_dto(item) for item in page.items],
+            next_cursor=page.next_cursor,
+            total=page.total,
+        )
+
     @staticmethod
     def to_dto(result: SearchResult) -> SearchOutput:
         return SearchOutput(
