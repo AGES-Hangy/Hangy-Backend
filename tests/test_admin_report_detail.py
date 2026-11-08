@@ -32,6 +32,7 @@ from app.infrastructure.repository.models.event_model import EventModel
 from app.infrastructure.repository.models.report_model import ReportModel
 from app.main import app
 from app.presentation.routes.admin import get_admin_reports_service
+from tests.report_helpers import free_report_type
 
 ReportDetailClient = tuple[TestClient, sessionmaker[Session]]
 
@@ -132,13 +133,19 @@ def add_report(
     opened_at: datetime | None = None,
     reported_user_id: UUID | None = None,
     reported_event_id: UUID | None = None,
-    report_type: ReportTypeEnum = ReportTypeEnum.HARASSMENT,
+    report_type: ReportTypeEnum | None = None,
     description: str = "Mensagens ofensivas",
     deleted_at: datetime | None = None,
     report_id: UUID | None = None,
     **extra: object,
 ) -> UUID:
     report_id = report_id or uuid4()
+    report_type = report_type or free_report_type(
+        db,
+        creator_id,
+        reported_user_id=reported_user_id,
+        reported_event_id=reported_event_id,
+    )
     db.add(
         ReportModel(
             report_id=report_id,
