@@ -1,4 +1,4 @@
-__all__ = ["AdminTagOutput", "CreateAdminTagInput"]
+__all__ = ["AdminTagOutput", "CreateAdminTagInput", "RenameAdminTagInput"]
 
 from uuid import UUID
 
@@ -17,6 +17,14 @@ class CreateAdminTagInput(BaseModel):
 
     name: str = Field(min_length=1, max_length=MAX_TAG_NAME_LENGTH)
     parent_id: UUID | None = None
+
+
+class RenameAdminTagInput(BaseModel):
+    """Body of PATCH /admin/tags/{tag_id}: a new name, same level and parent."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=MAX_TAG_NAME_LENGTH)
 
 
 class AdminTagOutput(BaseModel):
