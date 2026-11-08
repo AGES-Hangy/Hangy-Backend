@@ -181,7 +181,7 @@ def test_organizer_counts_follow_the_user_list_rules(
         add_report(db, reporter_id, reported_user_id=organizer_id)
         add_report(
             db,
-            reporter_id,
+            add_user(db),
             reported_event_id=event_id,
             status=ReportStatusEnum.REJECTED,
         )

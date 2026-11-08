@@ -314,15 +314,15 @@ def test_other_open_reports_of_the_event_are_resolved_together(
         event_id = add_event(db, organizer_id)
         other_event_id = add_event(db, organizer_id, "Outro evento")
         informed = add_event_report(db, reporter_id, event_id)
-        pending = add_event_report(db, reporter_id, event_id)
+        pending = add_event_report(db, add_user(db), event_id)
         reviewed = add_event_report(
-            db, reporter_id, event_id, status=ReportStatusEnum.REVIEWED
+            db, add_user(db), event_id, status=ReportStatusEnum.REVIEWED
         )
         archived = add_event_report(
-            db, reporter_id, event_id, status=ReportStatusEnum.REJECTED
+            db, add_user(db), event_id, status=ReportStatusEnum.REJECTED
         )
         resolved = add_event_report(
-            db, reporter_id, event_id, status=ReportStatusEnum.RESOLVED
+            db, add_user(db), event_id, status=ReportStatusEnum.RESOLVED
         )
         elsewhere = add_event_report(db, reporter_id, other_event_id)
         about_user = add_user_report(db, reporter_id, organizer_id)
@@ -686,10 +686,10 @@ def test_resolved_report_returns_409_and_leaves_the_event_untouched(
         participant_id = add_user(db)
         add_participant(db, event_id, participant_id)
         resolved = add_event_report(
-            db, reporter_id, event_id, status=ReportStatusEnum.RESOLVED
+            db, add_user(db), event_id, status=ReportStatusEnum.RESOLVED
         )
         archived = add_event_report(
-            db, reporter_id, event_id, status=ReportStatusEnum.REJECTED
+            db, add_user(db), event_id, status=ReportStatusEnum.REJECTED
         )
         open_report = add_event_report(db, reporter_id, event_id)
 
