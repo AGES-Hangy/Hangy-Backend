@@ -749,6 +749,58 @@ def test_nearby_combines_date_and_tag_filters(
     ) == [soon_id]
 
 
+def test_nearby_filtered_invite_only_requires_organizer_or_confirmation(
+    events_client: tuple[TestClient, object],
+) -> None:
+    client, session_factory = events_client
+    organizer, confirmed, pending, visitor = (uuid4() for _ in range(4))
+    with session_factory() as db:
+        for user in (organizer, confirmed, pending, visitor):
+            _add_user(db, user)
+        tag = _add_tag(db, "Futebol")
+        event = _add_event(db, organizer, 0.01, EventPrivacyEnum.INVITE_ONLY)
+        event.tags = [tag]
+        for user, status in (
+            (confirmed, EventParticipantStatusEnum.CONFIRMED),
+            (pending, EventParticipantStatusEnum.PENDING),
+        ):
+            db.add(
+                EventParticipantModel(
+                    user_id=user, event_id=event.event_id, status=status
+                )
+            )
+        db.commit()
+        event_id, tag_id = str(event.event_id), str(tag.tag_id)
+
+    filters = {"tag_ids": [tag_id], "starts_from": datetime.now(UTC).isoformat()}
+    assert _nearby_ids(client, organizer, **filters) == [event_id]
+    assert _nearby_ids(client, confirmed, **filters) == [event_id]
+    assert _nearby_ids(client, pending, **filters) == []
+    assert _nearby_ids(client, visitor, **filters) == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("starts_from", "0001-01-01T00:00:00+14:00"),
+        ("starts_until", "9999-12-31T23:59:59-03:00"),
+    ],
+)
+def test_nearby_rejects_unrepresentable_utc_boundary(events_client, field, value):
+    client, session_factory = events_client
+    viewer_id = uuid4()
+    with session_factory() as db:
+        _add_user(db, viewer_id)
+        db.commit()
+    response = client.get(
+        "/events/nearby",
+        params={"latitude": 0, "longitude": 0, "radius_m": 100, field: value},
+        headers={"Authorization": f"Bearer {_token_for(viewer_id)}"},
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid date range"}
+
+
 def test_nearby_rejects_invalid_filters(
     events_client: tuple[TestClient, object],
 ) -> None:
@@ -756,7 +808,9 @@ def test_nearby_rejects_invalid_filters(
     viewer_id = uuid4()
     with session_factory() as db:
         _add_user(db, viewer_id)
+        tag = _add_tag(db, "Futebol")
         db.commit()
+        tag_id = str(tag.tag_id)
 
     headers = {"Authorization": f"Bearer {_token_for(viewer_id)}"}
     base = {"latitude": 0, "longitude": 0, "radius_m": 100}
@@ -787,3 +841,9 @@ def test_nearby_rejects_invalid_filters(
     assert unknown_tag.json() == {"detail": "Tag not found"}
     assert too_many_tags.status_code == 400
     assert too_many_tags.json() == {"detail": "Too many tags"}
+    assert _nearby_ids(client, viewer_id, tag_ids=[tag_id] * 50) == []
+    repeated = client.get(
+        "/events/nearby", params={**base, "tag_ids": [tag_id] * 51}, headers=headers
+    )
+    assert repeated.status_code == 400
+    assert repeated.json() == {"detail": "Too many tags"}

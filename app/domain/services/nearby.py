@@ -52,7 +52,7 @@ class InvalidNearbyLimitError(Exception):
 
 
 class InvalidNearbyDateRangeError(Exception):
-    """Raised when the date filter ends before it starts."""
+    """Raised for an inverted range or a boundary that cannot be expressed in UTC."""
 
 
 class TooManyNearbyTagsError(Exception):
@@ -91,9 +91,9 @@ class NearbyService:
         starts_until = _as_utc(starts_until)
         if starts_from and starts_until and starts_until < starts_from:
             raise InvalidNearbyDateRangeError
-        requested_tag_ids = set(tag_ids)
-        if len(requested_tag_ids) > MAX_NEARBY_TAG_FILTERS:
+        if len(tag_ids) > MAX_NEARBY_TAG_FILTERS:
             raise TooManyNearbyTagsError
+        requested_tag_ids = set(tag_ids)
         matching_tag_ids = None
         if requested_tag_ids:
             # A macro tag also matches events tagged with any of its subtags.
@@ -162,7 +162,10 @@ def _as_utc(value: datetime | None) -> datetime | None:
         return None
     if value.tzinfo is None:
         return value.replace(tzinfo=UTC)
-    return value.astimezone(UTC)
+    try:
+        return value.astimezone(UTC)
+    except OverflowError as error:
+        raise InvalidNearbyDateRangeError from error
 
 
 def _distance_m(

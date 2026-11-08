@@ -310,10 +310,12 @@ def create_event(
     description=(
         "Retorna eventos publicados e futuros dentro do raio informado, "
         "ordenados pela distancia ate o centro da busca. Eventos INVITE_ONLY "
-        "nao sao descobriveis neste endpoint. `starts_from` e `starts_until` "
-        "limitam o inicio do evento (inclusivo; sem fuso, vale UTC). Com "
-        "`tag_ids`, entra o evento que tiver ao menos uma das tags; uma tag "
-        "macro tambem casa com as subtags dela."
+        "aparecem apenas para o organizador e participantes confirmados. "
+        "`starts_from` e `starts_until` limitam o inicio do evento "
+        "(inclusivo; sem fuso, vale UTC). Os limites devem ser representaveis "
+        "em UTC. Com `tag_ids`, entra o evento que tiver ao menos uma das tags; "
+        "uma macro tambem casa com as subtags dela. O limite e de 50 entradas, "
+        "incluindo repeticoes."
     ),
     responses={
         status.HTTP_400_BAD_REQUEST: {
