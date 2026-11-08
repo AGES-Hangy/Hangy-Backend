@@ -250,6 +250,7 @@ class SqlAlchemySearchRepository:
         reference_time: datetime,
         limit: int,
         offset: int = 0,
+        after: tuple[datetime, UUID] | None = None,
     ) -> tuple[list[SearchEventCandidate], int]:
         conditions = self._events_search_conditions(
             viewer_id,
@@ -268,6 +269,18 @@ class SqlAlchemySearchRepository:
         if total == 0 or limit <= 0:
             return [], total
 
+        if after is not None:
+            after_date, after_id = after
+            conditions.append(
+                or_(
+                    EventModel.starts_at > after_date,
+                    and_(
+                        EventModel.starts_at == after_date,
+                        EventModel.event_id > after_id,
+                    ),
+                )
+            )
+
         participants_count = (
             select(func.count(EventParticipantModel.participant_id))
             .where(
@@ -279,7 +292,7 @@ class SqlAlchemySearchRepository:
         )
         viewer_participation = aliased(EventParticipantModel)
 
-        rows = self.db.execute(
+        statement = (
             select(
                 EventModel,
                 participants_count,
@@ -294,9 +307,11 @@ class SqlAlchemySearchRepository:
             )
             .where(*conditions)
             .order_by(EventModel.starts_at.asc(), EventModel.event_id.asc())
-            .offset(offset)
             .limit(limit)
-        ).all()
+        )
+        if offset:
+            statement = statement.offset(offset)
+        rows = self.db.execute(statement).all()
 
         return (
             [

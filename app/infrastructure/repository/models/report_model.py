@@ -5,17 +5,21 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Identity,
+    Index,
     Integer,
     String,
     event,
     func,
     select,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, object_session, relationship
 
+from app.domain.entities.report import REPORT_DESCRIPTION_MAX_LENGTH
 from app.domain.enums import (
     ReportResolutionActionEnum,
     ReportStatusEnum,
@@ -31,6 +35,32 @@ if TYPE_CHECKING:
 
 class ReportModel(Base):
     __tablename__ = "report"
+    __table_args__ = (
+        CheckConstraint(
+            "(reported_user_id IS NULL) <> (reported_event_id IS NULL)",
+            name="ck_report_exactly_one_target",
+        ),
+        Index(
+            "uq_report_pending_user",
+            "report_creator_id",
+            "reported_user_id",
+            unique=True,
+            postgresql_where=text(
+                "status = 'PENDING' AND reported_user_id IS NOT NULL"
+            ),
+            sqlite_where=text("status = 'PENDING' AND reported_user_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_report_pending_event",
+            "report_creator_id",
+            "reported_event_id",
+            unique=True,
+            postgresql_where=text(
+                "status = 'PENDING' AND reported_event_id IS NOT NULL"
+            ),
+            sqlite_where=text("status = 'PENDING' AND reported_event_id IS NOT NULL"),
+        ),
+    )
 
     report_id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     report_number: Mapped[int] = mapped_column(Integer, Identity(), unique=True)
@@ -44,7 +74,7 @@ class ReportModel(Base):
         ForeignKey("event.event_id", ondelete="SET NULL")
     )
     report_type: Mapped[ReportTypeEnum] = mapped_column(enum_column(ReportTypeEnum))
-    description: Mapped[str] = mapped_column(String(1000))
+    description: Mapped[str] = mapped_column(String(REPORT_DESCRIPTION_MAX_LENGTH))
     status: Mapped[ReportStatusEnum] = mapped_column(
         enum_column(ReportStatusEnum), default=ReportStatusEnum.PENDING
     )
