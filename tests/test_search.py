@@ -2,6 +2,7 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from unittest.mock import Mock
 from uuid import UUID
 
 import jwt
@@ -21,7 +22,14 @@ from app.domain.enums import (
     UserRoleEnum,
     UserTypeEnum,
 )
-from app.domain.services import SearchService, visible_events_query
+from app.domain.services import (
+    InvalidPaginationError,
+    InvalidSearchDateFormatError,
+    SearchService,
+    SearchTagNotFoundError,
+    encode_cursor,
+    visible_events_query,
+)
 from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import (
     BusinessProfileModel,
@@ -36,6 +44,7 @@ from app.infrastructure.repository.models import (
 )
 from app.infrastructure.repository.search import SqlAlchemySearchRepository
 from app.main import app
+from app.presentation.mappers import SearchMapper
 
 USER_EMAIL = "searcher@hangy.com"
 NOW = datetime.now(UTC)
@@ -1046,3 +1055,325 @@ def test_search_service_supports_type_and_offset_parameterization(
     assert result.events.has_more is True
     assert result.businesses.items == ()
     assert result.users.items == ()
+
+
+# US10.4 — Lista completa de eventos por cursor.
+
+
+def test_search_events_returns_only_events_when_all_types_match(context):
+    person_id = create_person(context.db, "Copa Pessoa")
+    create_business(context.db, "Copa Arena")
+    event_id = create_event(context.db, person_id, "Copa Evento")
+    params = {"q": "copa"}
+
+    preview = context.client.get("/search", params=params, headers=context.auth_headers)
+    assert preview.status_code == 200
+    for result_type in ("events", "businesses", "users"):
+        assert preview.json()[result_type]["total"] == 1
+
+    response = context.client.get(
+        "/search/events", params=params, headers=context.auth_headers
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"items", "next_cursor", "total"}
+    assert body["total"] == 1
+    assert body["next_cursor"] is None
+    assert [item["event_id"] for item in body["items"]] == [str(event_id)]
+    assert body["items"][0]["title"] == "Copa Evento"
+    assert "user_id" not in body["items"][0]
+
+
+def test_search_events_cursor_pages_with_equal_dates(context):
+    creator = create_person(context.db, "Organizador")
+    ids = [UUID(int=value) for value in (30, 10, 20)]
+    for event_id in ids:
+        create_event(context.db, creator, "Copa", event_id=event_id)
+    params = {"q": "copa", "limit": 1}
+    for expected in sorted(ids):
+        response = context.client.get(
+            "/search/events", params=params, headers=context.auth_headers
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body) == {"items", "next_cursor", "total"}
+        assert body["total"] == 3
+        assert [item["event_id"] for item in body["items"]] == [str(expected)]
+        if expected != max(ids):
+            assert body["next_cursor"]
+            params["cursor"] = body["next_cursor"]
+        else:
+            assert body["next_cursor"] is None
+
+
+def test_search_events_cursor_survives_previous_item_deletion(context):
+    creator = create_person(context.db, "Organizador")
+    ids = [
+        create_event(
+            context.db, creator, "Festival", starts_at=NOW + timedelta(days=day)
+        )
+        for day in (2, 3, 4)
+    ]
+    first = context.client.get(
+        "/search/events",
+        params={"q": "festival", "limit": 1},
+        headers=context.auth_headers,
+    ).json()
+    context.db.delete(context.db.get(EventModel, ids[0]))
+    context.db.commit()
+    second = context.client.get(
+        "/search/events",
+        params={"q": "festival", "limit": 1, "cursor": first["next_cursor"]},
+        headers=context.auth_headers,
+    )
+    assert second.status_code == 200
+    assert second.json()["items"][0]["event_id"] == str(ids[1])
+    assert second.json()["total"] == 2
+
+
+def test_search_events_preserves_preview_filters(context):
+    creator = create_person(context.db, "Organizador")
+    macro = create_tag(context.db, "Esportes")
+    micro = create_tag(context.db, "Futebol", parent_id=macro)
+    music = create_tag(context.db, "Música")
+    target = NOW + timedelta(days=5)
+    expected = create_event(
+        context.db, creator, "Copa de Férias", tag_ids=(micro,), starts_at=target
+    )
+    create_event(
+        context.db, creator, "Copa de Música", tag_ids=(music,), starts_at=target
+    )
+    create_event(
+        context.db,
+        creator,
+        "Copa Amanhã",
+        tag_ids=(micro,),
+        starts_at=target + timedelta(days=1),
+    )
+    create_event(
+        context.db, creator, "Outro evento", tag_ids=(micro,), starts_at=target
+    )
+    params = {
+        "q": "copa",
+        "tag_ids": str(macro),
+        "date_from": target.date().isoformat(),
+        "date_to": target.date().isoformat(),
+    }
+    preview = context.client.get("/search", params=params, headers=context.auth_headers)
+    response = context.client.get(
+        "/search/events", params=params, headers=context.auth_headers
+    )
+    assert response.status_code == 200
+    assert response.json()["items"] == preview.json()["events"]["items"]
+    assert [item["event_id"] for item in response.json()["items"]] == [str(expected)]
+    assert response.json()["next_cursor"] is None
+    assert response.json()["total"] == 1
+
+
+def test_search_events_home_tag_and_empty_state(context):
+    creator = create_person(context.db, "Organizador")
+    tag = create_tag(context.db, "Esportes")
+    event_id = create_event(context.db, creator, "Pelada", tag_ids=(tag,))
+    response = context.client.get(
+        "/search/events", params={"tag_ids": str(tag)}, headers=context.auth_headers
+    )
+    assert response.status_code == 200
+    assert response.json()["items"][0]["event_id"] == str(event_id)
+    empty = context.client.get(
+        "/search/events", params={"q": "inexistente"}, headers=context.auth_headers
+    )
+    assert empty.status_code == 200
+    assert empty.json() == {"items": [], "next_cursor": None, "total": 0}
+
+
+def test_search_events_visibility_and_private_address(context):
+    creator = create_person(context.db, "Organizador")
+    public = create_event(context.db, creator, "Encontro público")
+    private = create_event(
+        context.db,
+        creator,
+        "Encontro privado",
+        privacy=EventPrivacyEnum.PRIVATE,
+        location_name="Rua secreta, 123",
+        neighborhood="Bom Fim",
+    )
+    invited = create_event(
+        context.db, creator, "Encontro convidado", privacy=EventPrivacyEnum.INVITE_ONLY
+    )
+    add_participant(context.db, invited, context.user_id)
+    create_event(
+        context.db, creator, "Encontro fechado", privacy=EventPrivacyEnum.INVITE_ONLY
+    )
+    create_event(
+        context.db, creator, "Encontro passado", starts_at=NOW - timedelta(days=1)
+    )
+    create_event(
+        context.db,
+        creator,
+        "Encontro cancelado",
+        event_status=EventStatusEnum.CANCELLED,
+    )
+    deleted = create_event(context.db, creator, "Encontro removido")
+    context.db.get(EventModel, deleted).deleted_at = NOW
+    for reverse in (False, True):
+        blocked = create_person(context.db, f"Bloqueado {reverse}")
+        context.db.add(
+            UserBlockModel(
+                blocker_id=blocked if reverse else context.user_id,
+                blocked_id=context.user_id if reverse else blocked,
+            )
+        )
+        create_event(context.db, blocked, "Encontro bloqueado")
+    context.db.commit()
+    response = context.client.get(
+        "/search/events", params={"q": "encontro"}, headers=context.auth_headers
+    )
+    assert response.status_code == 200
+    body = response.json()
+    items = {item["event_id"]: item for item in body["items"]}
+    assert set(items) == {str(public), str(private), str(invited)}
+    assert body["total"] == 3
+    assert items[str(private)]["is_preview"] is True
+    assert items[str(public)]["is_preview"] is False
+    assert items[str(invited)]["is_preview"] is False
+    assert items[str(private)]["location_name"] == "Bom Fim, Porto Alegre"
+    assert items[str(private)]["location_precision"] == "APPROXIMATE"
+    assert items[str(private)]["description"] is None
+    assert "Rua secreta" not in response.text
+    add_participant(context.db, private, context.user_id)
+    full = context.client.get(
+        "/search/events", params={"q": "encontro privado"}, headers=context.auth_headers
+    ).json()["items"][0]
+    assert full["is_preview"] is False
+    assert full["location_name"] == "Rua secreta, 123"
+    assert full["location_precision"] == "EXACT"
+
+
+@pytest.mark.parametrize("limit", ["0", "-1", "51", "abc", "1.5", "", "9" * 20])
+def test_search_events_invalid_limit(context, limit):
+    response = context.client.get(
+        "/search/events",
+        params={"q": "copa", "limit": limit},
+        headers=context.auth_headers,
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid pagination parameters"}
+
+
+@pytest.mark.parametrize(
+    "cursor",
+    [
+        "",
+        "malformed",
+        "x" * 257,
+        encode_cursor(datetime(2026, 1, 1), UUID(int=1)),
+        encode_cursor(datetime(2026, 1, 1, tzinfo=UTC), UUID(int=1)) + "!",
+    ],
+)
+def test_search_events_invalid_cursor(context, cursor):
+    response = context.client.get(
+        "/search/events",
+        params={"q": "copa", "cursor": cursor},
+        headers=context.auth_headers,
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid pagination parameters"}
+
+
+@pytest.mark.parametrize(
+    "params, detail, status",
+    [
+        ({"q": "copa", "tag_ids": str(UUID(int=99))}, "Tag not found", 404),
+        ({"q": "copa", "tag_ids": "invalid"}, "Tag not found", 404),
+        ({"q": "copa", "date_from": "invalid"}, "Invalid date format", 400),
+        (
+            {"q": "copa", "date_from": "2026-12-02", "date_to": "2026-12-01"},
+            "date_from must be before date_to",
+            400,
+        ),
+        ({"q": "a"}, "Query is too short", 400),
+    ],
+)
+def test_search_events_filter_errors(context, params, detail, status):
+    response = context.client.get(
+        "/search/events", params=params, headers=context.auth_headers
+    )
+    assert response.status_code == status
+    assert response.json() == {"detail": detail}
+
+
+@pytest.mark.parametrize("token", [None, "invalid", "expired"])
+def test_search_events_authentication(context, token):
+    headers = {}
+    if token == "expired":
+        token = jwt.encode(
+            {
+                "sub": str(context.user_id),
+                "exp": datetime.now(UTC) - timedelta(minutes=1),
+            },
+            settings.jwt_secret_key,
+            algorithm=settings.jwt_algorithm,
+        )
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+    response = context.client.get(
+        "/search/events", params={"q": "copa"}, headers=headers
+    )
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Could not validate credentials"}
+
+
+def test_search_events_default_and_maximum_page_size(context):
+    creator = create_person(context.db, "Organizador")
+    for i in range(51):
+        create_event(context.db, creator, f"Festival {i}")
+    default = context.client.get(
+        "/search/events", params={"q": "festival"}, headers=context.auth_headers
+    )
+    assert default.status_code == 200
+    assert len(default.json()["items"]) == 20
+    assert default.json()["total"] == 51
+    maximum = context.client.get(
+        "/search/events",
+        params={"q": "festival", "limit": 50},
+        headers=context.auth_headers,
+    )
+    assert maximum.status_code == 200
+    assert len(maximum.json()["items"]) == 50
+    assert maximum.json()["next_cursor"]
+
+
+def test_search_events_cursor_after_last_item_keeps_filtered_total(context):
+    creator = create_person(context.db, "Organizador")
+    create_event(context.db, creator, "Copa")
+    cursor = encode_cursor(NOW + timedelta(days=30), UUID(int=1))
+    response = context.client.get(
+        "/search/events",
+        params={"q": "copa", "cursor": cursor},
+        headers=context.auth_headers,
+    )
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "next_cursor": None, "total": 1}
+
+
+@pytest.mark.parametrize(
+    "params, expected_error",
+    [
+        ({"limit": "invalid"}, InvalidPaginationError),
+        ({"limit": "0"}, InvalidPaginationError),
+        ({"cursor": "invalid"}, InvalidPaginationError),
+        ({"date_from": "invalid"}, InvalidSearchDateFormatError),
+        ({"date_to": "2026-13-40"}, InvalidSearchDateFormatError),
+        ({"tag_ids": "invalid"}, SearchTagNotFoundError),
+        ({"tag_ids": ","}, SearchTagNotFoundError),
+    ],
+)
+def test_search_events_service_owns_input_validation(params, expected_error):
+    # Mapping even malformed input must succeed; domain errors belong to the service.
+    criteria = SearchMapper.to_events_query(
+        uuid.uuid4(), q="copa", **{"limit": "20", **params}
+    )
+    repository = Mock()
+    with pytest.raises(expected_error):
+        SearchService(repository).search_events(criteria)
+    repository.search_events.assert_not_called()

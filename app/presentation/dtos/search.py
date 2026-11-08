@@ -81,6 +81,12 @@ class SearchEventsBlockOutput(BaseModel):
     has_more: bool
 
 
+class SearchEventsPageOutput(BaseModel):
+    items: list[SearchEventItemOutput]
+    next_cursor: str | None
+    total: int
+
+
 class SearchBusinessesBlockOutput(BaseModel):
     items: list[SearchBusinessItemOutput]
     total: int
@@ -107,6 +113,7 @@ __all__ = [
     "SearchBusinessesBlockOutput",
     "SearchEventItemOutput",
     "SearchEventsBlockOutput",
+    "SearchEventsPageOutput",
     "SearchOutput",
     "SearchQueryParams",
     "SearchUserItemOutput",

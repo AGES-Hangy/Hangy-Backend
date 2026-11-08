@@ -1,5 +1,5 @@
 from collections.abc import Collection, Sequence
-from datetime import UTC, datetime, time
+from datetime import UTC, date, datetime, time
 from typing import Protocol
 from uuid import UUID
 
@@ -7,6 +7,9 @@ from app.domain.entities import (
     SearchBusinessItem,
     SearchEventCandidate,
     SearchEventItem,
+    SearchEventsPage,
+    SearchEventsQuery,
+    SearchFilters,
     SearchQuery,
     SearchResult,
     SearchResultBlock,
@@ -15,12 +18,19 @@ from app.domain.entities import (
 )
 from app.domain.enums import SearchResultType
 from app.domain.services.event_visibility import resolve_event_visibility
+from app.domain.services.pagination import (
+    InvalidPaginationError,
+    decode_cursor,
+    encode_cursor,
+)
 
+DEFAULT_SEARCH_LIMIT = 20
 MIN_SEARCH_QUERY_LENGTH = 2
 MAX_SEARCH_QUERY_LENGTH = 120
 DEFAULT_SEARCH_PREVIEW_LIMIT = 5
 MIN_SEARCH_PREVIEW_LIMIT = 1
 MAX_SEARCH_PREVIEW_LIMIT = 50
+MAX_SEARCH_LIMIT = MAX_SEARCH_PREVIEW_LIMIT
 MAX_TAG_DEPTH = 10
 
 
@@ -40,6 +50,7 @@ class SearchRepository(Protocol):
         reference_time: datetime,
         limit: int,
         offset: int = 0,
+        after: tuple[datetime, UUID] | None = None,
     ) -> tuple[list[SearchEventCandidate], int]: ...
 
     def search_businesses(
@@ -84,6 +95,103 @@ class InvalidSearchPreviewLimitError(Exception):
 class SearchService:
     def __init__(self, repository: SearchRepository) -> None:
         self.repository = repository
+
+    def search_events(self, criteria: SearchEventsQuery) -> SearchEventsPage:
+        try:
+            if len(criteria.limit) > 10:
+                raise InvalidPaginationError
+            limit = int(criteria.limit)
+        except ValueError as error:
+            raise InvalidPaginationError from error
+        if not 1 <= limit <= MAX_SEARCH_LIMIT:
+            raise InvalidPaginationError
+        after = None
+        cursor = criteria.cursor
+        if cursor is not None:
+            if not cursor or len(cursor) > 256:
+                raise InvalidPaginationError
+            after = decode_cursor(cursor)
+            if (
+                after[0].tzinfo is None
+                or after[0].utcoffset() is None
+                or encode_cursor(*after) != cursor
+            ):
+                raise InvalidPaginationError
+        filters = self._parse_events_filters(criteria)
+        query = self._normalize_query(
+            criteria.query,
+            has_filters=bool(
+                filters.tag_ids
+                or filters.date_from is not None
+                or filters.date_to is not None
+            ),
+        )
+        if (
+            filters.date_from is not None
+            and filters.date_to is not None
+            and filters.date_from > filters.date_to
+        ):
+            raise InvalidSearchDateRangeError
+        expanded_tag_ids = self._validate_and_expand_tags(filters.tag_ids)
+        candidates, total = self.repository.search_events(
+            criteria.viewer_id,
+            query=query,
+            tag_ids=expanded_tag_ids,
+            date_from=(
+                datetime.combine(filters.date_from, time.min, tzinfo=UTC)
+                if filters.date_from is not None
+                else None
+            ),
+            date_to=(
+                datetime.combine(filters.date_to, time.max, tzinfo=UTC)
+                if filters.date_to is not None
+                else None
+            ),
+            reference_time=datetime.now(UTC),
+            limit=limit + 1,
+            after=after,
+        )
+        items = tuple(
+            self._to_event_item(candidate, criteria.viewer_id)
+            for candidate in candidates[:limit]
+        )
+        next_cursor = None
+        if len(candidates) > limit:
+            last = items[-1]
+            event_date = last.event_date
+            if event_date.tzinfo is None:
+                event_date = event_date.replace(tzinfo=UTC)
+            next_cursor = encode_cursor(event_date, last.event_id)
+        return SearchEventsPage(items=items, next_cursor=next_cursor, total=total)
+
+    @staticmethod
+    def _parse_events_date(raw: str | None) -> date | None:
+        if raw is None or not raw.strip():
+            return None
+        cleaned = raw.strip()
+        if len(cleaned) != 10 or cleaned[4] != "-" or cleaned[7] != "-":
+            raise InvalidSearchDateFormatError
+        try:
+            return date.fromisoformat(cleaned)
+        except ValueError as error:
+            raise InvalidSearchDateFormatError from error
+
+    @staticmethod
+    def _parse_events_filters(criteria: SearchEventsQuery) -> SearchFilters:
+        date_from = SearchService._parse_events_date(criteria.date_from)
+        date_to = SearchService._parse_events_date(criteria.date_to)
+        tag_ids: tuple[UUID, ...] = ()
+        if criteria.tag_ids is not None and criteria.tag_ids.strip():
+            try:
+                tag_ids = tuple(
+                    dict.fromkeys(
+                        UUID(part.strip())
+                        for part in criteria.tag_ids.strip().split(",")
+                    )
+                )
+            except ValueError as error:
+                raise SearchTagNotFoundError from error
+        return SearchFilters(tag_ids=tag_ids, date_from=date_from, date_to=date_to)
 
     def search(self, criteria: SearchQuery) -> SearchResult:
         if (
@@ -303,10 +411,12 @@ class SearchService:
 
 
 __all__ = [
+    "DEFAULT_SEARCH_LIMIT",
     "DEFAULT_SEARCH_PREVIEW_LIMIT",
     "InvalidSearchDateFormatError",
     "InvalidSearchDateRangeError",
     "InvalidSearchPreviewLimitError",
+    "MAX_SEARCH_LIMIT",
     "MAX_SEARCH_PREVIEW_LIMIT",
     "MAX_SEARCH_QUERY_LENGTH",
     "MIN_SEARCH_PREVIEW_LIMIT",

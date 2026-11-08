@@ -32,6 +32,19 @@ class SearchQuery:
 
 
 @dataclass(frozen=True, slots=True)
+class SearchEventsQuery:
+    """Event listing input, interpreted and validated by the search service."""
+
+    viewer_id: UUID
+    limit: str
+    query: str | None = None
+    tag_ids: str | None = None
+    date_from: str | None = None
+    date_to: str | None = None
+    cursor: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SearchEventCandidate:
     """Persistence facts of an event matched by search before visibility rules."""
 
@@ -53,6 +66,13 @@ class SearchEventItem:
     description: str | None
     participants_count: int | None
     cover_photo_url: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SearchEventsPage:
+    items: tuple[SearchEventItem, ...]
+    next_cursor: str | None
+    total: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +123,8 @@ __all__ = [
     "SearchBusinessItem",
     "SearchEventCandidate",
     "SearchEventItem",
+    "SearchEventsPage",
+    "SearchEventsQuery",
     "SearchFilters",
     "SearchQuery",
     "SearchResult",
