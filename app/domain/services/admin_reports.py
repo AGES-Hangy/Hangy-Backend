@@ -5,6 +5,7 @@ from uuid import UUID
 from app.domain.entities import (
     AdminReportDetail,
     AdminReportDetailRecord,
+    AdminReportOrganizer,
     AdminReportPreviousCounts,
     AdminReportQueueItem,
     AdminReportResolution,
@@ -124,8 +125,9 @@ class AdminReportsService:
     def _to_detail(
         cls, record: AdminReportDetailRecord, now: datetime
     ) -> AdminReportDetail:
+        target_type = cls._resolve_target_type(record)
         target = AdminReportTarget(
-            type=cls._resolve_target_type(record),
+            type=target_type,
             id=record.target_user_id,
             name=record.target_user_name,
             member_since=_as_utc(record.target_created_at).date(),
@@ -156,6 +158,18 @@ class AdminReportsService:
             reported_at=_as_utc(record.reported_at),
             previous_reports=previous_reports,
             resolution=cls._resolve_resolution(record),
+            organizer=(
+                AdminReportOrganizer(
+                    user_id=target.id,
+                    name=target.name,
+                    photo_url=record.target_photo_url,
+                    moderation_status=target.moderation_status,
+                    events_count=target.event_count,
+                    reports_count=record.target_reports_count,
+                )
+                if target_type == "EVENT"
+                else None
+            ),
         )
 
     @staticmethod

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.assemblers import (
     AdminDashboardAssembler,
+    AdminEventModerationAssembler,
     AdminReportAssembler,
     AdminUserModerationAssembler,
     AuditLogAssembler,
@@ -23,6 +24,7 @@ from app.domain.services import (
     AccountAlreadyBannedError,
     AccountNotModeratedError,
     AdminDashboardService,
+    AdminEventModerationService,
     AdminReportsService,
     AdminTagNotFoundError,
     AdminTagsService,
@@ -30,11 +32,15 @@ from app.domain.services import (
     AuditLogger,
     AuditLogService,
     CategoryHasTagsError,
+    EventAlreadyRemovedError,
+    EventModerationNotFoundError,
     InvalidPaginationError,
     ModeratedUserNotFoundError,
+    NotificationDispatcher,
     ParentTagNotCategoryError,
     ParentTagNotFoundError,
     ReportAlreadyResolvedError,
+    ReportNotAboutEventError,
     ReportNotAboutUserError,
     ReportNotFoundError,
     SelfModerationError,
@@ -44,6 +50,9 @@ from app.domain.services import (
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.admin_dashboard import (
     SqlAlchemyAdminDashboardRepository,
+)
+from app.infrastructure.repository.admin_event_moderation import (
+    SqlAlchemyEventModerationRepository,
 )
 from app.infrastructure.repository.admin_report import (
     SqlAlchemyAdminReportsRepository,
@@ -55,6 +64,8 @@ from app.infrastructure.repository.user import SqlAlchemyUserRepository
 from app.presentation.dependencies.admin import require_admin
 from app.presentation.dtos import (
     AdminDashboardOutput,
+    AdminEventModerationInput,
+    AdminEventModerationOutput,
     AdminReportDetailOutput,
     AdminReportsOutput,
     AdminTagOutput,
@@ -64,7 +75,12 @@ from app.presentation.dtos import (
     CreateAdminTagInput,
     RenameAdminTagInput,
 )
-from app.presentation.mappers import AdminTagMapper, AdminUserModerationMapper
+from app.presentation.mappers import (
+    AdminEventModerationMapper,
+    AdminTagMapper,
+    AdminUserModerationMapper,
+)
+from app.presentation.routes.events import get_notification_dispatcher
 
 router = APIRouter(tags=["Admin"])
 
@@ -121,6 +137,19 @@ def get_admin_user_moderation_service(
         user_repository=SqlAlchemyUserRepository(db),
         report_repository=SqlAlchemyReportRepository(db),
         audit_logger=audit_logger,
+    )
+
+
+def get_admin_event_moderation_service(
+    db: Annotated[Session, Depends(get_db)],
+    audit_logger: Annotated[AuditLogger, Depends(get_audit_logger)],
+    dispatcher: Annotated[NotificationDispatcher, Depends(get_notification_dispatcher)],
+) -> AdminEventModerationService:
+    return AdminEventModerationService(
+        event_repository=SqlAlchemyEventModerationRepository(db),
+        report_repository=SqlAlchemyReportRepository(db),
+        audit_logger=audit_logger,
+        dispatcher=dispatcher,
     )
 
 
@@ -245,6 +274,8 @@ def list_admin_reports(
 @router.get(
     "/admin/reports/{report_id}",
     response_model=AdminReportDetailOutput,
+    # Keeps `organizer` out of the body unless the assembler set it.
+    response_model_exclude_unset=True,
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(require_admin)],
     summary="Detalhe de uma denúncia",
@@ -253,6 +284,9 @@ def list_admin_reports(
         "(usuário, estabelecimento ou organizador do evento denunciado), motivo, "
         "relato de quem denunciou, histórico de denúncias anteriores fechadas "
         "contra o mesmo alvo e, quando já resolvida, os dados da resolução. "
+        "Quando `target.type` é `EVENT`, traz também o bloco `organizer` "
+        "(`user_id`, `name`, `photo_url`, `moderation_status`, `events_count`, "
+        "`reports_count`); nos demais alvos o campo não vem na resposta. "
         "Exige Bearer token de um usuário com `role = ADMIN`."
     ),
     responses={
@@ -512,7 +546,7 @@ def delete_admin_tag(
     summary="Listar o log de auditoria de ações administrativas",
     description=(
         "Lista os registros de auditoria mais recentes primeiro. Filtra "
-        "opcionalmente por `target_type` (USER, REPORT ou TAG)."
+        "opcionalmente por `target_type` (USER, REPORT, TAG ou EVENT)."
     ),
     responses={
         status.HTTP_400_BAD_REQUEST: {
@@ -544,7 +578,7 @@ def get_audit_log(
     audit_log_service: Annotated[AuditLogService, Depends(get_audit_log_service)],
     target_type: Annotated[
         AuditTargetTypeEnum | None,
-        Query(description="Filtra por USER, REPORT ou TAG"),
+        Query(description="Filtra por USER, REPORT, TAG ou EVENT"),
     ] = None,
     limit: Annotated[
         int,
@@ -673,3 +707,108 @@ def patch_admin_user_moderation(
             detail="Admins cannot moderate their own account",
         ) from error
     return AdminUserModerationAssembler.to_dto(updated, now=now)
+
+
+@router.patch(
+    "/admin/events/{event_id}/moderation",
+    response_model=AdminEventModerationOutput,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_admin)],
+    summary="Remover um evento denunciado",
+    description=(
+        "Ação de moderação sobre um evento. Hoje só existe `REMOVE`: remoção "
+        "por moderação (soft delete). O evento some do feed, da busca, do mapa "
+        "e do perfil do organizador, e o detalhe passa a devolver `404`; os "
+        "dados continuam no banco para auditoria. As participações ativas "
+        "(`CONFIRMED` e `PENDING`) são canceladas e participantes e organizador "
+        "recebem a notificação `EVENT_REMOVED`. A conta do organizador não é "
+        "alterada (banir/suspender continua em `/admin/users/{user_id}/"
+        "moderation`). `report_id` é opcional: quando informado, aquela "
+        "denúncia vira `RESOLVED` com `resolution = EVENT_REMOVED`; as demais "
+        "denúncias ainda abertas do mesmo evento são resolvidas junto, com a "
+        "mesma resolução. Sem `report_id`, `report_id` e `report_status` "
+        "voltam `null`. Registra `EVENT_REMOVED` no log de auditoria. Exige "
+        "Bearer token de um usuário com `role = ADMIN`."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "O `report_id` informado denuncia outro alvo.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Report does not belong to this event"}
+                }
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Usuário autenticado, mas `role != ADMIN`.",
+            "content": {
+                "application/json": {"example": {"detail": "Admin access required"}}
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": (
+                "O evento não existe (`Event not found`) ou o `report_id` "
+                "informado não existe (`Report not found`)."
+            ),
+            "content": {"application/json": {"example": {"detail": "Event not found"}}},
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": (
+                "O evento já foi removido (`Event already removed`) ou o "
+                "`report_id` é de uma denúncia já `RESOLVED`/`REJECTED` "
+                "(`Report already resolved`)."
+            ),
+            "content": {
+                "application/json": {"example": {"detail": "Event already removed"}}
+            },
+        },
+    },
+)
+def patch_admin_event_moderation(
+    event_id: UUID,
+    payload: AdminEventModerationInput,
+    current_admin: Annotated[User, Depends(require_admin)],
+    moderation_service: Annotated[
+        AdminEventModerationService, Depends(get_admin_event_moderation_service)
+    ],
+) -> AdminEventModerationOutput:
+    assert current_admin.user_id is not None
+    action = AdminEventModerationMapper.to_entity(payload)
+    try:
+        result = moderation_service.apply_action(
+            event_id, action, actor_id=current_admin.user_id
+        )
+    except EventModerationNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found",
+        ) from error
+    except ReportNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found",
+        ) from error
+    except EventAlreadyRemovedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Event already removed",
+        ) from error
+    except ReportAlreadyResolvedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Report already resolved",
+        ) from error
+    except ReportNotAboutEventError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Report does not belong to this event",
+        ) from error
+    return AdminEventModerationAssembler.to_dto(result)

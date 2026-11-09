@@ -9,6 +9,7 @@ from app.domain.enums import ModerationStatusEnum, ReportStatusEnum, ReportTypeE
 __all__ = [
     "AdminReportDetailOutput",
     "AdminReportItemOutput",
+    "AdminReportOrganizerOutput",
     "AdminReportPreviousReportsOutput",
     "AdminReportResolutionOutput",
     "AdminReportTargetOutput",
@@ -29,6 +30,15 @@ class AdminReportTargetOutput(BaseModel):
     member_since: date
     event_count: int
     moderation_status: ModerationStatusEnum
+
+
+class AdminReportOrganizerOutput(BaseModel):
+    user_id: UUID
+    name: str | None
+    photo_url: str | None
+    moderation_status: ModerationStatusEnum
+    events_count: int
+    reports_count: int
 
 
 class AdminReportPreviousReportsOutput(BaseModel):
@@ -55,6 +65,8 @@ class AdminReportDetailOutput(BaseModel):
     reported_at: datetime
     previous_reports: AdminReportPreviousReportsOutput
     resolution: AdminReportResolutionOutput | None
+    # Only present when target.type is EVENT; omitted for user and business.
+    organizer: AdminReportOrganizerOutput | None = None
 
 
 class AdminReportItemOutput(BaseModel):

@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.domain.entities import AuditLogEntry
 from app.domain.enums import AuditActionEnum, AuditTargetTypeEnum
-from app.infrastructure.repository.models import AuditLogModel, TagModel, UserModel
+from app.infrastructure.repository.models import (
+    AuditLogModel,
+    EventModel,
+    TagModel,
+    UserModel,
+)
 
 
 class SqlAlchemyAuditLogRepository:
@@ -47,6 +52,9 @@ class SqlAlchemyAuditLogRepository:
         if target_type is AuditTargetTypeEnum.TAG:
             tag = self.db.get(TagModel, target_id)
             return tag.tag_name if tag is not None else None
+        if target_type is AuditTargetTypeEnum.EVENT:
+            event = self.db.get(EventModel, target_id)
+            return event.event_title if event is not None else None
         # REPORT rows have no display name, only a UUID: fall back to a short
         # fragment of it so the summary has something stable to reference.
         return f"#{str(target_id)[:8]}"
