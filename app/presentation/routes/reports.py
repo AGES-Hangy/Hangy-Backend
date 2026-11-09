@@ -123,6 +123,7 @@ CREATE_REPORT_RESPONSES = {
     },
 }
 
+# POST /reports error map
 _REPORT_ERRORS: tuple[tuple[type[Exception], int, str], ...] = (
     (
         ExactlyOneReportTargetError,
@@ -148,12 +149,23 @@ _REPORT_ERRORS: tuple[tuple[type[Exception], int, str], ...] = (
     ),
 )
 
+# GET /reports/reasons error map — CannotReportYourselfError is 403 here
+# (the caller cannot report this target at all), unlike POST where it is 400.
+_REASONS_ERRORS: tuple[tuple[type[Exception], int, str], ...] = (
+    (CannotReportYourselfError, status.HTTP_403_FORBIDDEN, CANNOT_REPORT_YOURSELF),
+    (ReportParticipantsOnlyError, status.HTTP_403_FORBIDDEN, PARTICIPANTS_ONLY),
+    (ReportTargetNotFoundError, status.HTTP_404_NOT_FOUND, "Target not found"),
+)
 
-def _translate_report_error(error: Exception) -> HTTPException | None:
-    for error_type, status_code, detail in _REPORT_ERRORS:
+
+def _translate_error(
+    error: Exception,
+    table: tuple[tuple[type[Exception], int, str], ...],
+) -> HTTPException:
+    for error_type, status_code, detail in table:
         if isinstance(error, error_type):
             return HTTPException(status_code=status_code, detail=detail)
-    return None
+    raise error
 
 
 @router.get(
@@ -223,13 +235,7 @@ def list_report_reasons(
         ReportParticipantsOnlyError,
         ReportTargetNotFoundError,
     ) as error:
-        if isinstance(error, CannotReportYourselfError):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN, detail=CANNOT_REPORT_YOURSELF
-            ) from error
-        http_error = _translate_report_error(error)
-        assert http_error is not None
-        raise http_error from error
+        raise _translate_error(error, _REASONS_ERRORS) from error
     return ReportAssembler.to_reason_dtos(reasons)
 
 
@@ -267,7 +273,5 @@ def create_report(
         ReportTargetNotFoundError,
         ReportAlreadyUnderReviewError,
     ) as error:
-        http_error = _translate_report_error(error)
-        assert http_error is not None
-        raise http_error from error
+        raise _translate_error(error, _REPORT_ERRORS) from error
     return ReportAssembler.to_created_dto(report)
