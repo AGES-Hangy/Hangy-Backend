@@ -36,6 +36,9 @@ MIN_SEARCH_PREVIEW_LIMIT = 1
 MAX_SEARCH_PREVIEW_LIMIT = 50
 MAX_SEARCH_LIMIT = MAX_SEARCH_PREVIEW_LIMIT
 MAX_TAG_DEPTH = 10
+# A name cursor carries the full display name (up to 120 characters, each up
+# to 4 bytes in UTF-8) plus "|" and a UUID, base64-encoded: 4 * ceil(517 / 3).
+MAX_NAME_CURSOR_LENGTH = 692
 
 
 class SearchRepository(Protocol):
@@ -199,7 +202,7 @@ class SearchService:
     def _parse_name_cursor(cursor: str | None) -> tuple[str, UUID] | None:
         if cursor is None:
             return None
-        if not cursor or len(cursor) > 256:
+        if not cursor or len(cursor) > MAX_NAME_CURSOR_LENGTH:
             raise InvalidPaginationError
         after = decode_name_cursor(cursor)
         if (

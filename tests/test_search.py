@@ -1448,6 +1448,32 @@ def test_search_users_orders_by_name_and_uuid_and_pages_by_cursor(context):
     assert len(seen_ids) == len(set(seen_ids)) == 4
 
 
+def test_search_users_cursor_accepts_long_accented_name(context):
+    # 120 characters is the longest name the API accepts; accented letters take
+    # two bytes in UTF-8, so the cursor ends up longer than 256 characters.
+    long_name = "Bruno " + "ç" * 114
+    first_id = create_person(context.db, long_name, user_id=UUID(int=1))
+    second_id = create_person(context.db, long_name, user_id=UUID(int=2))
+
+    first = context.client.get(
+        "/search/users",
+        params={"q": "bruno", "limit": 1},
+        headers=context.auth_headers,
+    )
+    assert first.status_code == 200
+    first_body = first.json()
+    assert [item["user_id"] for item in first_body["items"]] == [str(first_id)]
+    assert len(first_body["next_cursor"]) > 256
+
+    second = context.client.get(
+        "/search/users",
+        params={"q": "bruno", "limit": 1, "cursor": first_body["next_cursor"]},
+        headers=context.auth_headers,
+    )
+    assert second.status_code == 200
+    assert [item["user_id"] for item in second.json()["items"]] == [str(second_id)]
+
+
 def test_search_users_cursor_survives_previous_item_deletion(context):
     ids = [create_person(context.db, f"Bruno {letter}") for letter in ("A", "B", "C")]
     first = context.client.get(
@@ -1599,7 +1625,7 @@ def test_search_users_invalid_limit(context, limit):
     [
         "",
         "malformed",
-        "x" * 257,
+        "x" * 693,
         encode_name_cursor("   ", UUID(int=1)),
         encode_name_cursor("Bruno\x00Lima", UUID(int=1)),
         encode_name_cursor("x" * 121, UUID(int=1)),
