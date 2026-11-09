@@ -31,6 +31,9 @@ mock_provider "aws" {
   mock_resource "aws_secretsmanager_secret" {
     defaults = { arn = "arn:aws:secretsmanager:us-east-2:123456789012:secret:hangy-production/app-test" }
   }
+  mock_resource "aws_sesv2_email_identity" {
+    defaults = { arn = "arn:aws:ses:us-east-2:123456789012:identity/reset@hangy.example" }
+  }
 }
 
 mock_provider "random" {
@@ -42,9 +45,39 @@ mock_provider "random" {
 }
 
 variables {
+  email_from          = "reset@hangy.example"
   gitlab_project_path = "2026-2/2jk-4jk/hangy/hangy-backend"
   frontend_base_url   = "https://hangy.example"
   api_allowed_cidrs   = ["203.0.113.0/24"]
+}
+
+run "password_reset_email" {
+  command = plan
+
+  assert {
+    condition     = aws_sesv2_email_identity.password_reset.email_identity == var.email_from && jsondecode(aws_secretsmanager_secret_version.app.secret_string).EMAIL_BACKEND == "ses" && jsondecode(aws_secretsmanager_secret_version.app.secret_string).EMAIL_FROM == var.email_from && jsondecode(aws_secretsmanager_secret_version.app.secret_string).SES_REGION == var.aws_region
+    error_message = "Production must use SES with the managed sender and region."
+  }
+  assert {
+    condition = toset([for statement in jsondecode(aws_iam_role_policy.ec2.policy).Statement : jsonencode(statement) if anytrue([for action in statement.Action : startswith(action, "ses:") || action == "*"])]) == toset([
+      jsonencode({
+        Sid       = "SendPasswordResetEmails"
+        Effect    = "Allow"
+        Action    = ["ses:SendEmail"]
+        Resource  = aws_sesv2_email_identity.password_reset.arn
+        Condition = { StringEquals = { "ses:FromAddress" = var.email_from } }
+      }),
+    ])
+    error_message = "Runtime SES access must only send from the verified identity."
+  }
+}
+
+run "reject_invalid_email_sender" {
+  command = plan
+  variables {
+    email_from = "Hangy <reset@hangy.example>"
+  }
+  expect_failures = [var.email_from]
 }
 
 run "secure_arm_stack" {

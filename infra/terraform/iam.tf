@@ -69,6 +69,15 @@ resource "aws_iam_role_policy" "ec2" {
           "${aws_s3_bucket.app.arn}/profile-photos/*",
         ]
       },
+      {
+        Sid      = "SendPasswordResetEmails"
+        Effect   = "Allow"
+        Action   = ["ses:SendEmail"]
+        Resource = aws_sesv2_email_identity.password_reset.arn
+        Condition = {
+          StringEquals = { "ses:FromAddress" = var.email_from }
+        }
+      },
     ]
   })
 }

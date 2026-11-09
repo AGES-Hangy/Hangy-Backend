@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from unittest.mock import Mock
 from uuid import UUID, uuid4
 
 import jwt
@@ -12,13 +13,19 @@ from sqlalchemy.pool import StaticPool
 from app.config import settings
 from app.domain.enums import UserTypeEnum
 from app.domain.services.password_reset import password_hash
+from app.infrastructure.email import get_email_sender
 from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import PasswordResetTokenModel, UserModel
 from app.main import app
 
 
 @pytest.fixture
-def client() -> Iterator[TestClient]:
+def email_sender():
+    return Mock()
+
+
+@pytest.fixture
+def client(email_sender) -> Iterator[TestClient]:
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -32,6 +39,7 @@ def client() -> Iterator[TestClient]:
             yield db
 
     app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_email_sender] = lambda: email_sender
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
@@ -66,7 +74,14 @@ def get_password_reset_tokens() -> list[PasswordResetTokenModel]:
 
 def test_request_for_existing_email_returns_202_and_creates_token(
     client: TestClient,
+    email_sender,
+    monkeypatch,
+    caplog,
 ) -> None:
+    monkeypatch.setattr(
+        "app.domain.services.password_reset.secrets.randbelow", lambda _: 42
+    )
+    caplog.set_level("DEBUG")
     user_id = create_user("existing-reset@hangy.com")
 
     response = client.post(
@@ -80,10 +95,21 @@ def test_request_for_existing_email_returns_202_and_creates_token(
     assert len(tokens) == 1
     assert tokens[0].user_id == user_id
     assert tokens[0].code_hash
+    assert password_hash.verify("000042", tokens[0].code_hash)
+    assert tokens[0].expires_at - tokens[0].created_at == timedelta(minutes=15)
+    email_sender.send.assert_called_once_with(
+        "existing-reset@hangy.com",
+        "Seu código de redefinição de senha do Hangy",
+        "Use o código 000042 para redefinir sua senha no Hangy. "
+        "Ele vale por 15 minutos. Se você não pediu a redefinição, "
+        "ignore esta mensagem.",
+    )
+    assert "000042" not in caplog.text
 
 
 def test_request_for_unknown_email_returns_202_without_token(
     client: TestClient,
+    email_sender,
 ) -> None:
     response = client.post(
         "/auth/password-reset/request",
@@ -93,6 +119,53 @@ def test_request_for_unknown_email_returns_202_without_token(
     assert response.status_code == 202
     assert response.content == b""
     assert get_password_reset_tokens() == []
+    email_sender.send.assert_not_called()
+
+
+def test_sender_failure_preserves_response_and_token_without_logging_code(
+    client,
+    email_sender,
+    monkeypatch,
+    caplog,
+):
+    create_user("failed-email@hangy.com")
+    monkeypatch.setattr(
+        "app.domain.services.password_reset.secrets.randbelow", lambda _: 42
+    )
+    email_sender.send.side_effect = RuntimeError("provider echoed body: code 000042")
+    caplog.set_level("DEBUG")
+
+    response = client.post(
+        "/auth/password-reset/request", json={"email": "failed-email@hangy.com"}
+    )
+
+    assert response.status_code == 202
+    assert response.content == b""
+    assert len(get_password_reset_tokens()) == 1
+    email_sender.send.assert_called_once()
+    assert "Password reset email delivery failed" in caplog.text
+    assert "000042" not in caplog.text
+    assert "provider echoed" not in caplog.text
+
+
+def test_deleted_user_does_not_receive_email(client, email_sender):
+    user_id = create_user("deleted-reset@hangy.com")
+    db_generator = app.dependency_overrides[get_db]()
+    db = next(db_generator)
+    try:
+        db.get(UserModel, user_id).deleted_at = datetime.now(UTC)
+        db.commit()
+    finally:
+        db_generator.close()
+
+    response = client.post(
+        "/auth/password-reset/request", json={"email": "deleted-reset@hangy.com"}
+    )
+
+    assert response.status_code == 202
+    assert response.content == b""
+    assert get_password_reset_tokens() == []
+    email_sender.send.assert_not_called()
 
 
 def test_request_rejects_invalid_email(client: TestClient) -> None:
@@ -114,6 +187,31 @@ def test_request_rate_limits_repeated_requests(client: TestClient) -> None:
 
     assert [response.status_code for response in responses] == [202, 202, 202, 429]
     assert responses[-1].json() == {"detail": "Too many reset requests"}
+
+
+def test_resending_expires_previous_code_and_rate_limit_sends_no_extra_email(
+    client,
+    email_sender,
+):
+    email = "resend-reset@hangy.com"
+    create_user(email)
+    for _ in range(3):
+        assert (
+            client.post(
+                "/auth/password-reset/request", json={"email": email}
+            ).status_code
+            == 202
+        )
+    response = client.post("/auth/password-reset/request", json={"email": email})
+
+    assert response.status_code == 429
+    assert response.json() == {"detail": "Too many reset requests"}
+    assert email_sender.send.call_count == 3
+    tokens = sorted(get_password_reset_tokens(), key=lambda token: token.created_at)
+    assert len(tokens) == 3
+    assert tokens[0].expires_at <= tokens[2].created_at
+    assert tokens[1].expires_at <= tokens[2].created_at
+    assert tokens[2].expires_at - tokens[2].created_at == timedelta(minutes=15)
 
 
 VERIFY_URL = "/auth/password-reset/verify"

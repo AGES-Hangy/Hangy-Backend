@@ -45,6 +45,9 @@ class Settings:
         os.getenv("STARTING_SOON_WINDOW_MINUTES", "60")
     )
     aws_region: str = os.getenv("AWS_REGION", "us-east-1").strip()
+    email_backend: str = os.getenv("EMAIL_BACKEND", "console").strip().lower()
+    email_from: str = os.getenv("EMAIL_FROM", "").strip()
+    ses_region: str = os.getenv("SES_REGION", "").strip() or aws_region
     s3_bucket_name: str = os.getenv("S3_BUCKET_NAME", "").strip()
     aws_s3_bucket: str = os.getenv("AWS_S3_BUCKET", "").strip()
     image_max_size_bytes: int = int(os.getenv("IMAGE_MAX_SIZE_BYTES", "5242880"))
@@ -60,6 +63,12 @@ class Settings:
     profile_description_max_length: int = int(
         os.getenv("PROFILE_DESCRIPTION_MAX_LENGTH", "500")
     )
+
+    def __post_init__(self) -> None:
+        if self.email_backend not in {"console", "ses"}:
+            raise RuntimeError("EMAIL_BACKEND must be console or ses")
+        if self.email_backend == "ses" and (not self.email_from or not self.ses_region):
+            raise RuntimeError("Configure EMAIL_FROM and SES_REGION or AWS_REGION")
 
     @property
     def s3_public_base_url(self) -> str:

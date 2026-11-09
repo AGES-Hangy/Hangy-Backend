@@ -52,6 +52,7 @@ case "$1" in
   plan)
     [[ "$TF_VAR_gitlab_project_path" == '2026-2/2jk-4jk/hangy/hangy-backend' ]]
     [[ "$TF_VAR_gitlab_url" == 'https://tools.ages.pucrs.br' ]]
+    [[ "$TF_VAR_email_from" == 'reset@hangy.example' ]]
     [[ "$TF_VAR_api_allowed_cidrs" == '["0.0.0.0/0"]' ]]
     if [[ "$MOCK_CASE" == shared* ]]; then
       [[ "$TF_VAR_gitlab_oidc_provider_arn" == 'arn:aws:iam::123456789012:oidc-provider/tools.ages.pucrs.br' ]]
@@ -142,6 +143,8 @@ run_case() {
     export AWS_SESSION_TOKEN=provisioning-token CI_JOB_JWT_V2=oidc-token
     if [[ "$scenario" == missing_token ]]; then unset CI_JOB_JWT_V2; fi
     export FRONTEND_BASE_URL=https://hangy.example AWS_REGION=us-east-2
+    export EMAIL_FROM=reset@hangy.example
+    if [[ "$scenario" == missing_sender ]]; then unset EMAIL_FROM; fi
     unset CORS_ORIGINS API_ALLOWED_CIDRS TF_STATE_KEY
     bash scripts/deploy-gitlab.sh
   ) > "$work_dir/output" 2>&1 || result=$?
@@ -170,6 +173,10 @@ run_case() {
         [[ ! -s "$work_dir/operations" ]]
         grep -q 'Missing CI/CD variable: CI_JOB_JWT_V2' "$work_dir/output"
         ;;
+      missing_sender)
+        [[ ! -s "$work_dir/operations" ]]
+        grep -q 'Missing CI/CD variable: EMAIL_FROM' "$work_dir/output"
+        ;;
       build_failure|oidc_failure) ! grep -q 'aws ssm send-command' "$work_dir/operations" ;;
       smoke_timeout)
         grep -q 'Smoke test did not become healthy within 300 seconds.' "$work_dir/output"
@@ -190,6 +197,7 @@ run_case managed success arm64
 run_case shared success
 run_case shared_ready success
 run_case missing_token failure
+run_case missing_sender failure
 run_case stale failure
 run_case build_failure failure
 run_case slow_start success

@@ -4,6 +4,15 @@ variable "aws_region" {
   default     = "us-east-2"
 }
 
+variable "email_from" {
+  description = "Bare sender email address to verify in SES; production password reset sender."
+  type        = string
+  validation {
+    condition     = can(regex("^[^@<>\\s]+@[^@<>\\s]+\\.[^@<>\\s]+$", var.email_from))
+    error_message = "Provide a sender email address without a display name or whitespace."
+  }
+}
+
 variable "name" {
   description = "Prefixo único dos recursos desta instalação."
   type        = string

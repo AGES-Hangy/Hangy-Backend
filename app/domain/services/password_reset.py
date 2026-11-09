@@ -20,6 +20,7 @@ from app.domain.entities import (
 )
 
 __all__ = [
+    "EmailSender",
     "InvalidResetCodeError",
     "InvalidResetTokenError",
     "PasswordResetService",
@@ -36,6 +37,10 @@ request_limit = 3
 request_window_seconds = 15 * 60
 max_code_attempts = 5
 RESET_TOKEN_SCOPE = "password_reset"
+
+
+class EmailSender(Protocol):
+    def send(self, recipient: str, subject: str, body: str) -> None: ...
 
 
 class PasswordResetTokenRepository(Protocol):
@@ -84,10 +89,12 @@ class PasswordResetService:
         repository: PasswordResetTokenRepository,
         jwt_secret_key: str,
         jwt_algorithm: str,
+        email_sender: EmailSender,
     ) -> None:
         self.repository = repository
         self.jwt_secret_key = jwt_secret_key
         self.jwt_algorithm = jwt_algorithm
+        self.email_sender = email_sender
 
     def request_password_reset(self, request: PasswordResetRequest) -> None:
         _enforce_request_limit(request.email)
@@ -109,7 +116,18 @@ class PasswordResetService:
         )
         self.repository.expire_unverified_codes(user_id, now)
         self.repository.create(token)
-        logger.info("Password reset code: %s", code)
+        try:
+            self.email_sender.send(
+                request.email,
+                "Seu código de redefinição de senha do Hangy",
+                f"Use o código {code} para redefinir sua senha no Hangy. "
+                "Ele vale por 15 minutos. Se você não pediu a redefinição, "
+                "ignore esta mensagem.",
+            )
+        except Exception:
+            # Provider exceptions can contain the request body, including the code.
+            # Keep the persisted token and the same response when delivery fails.
+            logger.error("Password reset email delivery failed")
 
     def verify_code(self, verification: VerifyResetCode) -> PasswordResetToken:
         token = self.repository.get_latest_by_email(verification.email)

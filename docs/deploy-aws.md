@@ -100,9 +100,10 @@ Assim, as credenciais ficam disponíveis somente ao job de produção.
 | `AWS_ACCESS_KEY_ID` | Access key de uma identidade IAM autorizada a provisionar a infraestrutura |
 | `AWS_SECRET_ACCESS_KEY` | Secret access key correspondente |
 | `FRONTEND_BASE_URL` | URL HTTP(S) do frontend, por exemplo `https://hangy.example` |
+| `EMAIL_FROM` | Endereço real do remetente a verificar no SES, sem nome de exibição (ex.: `reset@seu-dominio.com`) |
 
 A identidade AWS precisa de permissões para gerenciar VPC, EC2/EBS/EIP, RDS,
-ECR, S3, Secrets Manager, IAM/OIDC e documentos/associações SSM, incluindo
+ECR, S3, SES (identidades de e-mail), Secrets Manager, IAM/OIDC e documentos/associações SSM, incluindo
 `iam:PassRole`, `iam:ListOpenIDConnectProviders`, `iam:GetOpenIDConnectProvider`
 e `iam:AddClientIDToOpenIDConnectProvider` para reutilizar um provedor existente.
 A role de deploy criada pelo
@@ -129,6 +130,35 @@ compartilhamentos: `<FRONTEND_BASE_URL>/e/<id>` ou
 do aplicativo `hangy://event/<id>` ou `hangy://invite/<token>`.
 O endereço público da API é separado e aparece no log do deploy; é esse
 endereço que o frontend usa para fazer requisições ao backend.
+
+### E-mail de redefinição de senha (SES)
+
+O Terraform cria `aws_sesv2_email_identity.password_reset` para `EMAIL_FROM`
+na região `AWS_REGION` (padrão `us-east-2`, onde o SES está disponível), limita
+`ses:SendEmail` da EC2 a essa identidade e grava `EMAIL_BACKEND=ses`,
+`EMAIL_FROM` e `SES_REGION` no segredo da aplicação. O deploy exige `EMAIL_FROM`
+antes de provisionar recursos. Não altere o segredo manualmente: o próximo apply
+restaura os valores gerenciados. Uma identidade já existente deve ser importada
+nesse endereço Terraform antes do apply, preservando o state existente.
+
+Após criar a identidade, abra a mensagem enviada pela AWS ao remetente e conclua
+a verificação. Criar o recurso não comprova a verificação nem a entrega. Antes
+da entrega em produção, consulte o estado da conta SES **nessa mesma região** e
+solicite acesso de produção à AWS caso ainda esteja no sandbox. No sandbox,
+destinatários também precisam ser verificados. Valide a entrega real a uma conta
+de teste autorizada após o deploy. A verificação de domínio/DKIM e a configuração
+de DNS dependem da definição do domínio do projeto (task 289).
+
+Referências AWS: [regiões SES](https://docs.aws.amazon.com/general/latest/gr/ses.html),
+[verificação de e-mail](https://docs.aws.amazon.com/ses/latest/dg/creating-identities.html#verify-email-addresses-procedure)
+e [saída do sandbox](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html).
+
+Localmente, `.env.example` usa `EMAIL_BACKEND=console`: o e-mail completo é
+impresso no stdout para desenvolvimento. Use `ses` em produção; o console pode
+aparecer nos logs do contêiner. A aplicação não registra o código nem detalhes
+da exceção de envio. Falhas de entrega preservam o token até expirar e mantêm
+o `202` vazio, assim como um endereço não cadastrado. O limite existente de três
+pedidos por e-mail a cada 15 minutos continua em memória, por processo.
 
 ### Tags e administrador de produção
 

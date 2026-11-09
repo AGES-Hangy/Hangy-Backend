@@ -2,7 +2,7 @@
 # One resource_group covers provisioning, publishing and the remote deployment.
 set -Eeuo pipefail
 umask 077
-for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY FRONTEND_BASE_URL CI_JOB_JWT_V2 CI_PROJECT_PATH CI_SERVER_URL CI_COMMIT_SHA CI_PIPELINE_ID CI_JOB_ID; do
+for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY FRONTEND_BASE_URL EMAIL_FROM CI_JOB_JWT_V2 CI_PROJECT_PATH CI_SERVER_URL CI_COMMIT_SHA CI_PIPELINE_ID CI_JOB_ID; do
   [[ -n "${!name:-}" ]] || { echo "Missing CI/CD variable: $name" >&2; exit 1; }
 done
 export AWS_REGION="${AWS_REGION:-us-east-2}"
@@ -51,6 +51,7 @@ export TF_VAR_aws_region="$AWS_REGION"
 export TF_VAR_gitlab_project_path="$CI_PROJECT_PATH"
 export TF_VAR_gitlab_url="$CI_SERVER_URL"
 export TF_VAR_frontend_base_url="$FRONTEND_BASE_URL"
+export TF_VAR_email_from="$EMAIL_FROM"
 export TF_VAR_cors_origins="${CORS_ORIGINS:-[]}"
 export TF_VAR_api_allowed_cidrs="${API_ALLOWED_CIDRS:-[\"0.0.0.0/0\"]}"
 unset TF_VAR_gitlab_oidc_provider_arn
