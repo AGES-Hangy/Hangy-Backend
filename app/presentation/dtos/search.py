@@ -66,6 +66,14 @@ class SearchBusinessItemOutput(BaseModel):
     photo_url: str | None = None
 
 
+class SearchBusinessPageItemOutput(BaseModel):
+    user_id: UUID
+    business_name: str | None
+    photo_url: str | None
+    city: str | None
+    is_following: bool
+
+
 class SearchUserItemOutput(BaseModel):
     user_id: UUID
     name: str | None
@@ -83,6 +91,12 @@ class SearchEventsBlockOutput(BaseModel):
 
 class SearchEventsPageOutput(BaseModel):
     items: list[SearchEventItemOutput]
+    next_cursor: str | None
+    total: int
+
+
+class SearchBusinessesPageOutput(BaseModel):
+    items: list[SearchBusinessPageItemOutput]
     next_cursor: str | None
     total: int
 
@@ -110,7 +124,9 @@ class SearchOutput(BaseModel):
 __all__ = [
     "SearchAppliedFiltersOutput",
     "SearchBusinessItemOutput",
+    "SearchBusinessPageItemOutput",
     "SearchBusinessesBlockOutput",
+    "SearchBusinessesPageOutput",
     "SearchEventItemOutput",
     "SearchEventsBlockOutput",
     "SearchEventsPageOutput",

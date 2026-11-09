@@ -5,7 +5,13 @@ import uuid
 from datetime import datetime
 from uuid import UUID
 
-__all__ = ["InvalidPaginationError", "decode_cursor", "encode_cursor"]
+__all__ = [
+    "InvalidPaginationError",
+    "decode_cursor",
+    "decode_text_cursor",
+    "encode_cursor",
+    "encode_text_cursor",
+]
 
 _CURSOR_SEP = "|"
 
@@ -25,5 +31,21 @@ def decode_cursor(cursor: str) -> tuple[datetime, UUID]:
         raw = base64.urlsafe_b64decode(cursor.encode()).decode()
         ts_part, id_part = raw.split(_CURSOR_SEP, 1)
         return datetime.fromisoformat(ts_part), uuid.UUID(id_part)
+    except Exception as exc:
+        raise InvalidPaginationError("Malformed cursor") from exc
+
+
+def encode_text_cursor(text: str, item_id: UUID) -> str:
+    """Opaque base64 cursor for lists ordered by a text column and the item's id."""
+    raw = f"{text}{_CURSOR_SEP}{item_id}"
+    return base64.urlsafe_b64encode(raw.encode()).decode()
+
+
+def decode_text_cursor(cursor: str) -> tuple[str, UUID]:
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+        # The text may contain the separator; the UUID never does.
+        text_part, id_part = raw.rsplit(_CURSOR_SEP, 1)
+        return text_part, uuid.UUID(id_part)
     except Exception as exc:
         raise InvalidPaginationError("Malformed cursor") from exc
