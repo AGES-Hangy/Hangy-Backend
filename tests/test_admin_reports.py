@@ -14,7 +14,6 @@ from app.domain.enums import (
     EventPrivacyEnum,
     EventStatusEnum,
     ReportStatusEnum,
-    ReportTypeEnum,
     UserRoleEnum,
     UserTypeEnum,
 )
@@ -23,6 +22,7 @@ from app.infrastructure.repository.models import UserModel
 from app.infrastructure.repository.models.event_model import EventModel
 from app.infrastructure.repository.models.report_model import ReportModel
 from app.main import app
+from tests.report_helpers import free_report_type
 
 NOW = datetime.now(UTC)
 QueueClient = tuple[TestClient, sessionmaker[Session]]
@@ -109,6 +109,9 @@ def add_report(
     user_id: UUID | None = None,
     event_id: UUID | None = None,
 ) -> None:
+    report_type = free_report_type(
+        db, creator_id, reported_user_id=user_id, reported_event_id=event_id
+    )
     db.add(
         ReportModel(
             report_id=uuid4(),
@@ -116,7 +119,7 @@ def add_report(
             report_creator_id=creator_id,
             reported_user_id=user_id,
             reported_event_id=event_id,
-            report_type=ReportTypeEnum.HARASSMENT,
+            report_type=report_type,
             description="Mensagens ofensivas",
             status=status,
             created_at=NOW - timedelta(minutes=minutes_ago),

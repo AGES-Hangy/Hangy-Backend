@@ -4,7 +4,12 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.domain.entities import REPORT_DESCRIPTION_MAX_LENGTH
-from app.domain.enums import ReportStatusEnum, ReportTypeEnum
+from app.domain.enums import (
+    ReportScopeEnum,
+    ReportStatusEnum,
+    ReportTypeEnum,
+    ReportUnavailableReasonEnum,
+)
 
 
 class ReportReasonOutput(BaseModel):
@@ -12,6 +17,9 @@ class ReportReasonOutput(BaseModel):
 
     code: ReportTypeEnum
     label: str
+    scope: ReportScopeEnum
+    available: bool
+    unavailable_reason: ReportUnavailableReasonEnum | None
 
 
 class ReportCreateInput(BaseModel):

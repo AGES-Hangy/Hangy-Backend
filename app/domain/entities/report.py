@@ -11,8 +11,10 @@ from uuid import UUID
 
 from app.domain.enums import (
     ReportResolutionActionEnum,
+    ReportScopeEnum,
     ReportStatusEnum,
     ReportTypeEnum,
+    ReportUnavailableReasonEnum,
 )
 
 REPORT_DESCRIPTION_MAX_LENGTH = 1000
@@ -50,3 +52,6 @@ class Report:
 class ReportReason:
     code: ReportTypeEnum
     label: str
+    scope: ReportScopeEnum = ReportScopeEnum.CONTENT
+    available: bool = True
+    unavailable_reason: ReportUnavailableReasonEnum | None = None

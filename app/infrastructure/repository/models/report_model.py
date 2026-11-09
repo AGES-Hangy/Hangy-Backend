@@ -40,25 +40,33 @@ class ReportModel(Base):
             "(reported_user_id IS NULL) <> (reported_event_id IS NULL)",
             name="ck_report_exactly_one_target",
         ),
+        # One open (PENDING/REVIEWED) report per author, target and reason. Two
+        # partial indexes because NULL targets never collide in a single one.
         Index(
-            "uq_report_pending_user",
+            "uq_report_open_user_type",
             "report_creator_id",
             "reported_user_id",
+            "report_type",
             unique=True,
             postgresql_where=text(
-                "status = 'PENDING' AND reported_user_id IS NOT NULL"
+                "status IN ('PENDING', 'REVIEWED') AND reported_user_id IS NOT NULL"
             ),
-            sqlite_where=text("status = 'PENDING' AND reported_user_id IS NOT NULL"),
+            sqlite_where=text(
+                "status IN ('PENDING', 'REVIEWED') AND reported_user_id IS NOT NULL"
+            ),
         ),
         Index(
-            "uq_report_pending_event",
+            "uq_report_open_event_type",
             "report_creator_id",
             "reported_event_id",
+            "report_type",
             unique=True,
             postgresql_where=text(
-                "status = 'PENDING' AND reported_event_id IS NOT NULL"
+                "status IN ('PENDING', 'REVIEWED') AND reported_event_id IS NOT NULL"
             ),
-            sqlite_where=text("status = 'PENDING' AND reported_event_id IS NOT NULL"),
+            sqlite_where=text(
+                "status IN ('PENDING', 'REVIEWED') AND reported_event_id IS NOT NULL"
+            ),
         ),
     )
 

@@ -6,11 +6,16 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.domain.entities import NewReport, Report
-from app.domain.enums import ReportResolutionActionEnum, ReportStatusEnum
+from app.domain.enums import (
+    OPEN_REPORT_STATUSES,
+    ReportResolutionActionEnum,
+    ReportStatusEnum,
+    ReportTypeEnum,
+)
 from app.domain.services.report import ReportAlreadyUnderReviewError
 from app.infrastructure.repository.models.report_model import ReportModel
 
-PENDING_UNIQUE_INDEXES = ("uq_report_pending_user", "uq_report_pending_event")
+OPEN_UNIQUE_INDEXES = ("uq_report_open_user_type", "uq_report_open_event_type")
 
 
 class SqlAlchemyReportRepository:
@@ -31,11 +36,34 @@ class SqlAlchemyReportRepository:
             self.db.commit()
         except IntegrityError as error:
             self.db.rollback()
-            if self._is_pending_uniqueness_violation(error):
+            if self._is_open_uniqueness_violation(error):
                 raise ReportAlreadyUnderReviewError from error
             raise
         self.db.refresh(model)
         return self._to_entity(model)
+
+    def list_open_report_types(
+        self,
+        creator_id: UUID,
+        *,
+        reported_user_id: UUID | None,
+        reported_event_id: UUID | None,
+    ) -> set[ReportTypeEnum]:
+        # No deleted_at filter on purpose: the unique indexes do not have one
+        # either, and this check must say 409 exactly when they would fail.
+        statement = select(ReportModel.report_type).where(
+            ReportModel.report_creator_id == creator_id,
+            ReportModel.status.in_(OPEN_REPORT_STATUSES),
+        )
+        if reported_user_id is not None:
+            statement = statement.where(
+                ReportModel.reported_user_id == reported_user_id
+            )
+        else:
+            statement = statement.where(
+                ReportModel.reported_event_id == reported_event_id
+            )
+        return set(self.db.scalars(statement))
 
     def get_by_id(self, report_id: UUID) -> Report | None:
         model = self.db.scalar(
@@ -102,7 +130,7 @@ class SqlAlchemyReportRepository:
         return result.rowcount
 
     @staticmethod
-    def _is_pending_uniqueness_violation(error: IntegrityError) -> bool:
+    def _is_open_uniqueness_violation(error: IntegrityError) -> bool:
         """Tell the open-report unique indexes apart from any other violation.
 
         PostgreSQL names the violated index in the message. SQLite (tests) only
@@ -110,7 +138,7 @@ class SqlAlchemyReportRepository:
         report_number and the primary key do not contain it.
         """
         message = str(error.orig)
-        if any(name in message for name in PENDING_UNIQUE_INDEXES):
+        if any(name in message for name in OPEN_UNIQUE_INDEXES):
             return True
         return "UNIQUE constraint failed: report.report_creator_id" in message
 

@@ -9,7 +9,13 @@ class ReportAssembler:
 
     @staticmethod
     def to_reason_dto(reason: ReportReason) -> ReportReasonOutput:
-        return ReportReasonOutput(code=reason.code, label=reason.label)
+        return ReportReasonOutput(
+            code=reason.code,
+            label=reason.label,
+            scope=reason.scope,
+            available=reason.available,
+            unavailable_reason=reason.unavailable_reason,
+        )
 
     @staticmethod
     def to_reason_dtos(reasons: list[ReportReason]) -> list[ReportReasonOutput]:
