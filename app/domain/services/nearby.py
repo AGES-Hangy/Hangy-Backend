@@ -1,5 +1,6 @@
 import math
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
+from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -16,6 +17,9 @@ DEFAULT_NEARBY_LIMIT = 50
 MAX_NEARBY_LIMIT = 100
 MIN_LATITUDE, MAX_LATITUDE = -90.0, 90.0
 MIN_LONGITUDE, MAX_LONGITUDE = -180.0, 180.0
+# The map filter sends macro and micro tags together, so this is higher than the
+# 5 tags an event can carry; it only bounds the query size.
+MAX_NEARBY_TAG_FILTERS = 50
 
 
 class NearbyRepository(Protocol):
@@ -25,7 +29,14 @@ class NearbyRepository(Protocol):
         latitude: float,
         longitude: float,
         radius_m: int,
+        starts_from: datetime | None = None,
+        starts_until: datetime | None = None,
+        tag_ids: Collection[UUID] | None = None,
     ) -> Sequence[NearbyEventCandidate]: ...
+
+    def expand_tag_ids(self, tag_ids: Collection[UUID]) -> set[UUID]:
+        """Existing tags among `tag_ids` plus every subtag below them."""
+        ...
 
 
 class InvalidNearbyCoordinatesError(Exception):
@@ -40,6 +51,18 @@ class InvalidNearbyLimitError(Exception):
     """Raised when a nearby search page size is outside accepted bounds."""
 
 
+class InvalidNearbyDateRangeError(Exception):
+    """Raised for an inverted range or a boundary that cannot be expressed in UTC."""
+
+
+class TooManyNearbyTagsError(Exception):
+    """Raised when a nearby search filters by more tags than allowed."""
+
+
+class NearbyTagNotFoundError(Exception):
+    """Raised when a nearby search filters by a tag that does not exist."""
+
+
 class NearbyService:
     def __init__(self, repository: NearbyRepository) -> None:
         self.repository = repository
@@ -51,6 +74,9 @@ class NearbyService:
         longitude: float,
         radius_m: int,
         limit: int = DEFAULT_NEARBY_LIMIT,
+        starts_from: datetime | None = None,
+        starts_until: datetime | None = None,
+        tag_ids: Collection[UUID] = (),
     ) -> NearbyEvents:
         if not (
             MIN_LATITUDE <= latitude <= MAX_LATITUDE
@@ -61,11 +87,27 @@ class NearbyService:
             raise NearbyRadiusExceededError
         if not 1 <= limit <= MAX_NEARBY_LIMIT:
             raise InvalidNearbyLimitError
+        starts_from = _as_utc(starts_from)
+        starts_until = _as_utc(starts_until)
+        if starts_from and starts_until and starts_until < starts_from:
+            raise InvalidNearbyDateRangeError
+        if len(tag_ids) > MAX_NEARBY_TAG_FILTERS:
+            raise TooManyNearbyTagsError
+        requested_tag_ids = set(tag_ids)
+        matching_tag_ids = None
+        if requested_tag_ids:
+            # A macro tag also matches events tagged with any of its subtags.
+            matching_tag_ids = self.repository.expand_tag_ids(requested_tag_ids)
+            if not requested_tag_ids <= matching_tag_ids:
+                raise NearbyTagNotFoundError
         candidates = self.repository.list_nearby(
             viewer_id=viewer_id,
             latitude=latitude,
             longitude=longitude,
             radius_m=radius_m,
+            starts_from=starts_from,
+            starts_until=starts_until,
+            tag_ids=matching_tag_ids,
         )
         nearby: list[NearbyEvent] = []
         for candidate in candidates:
@@ -112,6 +154,18 @@ class NearbyService:
             )
         nearby.sort(key=lambda item: (item.distance_m, item.event_id))
         return NearbyEvents(items=tuple(nearby[:limit]))
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    """A datetime without offset is read as UTC, like the stored `starts_at`."""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=UTC)
+    try:
+        return value.astimezone(UTC)
+    except OverflowError as error:
+        raise InvalidNearbyDateRangeError from error
 
 
 def _distance_m(
