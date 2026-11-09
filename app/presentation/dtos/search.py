@@ -3,7 +3,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.domain.enums import EventPrivacyEnum, LocationPrecisionEnum
+from app.domain.enums import (
+    EventPrivacyEnum,
+    LocationPrecisionEnum,
+    UserConnectionStatusEnum,
+)
 from app.domain.services.search import DEFAULT_SEARCH_PREVIEW_LIMIT
 
 
@@ -73,6 +77,7 @@ class SearchUserItemOutput(BaseModel):
     city: str | None = None
     state: str | None = None
     photo_url: str | None = None
+    connection_status: UserConnectionStatusEnum | None = None
 
 
 class SearchEventsBlockOutput(BaseModel):
@@ -99,6 +104,12 @@ class SearchUsersBlockOutput(BaseModel):
     has_more: bool
 
 
+class SearchUsersPageOutput(BaseModel):
+    items: list[SearchUserItemOutput]
+    next_cursor: str | None
+    total: int
+
+
 class SearchOutput(BaseModel):
     query: str | None
     applied_filters: SearchAppliedFiltersOutput
@@ -118,4 +129,5 @@ __all__ = [
     "SearchQueryParams",
     "SearchUserItemOutput",
     "SearchUsersBlockOutput",
+    "SearchUsersPageOutput",
 ]

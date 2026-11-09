@@ -25,6 +25,7 @@ from app.domain.enums import (
     EventParticipantStatusEnum,
     EventPrivacyEnum,
     EventStatusEnum,
+    UserConnectionStatusEnum,
     UserTypeEnum,
 )
 from app.infrastructure.repository.block import block_exists_between
@@ -35,6 +36,7 @@ from app.infrastructure.repository.models import (
     EventParticipantModel,
     PersonProfileModel,
     TagModel,
+    UserConnectionModel,
     UserModel,
     event_tag,
 )
@@ -367,13 +369,14 @@ class SqlAlchemySearchRepository:
         query: str,
         limit: int,
         offset: int = 0,
+        after: tuple[str, UUID] | None = None,
     ) -> tuple[list[SearchUserItem], int]:
-        conditions = (
+        conditions: list[ColumnElement[bool]] = [
             UserModel.deleted_at.is_(None),
             UserModel.user_type == UserTypeEnum.PERSONAL,
             ~block_exists_between(UserModel.user_id, viewer_id),
             self._text_match_condition(UserModel, UserModel.name, query),
-        )
+        ]
         total = (
             self.db.scalar(
                 select(func.count()).select_from(UserModel).where(*conditions)
@@ -383,21 +386,65 @@ class SqlAlchemySearchRepository:
         if total == 0 or limit <= 0:
             return [], total
 
-        rows = self.db.execute(
-            select(UserModel, PersonProfileModel.city, PersonProfileModel.state)
+        if after is not None:
+            after_name, after_id = after
+            conditions.append(
+                or_(
+                    UserModel.name > after_name,
+                    and_(
+                        UserModel.name == after_name,
+                        UserModel.user_id > after_id,
+                    ),
+                )
+            )
+
+        connection_status = (
+            select(UserConnectionModel.status)
+            .where(
+                UserConnectionModel.deleted_at.is_(None),
+                or_(
+                    and_(
+                        UserConnectionModel.requester_id == viewer_id,
+                        UserConnectionModel.receiver_id == UserModel.user_id,
+                    ),
+                    and_(
+                        UserConnectionModel.requester_id == UserModel.user_id,
+                        UserConnectionModel.receiver_id == viewer_id,
+                    ),
+                ),
+            )
+            .correlate(UserModel)
+            .limit(1)
+            .scalar_subquery()
+        )
+
+        statement = (
+            select(
+                UserModel,
+                PersonProfileModel.city,
+                PersonProfileModel.state,
+                connection_status,
+            )
             .outerjoin(
                 PersonProfileModel,
                 PersonProfileModel.user_id == UserModel.user_id,
             )
             .where(*conditions)
             .order_by(UserModel.name.asc(), UserModel.user_id.asc())
-            .offset(offset)
             .limit(limit)
-        ).all()
+        )
+        if offset:
+            statement = statement.offset(offset)
+        rows = self.db.execute(statement).all()
         return (
             [
-                self._to_user_entity(user, city=city, state=state)
-                for user, city, state in rows
+                self._to_user_entity(
+                    user,
+                    city=city,
+                    state=state,
+                    connection_status=conn_status,
+                )
+                for user, city, state, conn_status in rows
             ],
             total,
         )
@@ -431,6 +478,7 @@ class SqlAlchemySearchRepository:
         *,
         city: str | None,
         state: str | None,
+        connection_status: UserConnectionStatusEnum | None = None,
     ) -> SearchUserItem:
         return SearchUserItem(
             user_id=user.user_id,
@@ -439,6 +487,7 @@ class SqlAlchemySearchRepository:
             city=city,
             state=state,
             photo_url=user.profile_photo_url,
+            connection_status=connection_status,
         )
 
     @staticmethod

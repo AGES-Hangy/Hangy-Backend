@@ -7,6 +7,7 @@ from app.domain.enums import (
     EventParticipantStatusEnum,
     EventPrivacyEnum,
     SearchResultType,
+    UserConnectionStatusEnum,
 )
 
 
@@ -41,6 +42,16 @@ class SearchEventsQuery:
     tag_ids: str | None = None
     date_from: str | None = None
     date_to: str | None = None
+    cursor: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SearchUsersQuery:
+    """User listing input, interpreted and validated by the search service."""
+
+    viewer_id: UUID
+    limit: str
+    query: str | None = None
     cursor: str | None = None
 
 
@@ -97,6 +108,14 @@ class SearchUserItem:
     city: str | None = None
     state: str | None = None
     photo_url: str | None = None
+    connection_status: UserConnectionStatusEnum | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SearchUsersPage:
+    items: tuple[SearchUserItem, ...]
+    next_cursor: str | None
+    total: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,4 +149,6 @@ __all__ = [
     "SearchResult",
     "SearchResultBlock",
     "SearchUserItem",
+    "SearchUsersPage",
+    "SearchUsersQuery",
 ]
