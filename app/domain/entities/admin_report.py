@@ -13,6 +13,7 @@ from app.domain.enums import (
 __all__ = [
     "AdminReportDetail",
     "AdminReportDetailRecord",
+    "AdminReportOrganizer",
     "AdminReportPreviousCounts",
     "AdminReportQueueItem",
     "AdminReportResolution",
@@ -39,6 +40,18 @@ class AdminReportTarget:
     member_since: date
     event_count: int
     moderation_status: ModerationStatusEnum
+
+
+@dataclass(frozen=True, slots=True)
+class AdminReportOrganizer:
+    """The organizer behind a reported event, shaped like a user-list row."""
+
+    user_id: UUID
+    name: str | None
+    photo_url: str | None
+    moderation_status: ModerationStatusEnum
+    events_count: int
+    reports_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +95,9 @@ class AdminReportDetailRecord:
     resolved_by_name: str | None = None
     resolved_at: datetime | None = None
     resolution_action: str | None = None
+    # Only filled for event reports, where the target is the event's organizer.
+    target_photo_url: str | None = None
+    target_reports_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +113,7 @@ class AdminReportDetail:
     reported_at: datetime
     previous_reports: AdminReportPreviousCounts
     resolution: AdminReportResolution | None = None
+    organizer: AdminReportOrganizer | None = None
 
 
 @dataclass(frozen=True, slots=True)

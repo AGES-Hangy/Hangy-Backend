@@ -1,5 +1,6 @@
 from app.domain.entities import (
     AdminReportDetail,
+    AdminReportOrganizer,
     AdminReportQueueItem,
     AdminReportResolution,
     AdminReportsPage,
@@ -9,6 +10,7 @@ from app.domain.enums import UserTypeEnum
 from app.presentation.dtos.admin_report import (
     AdminReportDetailOutput,
     AdminReportItemOutput,
+    AdminReportOrganizerOutput,
     AdminReportPreviousReportsOutput,
     AdminReportResolutionOutput,
     AdminReportsOutput,
@@ -30,6 +32,13 @@ class AdminReportAssembler:
     def to_detail_dto(detail: AdminReportDetail) -> AdminReportDetailOutput:
         target = detail.target
         previous = detail.previous_reports
+        # `organizer` is left unset (and so omitted, see the route's
+        # response_model_exclude_unset) unless the target is an event.
+        extra = {}
+        if detail.organizer is not None:
+            extra["organizer"] = AdminReportAssembler._to_organizer_dto(
+                detail.organizer
+            )
         return AdminReportDetailOutput(
             report_id=detail.report_id,
             report_number=detail.report_number,
@@ -56,6 +65,7 @@ class AdminReportAssembler:
                 resolved_with_action=previous.resolved_with_action,
             ),
             resolution=AdminReportAssembler._to_resolution_dto(detail.resolution),
+            **extra,
         )
 
     @staticmethod
@@ -96,6 +106,19 @@ class AdminReportAssembler:
             reason=item.report_type,
             description_excerpt=excerpt,
             opened_at=item.opened_at,
+        )
+
+    @staticmethod
+    def _to_organizer_dto(
+        organizer: AdminReportOrganizer,
+    ) -> AdminReportOrganizerOutput:
+        return AdminReportOrganizerOutput(
+            user_id=organizer.user_id,
+            name=organizer.name,
+            photo_url=organizer.photo_url,
+            moderation_status=organizer.moderation_status,
+            events_count=organizer.events_count,
+            reports_count=organizer.reports_count,
         )
 
     @staticmethod
