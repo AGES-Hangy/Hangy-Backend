@@ -13,6 +13,16 @@ variable "email_from" {
   }
 }
 
+variable "ses_test_recipient" {
+  description = "Optional mailbox to verify for a real SES sandbox test; null disables it."
+  type        = string
+  default     = null
+  validation {
+    condition     = var.ses_test_recipient == null ? true : can(regex("^[^@<>\\s]+@[^@<>\\s]+\\.[^@<>\\s]+$", var.ses_test_recipient))
+    error_message = "Provide a bare test recipient email address or null."
+  }
+}
+
 variable "name" {
   description = "Prefixo único dos recursos desta instalação."
   type        = string

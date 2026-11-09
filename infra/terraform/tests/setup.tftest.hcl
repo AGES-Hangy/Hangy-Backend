@@ -55,6 +55,11 @@ run "password_reset_email" {
   command = plan
 
   assert {
+    condition     = length(aws_sesv2_email_identity.test_recipient) == 0
+    error_message = "No test mailbox identity should be created by default."
+  }
+
+  assert {
     condition     = aws_sesv2_email_identity.password_reset.email_identity == var.email_from && jsondecode(aws_secretsmanager_secret_version.app.secret_string).EMAIL_BACKEND == "ses" && jsondecode(aws_secretsmanager_secret_version.app.secret_string).EMAIL_FROM == var.email_from && jsondecode(aws_secretsmanager_secret_version.app.secret_string).SES_REGION == var.aws_region
     error_message = "Production must use SES with the managed sender and region."
   }
@@ -78,6 +83,36 @@ run "reject_invalid_email_sender" {
     email_from = "Hangy <reset@hangy.example>"
   }
   expect_failures = [var.email_from]
+}
+
+run "ses_sandbox_test_recipient" {
+  command = plan
+  variables {
+    ses_test_recipient = "tester@hangy.example"
+  }
+  assert {
+    condition     = length(aws_sesv2_email_identity.test_recipient) == 1 && aws_sesv2_email_identity.test_recipient[0].email_identity == var.ses_test_recipient
+    error_message = "The optional sandbox test recipient must be managed in SES."
+  }
+}
+
+run "ses_sender_as_test_recipient" {
+  command = plan
+  variables {
+    ses_test_recipient = "reset@hangy.example"
+  }
+  assert {
+    condition     = length(aws_sesv2_email_identity.test_recipient) == 0
+    error_message = "The sender and test mailbox must not create the same identity twice."
+  }
+}
+
+run "reject_invalid_ses_test_recipient" {
+  command = plan
+  variables {
+    ses_test_recipient = "not-an-email"
+  }
+  expect_failures = [var.ses_test_recipient]
 }
 
 run "secure_arm_stack" {

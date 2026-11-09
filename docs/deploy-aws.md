@@ -106,6 +106,9 @@ A identidade AWS precisa de permissões para gerenciar VPC, EC2/EBS/EIP, RDS,
 ECR, S3, SES (identidades de e-mail), Secrets Manager, IAM/OIDC e documentos/associações SSM, incluindo
 `iam:PassRole`, `iam:ListOpenIDConnectProviders`, `iam:GetOpenIDConnectProvider`
 e `iam:AddClientIDToOpenIDConnectProvider` para reutilizar um provedor existente.
+Para o preparo SES também precisa de `ses:GetEmailIdentity`, `ses:GetAccount`
+e, ao solicitar acesso de produção, `ses:PutAccountDetails`. Essas permissões
+são da identidade de provisionamento; a role da EC2 continua limitada ao envio.
 A role de deploy criada pelo
 Terraform tem permissões menores e não serve como credencial de provisionamento.
 A credencial inicial é o único acesso AWS que precisa existir antes do pipeline.
@@ -119,6 +122,11 @@ Variáveis opcionais, também com escopo `production`:
 | `CORS_ORIGINS` | Lista JSON de origens autorizadas, por exemplo `["https://hangy.example", "http://localhost:8081"]`. Se omitida ou vazia, usa `FRONTEND_BASE_URL` sem a barra final |
 | `API_ALLOWED_CIDRS` | `["0.0.0.0/0"]`; lista JSON de origens IPv4 autorizadas na porta 8000 |
 | `TF_STATE_KEY` | `<CI_PROJECT_PATH>/production.tfstate`; informe a chave anterior se a infraestrutura já foi criada pelo GitHub |
+| `SES_TEST_RECIPIENT` | Opcional: endereço real para testar no sandbox; Terraform cria a identidade e a AWS envia a mensagem de verificação |
+| `SES_REQUEST_PRODUCTION_ACCESS` | `false`; `true` solicita acesso de produção automaticamente após o apply, se ainda não houver pedido pendente/aprovado |
+| `SES_USE_CASE_DESCRIPTION` | Obrigatório ao solicitar produção: descrição verdadeira do uso, consentimento e tratamento de bounces/reclamações (até 5000 caracteres) |
+| `SES_WEBSITE_URL` | URL pública HTTP(S) apresentada à AWS; usa `FRONTEND_BASE_URL` se omitida |
+| `SES_REQUIRE_PRODUCTION_ACCESS` | `true` no deploy; `false` permite teste controlado em sandbox com destinatário verificado |
 
 O caminho do projeto é obtido automaticamente do GitLab. Senha do PostgreSQL,
 chave JWT, `LOCATION_OBFUSCATION_SECRET`, `PRODUCTION_ADMIN_PASSWORD` e `DATABASE_URL` são gerados pelo Terraform e guardados no Secrets
@@ -141,13 +149,61 @@ antes de provisionar recursos. Não altere o segredo manualmente: o próximo app
 restaura os valores gerenciados. Uma identidade já existente deve ser importada
 nesse endereço Terraform antes do apply, preservando o state existente.
 
-Após criar a identidade, abra a mensagem enviada pela AWS ao remetente e conclua
-a verificação. Criar o recurso não comprova a verificação nem a entrega. Antes
-da entrega em produção, consulte o estado da conta SES **nessa mesma região** e
-solicite acesso de produção à AWS caso ainda esteja no sandbox. No sandbox,
-destinatários também precisam ser verificados. Valide a entrega real a uma conta
-de teste autorizada após o deploy. A verificação de domínio/DKIM e a configuração
-de DNS dependem da definição do domínio do projeto (task 289).
+O preparo é executado automaticamente por `scripts/setup-ses.sh` depois do apply
+e antes de publicar/substituir o contêiner. O script verifica o remetente,
+`SendingEnabled` e o acesso de produção **na mesma região**. No deploy, a região
+é sempre `AWS_REGION`, alinhada ao Terraform. A leitura de status não envia
+e-mail nem solicita acesso de produção. Se o remetente não estiver verificado,
+a conta estiver impedida de enviar ou faltar acesso de produção obrigatório,
+o deploy para antes de substituir o contêiner e explica o próximo passo. O apply
+já ocorreu: os recursos e o segredo permanecem preparados para a próxima execução.
+
+Para um primeiro teste real sem aguardar a saída do sandbox:
+
+1. Cadastre `EMAIL_FROM` e `SES_TEST_RECIPIENT` com caixas que você controla;
+   configure `SES_REQUIRE_PRODUCTION_ACCESS=false` nas variáveis de produção.
+2. Execute o deploy pelo fluxo normal da `main`. Terraform cria as identidades
+   e a AWS envia as mensagens de verificação. Se os endereços forem iguais,
+   apenas uma identidade é criada. Identidades já existentes devem ser importadas
+   no state antes do apply (`terraform import aws_sesv2_email_identity.password_reset
+   'remetente@dominio.com'`; para o destinatário distinto, use
+   `'aws_sesv2_email_identity.test_recipient[0]'` com o endereço correspondente).
+   Use o backend e as variáveis da instalação existente, sem criar outro state.
+3. Abra os links de verificação do remetente e do destinatário e execute novamente
+   o pipeline. O script confirma a configuração de sandbox; isso ainda não comprova
+   entrega. Cadastre o destinatário no Hangy e teste o fluxo de redefinição pela API.
+
+Para automatizar o pedido de acesso de produção, configure
+`SES_REQUEST_PRODUCTION_ACCESS=true`, `SES_USE_CASE_DESCRIPTION` com o uso real
+e `SES_WEBSITE_URL` com o site do projeto. Restaure
+`SES_REQUIRE_PRODUCTION_ACCESS=true`. O pipeline chama `sesv2 put-account-details`
+com o tipo `TRANSACTIONAL`; não reenvia pedidos `PENDING`/`GRANTED`, e pede
+acompanhamento do caso existente se houver recusa. Um pedido `FAILED` pode ser
+reenviado. O pedido não garante aprovação: enquanto a AWS não liberar, o deploy
+permanece interrompido. Após a aprovação, basta executar novamente o pipeline.
+
+Também é possível consultar/solicitar sem fazer deploy, com AWS CLI, `jq` e
+credenciais autorizadas no ambiente (nenhum apply é feito por esses comandos):
+
+```bash
+EMAIL_FROM=remetente@dominio.com AWS_REGION=us-east-2 bash scripts/setup-ses.sh check
+
+EMAIL_FROM=remetente@dominio.com AWS_REGION=us-east-2 \
+  SES_REQUIRE_PRODUCTION_ACCESS=true \
+  SES_WEBSITE_URL=https://seu-site.com \
+  SES_USE_CASE_DESCRIPTION='Descricao real do uso e das praticas de consentimento e tratamento de bounces/reclamacoes.' \
+  bash scripts/setup-ses.sh request-production
+```
+
+Na execução avulsa, `check` é somente leitura e permite sandbox por padrão;
+use `SES_REQUIRE_PRODUCTION_ACCESS=true` para exigir produção. Informar
+`SES_TEST_RECIPIENT` também confere sua verificação no sandbox. A execução avulsa
+não cria identidades: esse recurso pertence ao Terraform.
+
+O clique de verificação comprova que você controla a caixa de e-mail, e a aprovação
+é uma decisão da AWS; scripts não substituem essas etapas. A verificação de
+domínio/DKIM e a configuração de DNS dependem da definição do domínio (task 289).
+Confirme a entrega real após o deploy; um `202` da API não comprova envio.
 
 Referências AWS: [regiões SES](https://docs.aws.amazon.com/general/latest/gr/ses.html),
 [verificação de e-mail](https://docs.aws.amazon.com/ses/latest/dg/creating-identities.html#verify-email-addresses-procedure)

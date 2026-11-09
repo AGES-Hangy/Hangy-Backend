@@ -7,6 +7,12 @@ for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY FRONTEND_BASE_URL EMAIL_FROM
 done
 export AWS_REGION="${AWS_REGION:-us-east-2}"
 export AWS_DEFAULT_REGION="$AWS_REGION" AWS_PAGER=""
+export SES_REGION="$AWS_REGION"
+export SES_REQUIRE_PRODUCTION_ACCESS="${SES_REQUIRE_PRODUCTION_ACCESS:-true}"
+case "${SES_REQUEST_PRODUCTION_ACCESS:-false}" in
+  true|false) ;;
+  *) echo 'SES_REQUEST_PRODUCTION_ACCESS must be true or false.' >&2; exit 1 ;;
+esac
 
 # Reject an older queued pipeline after a newer commit has reached main.
 latest=$(git ls-remote origin refs/heads/main | cut -f1)
@@ -52,6 +58,10 @@ export TF_VAR_gitlab_project_path="$CI_PROJECT_PATH"
 export TF_VAR_gitlab_url="$CI_SERVER_URL"
 export TF_VAR_frontend_base_url="$FRONTEND_BASE_URL"
 export TF_VAR_email_from="$EMAIL_FROM"
+unset TF_VAR_ses_test_recipient
+if [[ -n "${SES_TEST_RECIPIENT:-}" ]]; then
+  export TF_VAR_ses_test_recipient="$SES_TEST_RECIPIENT"
+fi
 export TF_VAR_cors_origins="${CORS_ORIGINS:-[]}"
 export TF_VAR_api_allowed_cidrs="${API_ALLOWED_CIDRS:-[\"0.0.0.0/0\"]}"
 unset TF_VAR_gitlab_oidc_provider_arn
@@ -80,6 +90,13 @@ fi
 terraform -chdir=infra/terraform plan -input=false -lock-timeout=5m -out="$work_dir/hangy.tfplan"
 terraform -chdir=infra/terraform apply -input=false -lock-timeout=5m "$work_dir/hangy.tfplan"
 rm -f -- "$work_dir/hangy.tfplan"
+ses_action=check
+if [[ "${SES_REQUEST_PRODUCTION_ACCESS:-false}" == true ]]; then
+  ses_action=request-production
+fi
+# Uses provisioning credentials; runtime credentials cannot manage SES identities/accounts.
+# Check before replacing the serving container. Verification/approval needs a rerun.
+bash scripts/setup-ses.sh "$ses_action"
 terraform -chdir=infra/terraform output -json deployment_variables \
   | jq -r 'to_entries[] | "\(.key)=\(.value)"' > "$work_dir/deploy.env"
 while IFS='=' read -r name value; do
