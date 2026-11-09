@@ -348,10 +348,15 @@ class SqlAlchemySearchRepository:
 
         if after is not None:
             after_name, after_id = after
+            # NULL names sort before any non-empty string (NULLS FIRST by default in
+            # PostgreSQL ASC). Treat NULL as "" so the cursor keying in the service
+            # and the row-value comparison here agree: NULL > "" is NULL in SQL, which
+            # is falsy, so we must coalesce to get the right ordering semantics.
+            coalesced_name = func.coalesce(UserModel.name, "")
             conditions.append(
                 or_(
-                    UserModel.name > after_name,
-                    and_(UserModel.name == after_name, UserModel.user_id > after_id),
+                    coalesced_name > after_name,
+                    and_(coalesced_name == after_name, UserModel.user_id > after_id),
                 )
             )
 
@@ -370,7 +375,7 @@ class SqlAlchemySearchRepository:
                 BusinessProfileModel.user_id == UserModel.user_id,
             )
             .where(*conditions)
-            .order_by(UserModel.name.asc(), UserModel.user_id.asc())
+            .order_by(func.coalesce(UserModel.name, "").asc(), UserModel.user_id.asc())
             .offset(offset)
             .limit(limit)
         ).all()

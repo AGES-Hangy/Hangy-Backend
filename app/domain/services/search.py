@@ -135,6 +135,8 @@ class SearchService:
         next_cursor = None
         if len(items) > limit:
             last = page_items[-1]
+            # `last.name` is the raw UserModel.name used as the cursor sort key;
+            # NULL names coalesce to "" both here and in the repository condition.
             next_cursor = encode_text_cursor(last.name or "", last.user_id)
         return SearchBusinessesPage(
             items=page_items, next_cursor=next_cursor, total=total

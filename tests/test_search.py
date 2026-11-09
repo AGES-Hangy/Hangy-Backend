@@ -1641,3 +1641,26 @@ def test_search_businesses_service_owns_input_validation():
     with pytest.raises(InvalidPaginationError):
         SearchService(repository).search_businesses(criteria)
     repository.search_businesses.assert_not_called()
+
+
+def test_search_businesses_is_following_persists_across_cursor_pages(context):
+    followed = create_business(context.db, "Bar Seguido")
+    create_business(context.db, "Bar Livre")
+    follow_business(context.db, context.user_id, followed)
+
+    first = context.client.get(
+        "/search/businesses",
+        params={"q": "bar", "limit": 1},
+        headers=context.auth_headers,
+    ).json()
+    second = context.client.get(
+        "/search/businesses",
+        params={"q": "bar", "limit": 1, "cursor": first["next_cursor"]},
+        headers=context.auth_headers,
+    ).json()
+
+    all_items = first["items"] + second["items"]
+    assert {item["business_name"]: item["is_following"] for item in all_items} == {
+        "Bar Seguido": True,
+        "Bar Livre": False,
+    }
