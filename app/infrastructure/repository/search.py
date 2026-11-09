@@ -37,6 +37,7 @@ from app.infrastructure.repository.models import (
     TagModel,
     UserModel,
     event_tag,
+    user_follows,
 )
 
 ACCENTED_LOWER = "áàãâäéèêëíìîïóòõôöúùûüçñ"
@@ -328,13 +329,14 @@ class SqlAlchemySearchRepository:
         query: str,
         limit: int,
         offset: int = 0,
+        after: tuple[str, UUID] | None = None,
     ) -> tuple[list[SearchBusinessItem], int]:
-        conditions = (
+        conditions = [
             UserModel.deleted_at.is_(None),
             UserModel.user_type == UserTypeEnum.BUSINESS,
             ~block_exists_between(UserModel.user_id, viewer_id),
             self._text_match_condition(UserModel, UserModel.name, query),
-        )
+        ]
         total = (
             self.db.scalar(
                 select(func.count()).select_from(UserModel).where(*conditions)
@@ -344,19 +346,44 @@ class SqlAlchemySearchRepository:
         if total == 0 or limit <= 0:
             return [], total
 
+        if after is not None:
+            after_name, after_id = after
+            # NULL names sort before any non-empty string (NULLS FIRST by default in
+            # PostgreSQL ASC). Treat NULL as "" so the cursor keying in the service
+            # and the row-value comparison here agree: NULL > "" is NULL in SQL, which
+            # is falsy, so we must coalesce to get the right ordering semantics.
+            coalesced_name = func.coalesce(UserModel.name, "")
+            conditions.append(
+                or_(
+                    coalesced_name > after_name,
+                    and_(coalesced_name == after_name, UserModel.user_id > after_id),
+                )
+            )
+
+        is_following = (
+            exists()
+            .where(
+                user_follows.c.follower_id == viewer_id,
+                user_follows.c.followed_business_id == UserModel.user_id,
+            )
+            .correlate(UserModel)
+        )
         rows = self.db.execute(
-            select(UserModel, BusinessProfileModel.address)
+            select(UserModel, BusinessProfileModel.address, is_following)
             .outerjoin(
                 BusinessProfileModel,
                 BusinessProfileModel.user_id == UserModel.user_id,
             )
             .where(*conditions)
-            .order_by(UserModel.name.asc(), UserModel.user_id.asc())
+            .order_by(func.coalesce(UserModel.name, "").asc(), UserModel.user_id.asc())
             .offset(offset)
             .limit(limit)
         ).all()
         return (
-            [self._to_business_entity(user, address) for user, address in rows],
+            [
+                self._to_business_entity(user, address, bool(following))
+                for user, address, following in rows
+            ],
             total,
         )
 
@@ -415,7 +442,9 @@ class SqlAlchemySearchRepository:
         )
 
     @staticmethod
-    def _to_business_entity(user: UserModel, address: str | None) -> SearchBusinessItem:
+    def _to_business_entity(
+        user: UserModel, address: str | None, is_following: bool = False
+    ) -> SearchBusinessItem:
         return SearchBusinessItem(
             user_id=user.user_id,
             business_name=user.name,
@@ -423,6 +452,7 @@ class SqlAlchemySearchRepository:
             description=user.description,
             address=address,
             photo_url=user.profile_photo_url,
+            is_following=is_following,
         )
 
     @staticmethod

@@ -23,11 +23,13 @@ from app.domain.enums import (
     UserTypeEnum,
 )
 from app.domain.services import (
+    DEFAULT_SEARCH_LIMIT,
     InvalidPaginationError,
     InvalidSearchDateFormatError,
     SearchService,
     SearchTagNotFoundError,
     encode_cursor,
+    encode_text_cursor,
     visible_events_query,
 )
 from app.infrastructure.repository import Base, get_db
@@ -40,6 +42,7 @@ from app.infrastructure.repository.models import (
     UserBlockModel,
     UserModel,
     event_tag,
+    user_follows,
     user_tag,
 )
 from app.infrastructure.repository.search import SqlAlchemySearchRepository
@@ -1377,3 +1380,287 @@ def test_search_events_service_owns_input_validation(params, expected_error):
     with pytest.raises(expected_error):
         SearchService(repository).search_events(criteria)
     repository.search_events.assert_not_called()
+
+
+# ============================================================================
+# US10.4 — Lista completa de estabelecimentos por cursor.
+# ============================================================================
+
+
+def follow_business(db: Session, follower_id: UUID, business_id: UUID) -> None:
+    db.execute(
+        user_follows.insert().values(
+            follower_id=follower_id, followed_business_id=business_id
+        )
+    )
+    db.commit()
+
+
+def test_search_businesses_returns_only_businesses_with_page_shape(context):
+    create_person(context.db, "Copa Pessoa")
+    create_event(context.db, create_person(context.db, "Org"), "Copa Evento")
+    business_id = create_business(context.db, "Copa Arena")
+
+    response = context.client.get(
+        "/search/businesses", params={"q": "copa"}, headers=context.auth_headers
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [
+            {
+                "user_id": str(business_id),
+                "business_name": "Copa Arena",
+                "photo_url": None,
+                "city": None,
+                "is_following": False,
+            }
+        ],
+        "next_cursor": None,
+        "total": 1,
+    }
+
+
+def test_search_businesses_marks_followed_businesses(context):
+    followed = create_business(context.db, "Bar Seguido")
+    create_business(context.db, "Bar Livre")
+    follow_business(context.db, context.user_id, followed)
+
+    items = context.client.get(
+        "/search/businesses", params={"q": "bar"}, headers=context.auth_headers
+    ).json()["items"]
+
+    assert {item["business_name"]: item["is_following"] for item in items} == {
+        "Bar Seguido": True,
+        "Bar Livre": False,
+    }
+
+
+def test_search_businesses_is_following_is_per_viewer(context):
+    business_id = create_business(context.db, "Bar Alheio")
+    other_id = create_person(context.db, "Outro Usuario")
+    follow_business(context.db, other_id, business_id)
+
+    item = context.client.get(
+        "/search/businesses", params={"q": "bar"}, headers=context.auth_headers
+    ).json()["items"][0]
+
+    assert item["is_following"] is False
+
+
+def test_search_businesses_cursor_does_not_repeat_or_skip_items(context):
+    # UUID order is the reverse of name order, so the cursor must follow the name.
+    names = ["Bar A", "Bar B", "Bar C", "Bar D", "Bar E"]
+    for index, name in enumerate(names):
+        create_business(context.db, name, user_id=UUID(int=100 - index))
+
+    seen: list[str] = []
+    params: dict[str, str | int] = {"q": "bar", "limit": 2}
+    pages = 0
+    while True:
+        body = context.client.get(
+            "/search/businesses", params=params, headers=context.auth_headers
+        ).json()
+        assert body["total"] == 5
+        seen.extend(item["business_name"] for item in body["items"])
+        pages += 1
+        if body["next_cursor"] is None:
+            break
+        params["cursor"] = body["next_cursor"]
+
+    assert pages == 3
+    assert seen == names
+
+
+def test_search_businesses_cursor_pages_with_equal_names(context):
+    ids = [UUID(int=value) for value in (30, 10, 20)]
+    for business_id in ids:
+        create_business(context.db, "Bar Igual", user_id=business_id)
+
+    seen: list[str] = []
+    params: dict[str, str | int] = {"q": "bar", "limit": 1}
+    for _ in ids:
+        body = context.client.get(
+            "/search/businesses", params=params, headers=context.auth_headers
+        ).json()
+        seen.append(body["items"][0]["user_id"])
+        params["cursor"] = body["next_cursor"]
+
+    assert seen == [str(business_id) for business_id in sorted(ids)]
+
+
+def test_search_businesses_cursor_handles_separator_in_name(context):
+    create_business(context.db, "Bar | Um")
+    create_business(context.db, "Bar | Dois")
+
+    first = context.client.get(
+        "/search/businesses",
+        params={"q": "bar", "limit": 1},
+        headers=context.auth_headers,
+    ).json()
+    second = context.client.get(
+        "/search/businesses",
+        params={"q": "bar", "limit": 1, "cursor": first["next_cursor"]},
+        headers=context.auth_headers,
+    ).json()
+
+    names = [first["items"][0]["business_name"], second["items"][0]["business_name"]]
+    assert names == ["Bar | Dois", "Bar | Um"]
+    assert second["next_cursor"] is None
+
+
+def test_search_businesses_default_and_maximum_page_size(context):
+    for index in range(51):
+        create_business(context.db, f"Bar {index:02d}")
+
+    default = context.client.get(
+        "/search/businesses", params={"q": "bar"}, headers=context.auth_headers
+    ).json()
+    maximum = context.client.get(
+        "/search/businesses",
+        params={"q": "bar", "limit": 50},
+        headers=context.auth_headers,
+    ).json()
+
+    assert len(default["items"]) == DEFAULT_SEARCH_LIMIT == 20
+    assert default["total"] == 51
+    assert len(maximum["items"]) == 50
+    assert maximum["next_cursor"]
+
+
+def test_search_businesses_excludes_blocked_in_both_directions(context):
+    blocked = create_business(context.db, "Bar Bloqueado")
+    blocker = create_business(context.db, "Bar Bloqueador")
+    create_business(context.db, "Bar Visivel")
+    context.db.add_all(
+        [
+            UserBlockModel(blocker_id=context.user_id, blocked_id=blocked),
+            UserBlockModel(blocker_id=blocker, blocked_id=context.user_id),
+        ]
+    )
+    context.db.commit()
+
+    body = context.client.get(
+        "/search/businesses", params={"q": "bar"}, headers=context.auth_headers
+    ).json()
+
+    assert [item["business_name"] for item in body["items"]] == ["Bar Visivel"]
+    assert body["total"] == 1
+
+
+def test_search_businesses_excludes_deleted_accounts(context):
+    deleted = create_business(context.db, "Bar Excluido")
+    create_business(context.db, "Bar Ativo")
+    context.db.get(UserModel, deleted).deleted_at = NOW
+    context.db.commit()
+
+    body = context.client.get(
+        "/search/businesses", params={"q": "bar"}, headers=context.auth_headers
+    ).json()
+
+    assert [item["business_name"] for item in body["items"]] == ["Bar Ativo"]
+
+
+def test_search_businesses_is_accent_and_case_insensitive(context):
+    create_business(context.db, "Café Açaí")
+
+    body = context.client.get(
+        "/search/businesses", params={"q": "CAFE acai"}, headers=context.auth_headers
+    ).json()
+
+    assert body["total"] == 1
+
+
+@pytest.mark.parametrize("limit", ["0", "-1", "51", "abc", "1.5", "", "9" * 20])
+def test_search_businesses_invalid_limit(context, limit):
+    response = context.client.get(
+        "/search/businesses",
+        params={"q": "bar", "limit": limit},
+        headers=context.auth_headers,
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid pagination parameters"}
+
+
+@pytest.mark.parametrize(
+    "cursor",
+    [
+        "",
+        "malformed",
+        "x" * 257,
+        encode_text_cursor("Bar", UUID(int=1)) + "!",
+        encode_cursor(datetime(2026, 1, 1, tzinfo=UTC), UUID(int=1))[:-4],
+    ],
+)
+def test_search_businesses_invalid_cursor(context, cursor):
+    response = context.client.get(
+        "/search/businesses",
+        params={"q": "bar", "cursor": cursor},
+        headers=context.auth_headers,
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid pagination parameters"}
+
+
+@pytest.mark.parametrize("params", [{}, {"q": "a"}, {"q": "   "}])
+def test_search_businesses_requires_query_of_two_characters(context, params):
+    response = context.client.get(
+        "/search/businesses", params=params, headers=context.auth_headers
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Query is too short"}
+
+
+@pytest.mark.parametrize("token", [None, "invalid", "expired"])
+def test_search_businesses_authentication(context, token):
+    headers = {}
+    if token == "expired":
+        token = jwt.encode(
+            {
+                "sub": str(context.user_id),
+                "exp": datetime.now(UTC) - timedelta(minutes=1),
+            },
+            settings.jwt_secret_key,
+            algorithm=settings.jwt_algorithm,
+        )
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+    response = context.client.get(
+        "/search/businesses", params={"q": "bar"}, headers=headers
+    )
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Could not validate credentials"}
+
+
+def test_search_businesses_service_owns_input_validation():
+    # Mapping even malformed input must succeed; domain errors belong to the service.
+    criteria = SearchMapper.to_businesses_query(
+        uuid.uuid4(), q="bar", limit="invalid", cursor="invalid"
+    )
+    repository = Mock()
+    with pytest.raises(InvalidPaginationError):
+        SearchService(repository).search_businesses(criteria)
+    repository.search_businesses.assert_not_called()
+
+
+def test_search_businesses_is_following_persists_across_cursor_pages(context):
+    followed = create_business(context.db, "Bar Seguido")
+    create_business(context.db, "Bar Livre")
+    follow_business(context.db, context.user_id, followed)
+
+    first = context.client.get(
+        "/search/businesses",
+        params={"q": "bar", "limit": 1},
+        headers=context.auth_headers,
+    ).json()
+    second = context.client.get(
+        "/search/businesses",
+        params={"q": "bar", "limit": 1, "cursor": first["next_cursor"]},
+        headers=context.auth_headers,
+    ).json()
+
+    all_items = first["items"] + second["items"]
+    assert {item["business_name"]: item["is_following"] for item in all_items} == {
+        "Bar Seguido": True,
+        "Bar Livre": False,
+    }

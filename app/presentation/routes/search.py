@@ -20,7 +20,11 @@ from app.domain.services import (
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.search import SqlAlchemySearchRepository
 from app.presentation.dependencies.auth import credentials_exception, get_current_user
-from app.presentation.dtos import SearchEventsPageOutput, SearchOutput
+from app.presentation.dtos import (
+    SearchBusinessesPageOutput,
+    SearchEventsPageOutput,
+    SearchOutput,
+)
 from app.presentation.mappers import SearchMapper
 
 router = APIRouter(tags=["Search"])
@@ -235,4 +239,72 @@ def search_events(
     return SearchAssembler.to_events_page_dto(page)
 
 
-__all__ = ["get_search_service", "router", "search", "search_events"]
+@router.get(
+    "/search/businesses",
+    response_model=SearchBusinessesPageOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Listar todos os estabelecimentos da busca",
+    description=(
+        "Mantém o termo da busca (`q`, mínimo de 2 caracteres). Ordena por nome "
+        "e ID, com paginação por cursor (padrão 20, máximo 50). Estabelecimentos "
+        "bloqueados (nos dois sentidos) não aparecem."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "`limit` ou `cursor` inválido, ou termo curto demais.",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "invalid_pagination": {
+                            "value": {"detail": "Invalid pagination parameters"}
+                        },
+                        "query_too_short": {"value": {"detail": "Query is too short"}},
+                    }
+                }
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, expirado ou inválido.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+    },
+)
+def search_businesses(
+    current_user: Annotated[User, Depends(get_current_user)],
+    search_service: Annotated[SearchService, Depends(get_search_service)],
+    q: Annotated[str | None, Query(max_length=MAX_SEARCH_QUERY_LENGTH)] = None,
+    limit: Annotated[str, Query(description="Tamanho da página: 1 a 50.")] = str(
+        DEFAULT_SEARCH_LIMIT
+    ),
+    cursor: str | None = None,
+) -> SearchBusinessesPageOutput:
+    if current_user.user_id is None:
+        raise credentials_exception
+    try:
+        criteria = SearchMapper.to_businesses_query(
+            current_user.user_id, q=q, limit=limit, cursor=cursor
+        )
+        page = search_service.search_businesses(criteria)
+    except InvalidPaginationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters",
+        ) from error
+    except SearchQueryTooShortError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Query is too short"
+        ) from error
+    return SearchAssembler.to_businesses_page_dto(page)
+
+
+__all__ = [
+    "get_search_service",
+    "router",
+    "search",
+    "search_businesses",
+    "search_events",
+]

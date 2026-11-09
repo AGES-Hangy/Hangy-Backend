@@ -1,4 +1,5 @@
 from app.domain.entities import (
+    SearchBusinessesPage,
     SearchBusinessItem,
     SearchEventItem,
     SearchEventsPage,
@@ -8,7 +9,9 @@ from app.domain.entities import (
 from app.presentation.dtos import (
     SearchAppliedFiltersOutput,
     SearchBusinessesBlockOutput,
+    SearchBusinessesPageOutput,
     SearchBusinessItemOutput,
+    SearchBusinessPageItemOutput,
     SearchEventItemOutput,
     SearchEventsBlockOutput,
     SearchEventsPageOutput,
@@ -23,6 +26,25 @@ class SearchAssembler:
     def to_events_page_dto(page: SearchEventsPage) -> SearchEventsPageOutput:
         return SearchEventsPageOutput(
             items=[SearchAssembler._to_event_dto(item) for item in page.items],
+            next_cursor=page.next_cursor,
+            total=page.total,
+        )
+
+    @staticmethod
+    def to_businesses_page_dto(
+        page: SearchBusinessesPage,
+    ) -> SearchBusinessesPageOutput:
+        return SearchBusinessesPageOutput(
+            items=[
+                SearchBusinessPageItemOutput(
+                    user_id=item.user_id,
+                    business_name=item.business_name,
+                    photo_url=item.photo_url,
+                    city=item.city,
+                    is_following=item.is_following,
+                )
+                for item in page.items
+            ],
             next_cursor=page.next_cursor,
             total=page.total,
         )

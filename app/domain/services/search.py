@@ -4,6 +4,8 @@ from typing import Protocol
 from uuid import UUID
 
 from app.domain.entities import (
+    SearchBusinessesPage,
+    SearchBusinessesQuery,
     SearchBusinessItem,
     SearchEventCandidate,
     SearchEventItem,
@@ -21,7 +23,9 @@ from app.domain.services.event_visibility import resolve_event_visibility
 from app.domain.services.pagination import (
     InvalidPaginationError,
     decode_cursor,
+    decode_text_cursor,
     encode_cursor,
+    encode_text_cursor,
 )
 
 DEFAULT_SEARCH_LIMIT = 20
@@ -60,6 +64,7 @@ class SearchRepository(Protocol):
         query: str,
         limit: int,
         offset: int = 0,
+        after: tuple[str, UUID] | None = None,
     ) -> tuple[list[SearchBusinessItem], int]: ...
 
     def search_users(
@@ -96,15 +101,49 @@ class SearchService:
     def __init__(self, repository: SearchRepository) -> None:
         self.repository = repository
 
-    def search_events(self, criteria: SearchEventsQuery) -> SearchEventsPage:
+    @staticmethod
+    def _parse_limit(raw: str) -> int:
         try:
-            if len(criteria.limit) > 10:
+            if len(raw) > 10:
                 raise InvalidPaginationError
-            limit = int(criteria.limit)
+            limit = int(raw)
         except ValueError as error:
             raise InvalidPaginationError from error
         if not 1 <= limit <= MAX_SEARCH_LIMIT:
             raise InvalidPaginationError
+        return limit
+
+    def search_businesses(
+        self, criteria: SearchBusinessesQuery
+    ) -> SearchBusinessesPage:
+        limit = self._parse_limit(criteria.limit)
+        after = None
+        cursor = criteria.cursor
+        if cursor is not None:
+            if not cursor or len(cursor) > 256:
+                raise InvalidPaginationError
+            after = decode_text_cursor(cursor)
+            if encode_text_cursor(*after) != cursor:
+                raise InvalidPaginationError
+        query = self._normalize_query(criteria.query, has_filters=False)
+        if query is None:
+            raise SearchQueryTooShortError
+        items, total = self.repository.search_businesses(
+            criteria.viewer_id, query=query, limit=limit + 1, after=after
+        )
+        page_items = tuple(items[:limit])
+        next_cursor = None
+        if len(items) > limit:
+            last = page_items[-1]
+            # `last.name` is the raw UserModel.name used as the cursor sort key;
+            # NULL names coalesce to "" both here and in the repository condition.
+            next_cursor = encode_text_cursor(last.name or "", last.user_id)
+        return SearchBusinessesPage(
+            items=page_items, next_cursor=next_cursor, total=total
+        )
+
+    def search_events(self, criteria: SearchEventsQuery) -> SearchEventsPage:
+        limit = self._parse_limit(criteria.limit)
         after = None
         cursor = criteria.cursor
         if cursor is not None:
