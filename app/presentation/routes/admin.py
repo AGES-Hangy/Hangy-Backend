@@ -25,6 +25,7 @@ from app.domain.services import (
     AccountNotModeratedError,
     AdminDashboardService,
     AdminEventModerationService,
+    AdminReportArchiveService,
     AdminReportsService,
     AdminTagNotFoundError,
     AdminTagsService,
@@ -135,6 +136,16 @@ def get_admin_user_moderation_service(
 ) -> AdminUserModerationService:
     return AdminUserModerationService(
         user_repository=SqlAlchemyUserRepository(db),
+        report_repository=SqlAlchemyReportRepository(db),
+        audit_logger=audit_logger,
+    )
+
+
+def get_admin_report_archive_service(
+    db: Annotated[Session, Depends(get_db)],
+    audit_logger: Annotated[AuditLogger, Depends(get_audit_logger)],
+) -> AdminReportArchiveService:
+    return AdminReportArchiveService(
         report_repository=SqlAlchemyReportRepository(db),
         audit_logger=audit_logger,
     )
@@ -323,6 +334,76 @@ def read_admin_report_detail(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Report not found",
         ) from error
+    return AdminReportAssembler.to_detail_dto(detail)
+
+
+@router.patch(
+    "/admin/reports/{report_id}/archive",
+    response_model=AdminReportDetailOutput,
+    # Keeps `organizer` out of the body unless the assembler set it.
+    response_model_exclude_unset=True,
+    status_code=status.HTTP_200_OK,
+    summary="Arquivar uma denúncia sem agir sobre a conta",
+    description=(
+        "Arquiva uma denúncia avaliada como improcedente: marca `status` como "
+        "`REJECTED`, com `resolution.action = ARCHIVED`, sem aplicar nenhuma "
+        "ação sobre a conta ou o evento denunciado. Só é permitido para "
+        "denúncias `PENDING` ou `REVIEWED`; arquivar uma denúncia já "
+        "`RESOLVED`/`REJECTED` devolve 409. Registra `REPORT_ARCHIVED` no log "
+        "de auditoria. Devolve o mesmo formato de `GET /admin/reports/"
+        "{report_id}`. Exige Bearer token de um usuário com `role = ADMIN`."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Usuário autenticado, mas `role != ADMIN`.",
+            "content": {
+                "application/json": {"example": {"detail": "Admin access required"}}
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Denúncia não encontrada.",
+            "content": {
+                "application/json": {"example": {"detail": "Report not found"}}
+            },
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "A denúncia já está `RESOLVED` ou `REJECTED`.",
+            "content": {
+                "application/json": {"example": {"detail": "Report already resolved"}}
+            },
+        },
+    },
+)
+def archive_admin_report(
+    report_id: UUID,
+    current_admin: Annotated[User, Depends(require_admin)],
+    archive_service: Annotated[
+        AdminReportArchiveService, Depends(get_admin_report_archive_service)
+    ],
+    reports_service: Annotated[AdminReportsService, Depends(get_admin_reports_service)],
+) -> AdminReportDetailOutput:
+    assert current_admin.user_id is not None
+    try:
+        archive_service.archive_report(report_id, actor_id=current_admin.user_id)
+    except ReportNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found",
+        ) from error
+    except ReportAlreadyResolvedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Report already resolved",
+        ) from error
+    detail = reports_service.get_report_detail(report_id)
     return AdminReportAssembler.to_detail_dto(detail)
 
 
