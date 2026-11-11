@@ -98,6 +98,32 @@ class SqlAlchemyReportRepository:
         model.resolution_action = resolution_action
         self.db.flush()
 
+    def archive(
+        self,
+        report_id: UUID,
+        *,
+        resolved_by_id: UUID,
+        resolved_at: datetime,
+    ) -> None:
+        """Mark the report REJECTED, with resolution_action=ARCHIVED.
+
+        Unlike resolve(), this never acts on the reported account. Flush only:
+        the caller commits.
+        """
+        model = self.db.scalar(
+            select(ReportModel).where(ReportModel.report_id == report_id)
+        )
+        if model is None:
+            raise ValueError("An archived report must already exist")
+        model.status = ReportStatusEnum.REJECTED
+        model.resolved_by_id = resolved_by_id
+        model.resolved_at = resolved_at
+        model.resolution_action = ReportResolutionActionEnum.ARCHIVED
+        self.db.flush()
+
+    def commit(self) -> None:
+        self.db.commit()
+
     def resolve_open_for_event(
         self,
         event_id: UUID,
