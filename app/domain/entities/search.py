@@ -46,6 +46,16 @@ class SearchEventsQuery:
 
 
 @dataclass(frozen=True, slots=True)
+class SearchBusinessesQuery:
+    """Business listing input, interpreted and validated by the search service."""
+
+    viewer_id: UUID
+    limit: str
+    query: str | None = None
+    cursor: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SearchUsersQuery:
     """User listing input, interpreted and validated by the search service."""
 
@@ -96,6 +106,16 @@ class SearchBusinessItem:
     description: str | None = None
     address: str | None = None
     photo_url: str | None = None
+    # ``business_profile`` has no city column yet (only ``address``).
+    city: str | None = None
+    is_following: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class SearchBusinessesPage:
+    items: tuple[SearchBusinessItem, ...]
+    next_cursor: str | None
+    total: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,6 +160,8 @@ class SearchResult:
 
 __all__ = [
     "SearchBusinessItem",
+    "SearchBusinessesPage",
+    "SearchBusinessesQuery",
     "SearchEventCandidate",
     "SearchEventItem",
     "SearchEventsPage",

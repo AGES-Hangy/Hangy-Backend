@@ -2,6 +2,7 @@ from datetime import date
 from uuid import UUID
 
 from app.domain.entities import (
+    SearchBusinessesQuery,
     SearchEventsQuery,
     SearchFilters,
     SearchQuery,
@@ -15,6 +16,18 @@ from app.domain.services.search import (
 
 
 class SearchMapper:
+    @staticmethod
+    def to_businesses_query(
+        viewer_id: UUID,
+        *,
+        limit: str,
+        q: str | None = None,
+        cursor: str | None = None,
+    ) -> SearchBusinessesQuery:
+        return SearchBusinessesQuery(
+            viewer_id=viewer_id, query=q, limit=limit, cursor=cursor
+        )
+
     @staticmethod
     def to_events_query(
         viewer_id: UUID,
