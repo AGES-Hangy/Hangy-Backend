@@ -16,6 +16,8 @@ from app.domain.entities import (
     SearchResult,
     SearchResultBlock,
     SearchUserItem,
+    SearchUsersPage,
+    SearchUsersQuery,
     Tag,
 )
 from app.domain.enums import SearchResultType
@@ -36,6 +38,9 @@ MIN_SEARCH_PREVIEW_LIMIT = 1
 MAX_SEARCH_PREVIEW_LIMIT = 50
 MAX_SEARCH_LIMIT = MAX_SEARCH_PREVIEW_LIMIT
 MAX_TAG_DEPTH = 10
+# A text cursor carries the full display name (up to 120 characters, each up
+# to 4 bytes in UTF-8) plus "|" and a UUID, base64-encoded: 4 * ceil(517 / 3).
+MAX_TEXT_CURSOR_LENGTH = 692
 
 
 class SearchRepository(Protocol):
@@ -74,6 +79,7 @@ class SearchRepository(Protocol):
         query: str,
         limit: int,
         offset: int = 0,
+        after: tuple[str, UUID] | None = None,
     ) -> tuple[list[SearchUserItem], int]: ...
 
 
@@ -120,7 +126,7 @@ class SearchService:
         after = None
         cursor = criteria.cursor
         if cursor is not None:
-            if not cursor or len(cursor) > 256:
+            if not cursor or len(cursor) > MAX_TEXT_CURSOR_LENGTH:
                 raise InvalidPaginationError
             after = decode_text_cursor(cursor)
             if encode_text_cursor(*after) != cursor:
@@ -202,6 +208,45 @@ class SearchService:
                 event_date = event_date.replace(tzinfo=UTC)
             next_cursor = encode_cursor(event_date, last.event_id)
         return SearchEventsPage(items=items, next_cursor=next_cursor, total=total)
+
+    def search_users(self, criteria: SearchUsersQuery) -> SearchUsersPage:
+        limit = self._parse_limit(criteria.limit)
+        after = self._parse_name_cursor(criteria.cursor)
+        query = self._normalize_query(criteria.query, has_filters=False)
+        if query is None:
+            raise SearchQueryTooShortError
+        candidates, total = self.repository.search_users(
+            criteria.viewer_id,
+            query=query,
+            limit=limit + 1,
+            after=after,
+        )
+        items = tuple(candidates[:limit])
+        next_cursor = None
+        if len(candidates) > limit:
+            last = items[-1]
+            if last.name is None:
+                raise ValueError("A matched user must have a name")
+            next_cursor = encode_text_cursor(last.name, last.user_id)
+        return SearchUsersPage(items=items, next_cursor=next_cursor, total=total)
+
+    @staticmethod
+    def _parse_name_cursor(cursor: str | None) -> tuple[str, UUID] | None:
+        if cursor is None:
+            return None
+        if not cursor or len(cursor) > MAX_TEXT_CURSOR_LENGTH:
+            raise InvalidPaginationError
+        after = decode_text_cursor(cursor)
+        name = after[0]
+        # A person always has a name, unlike a business cursor that may carry "".
+        if (
+            not name.strip()
+            or "\x00" in name
+            or len(name) > MAX_SEARCH_QUERY_LENGTH
+            or encode_text_cursor(*after) != cursor
+        ):
+            raise InvalidPaginationError
+        return after
 
     @staticmethod
     def _parse_events_date(raw: str | None) -> date | None:

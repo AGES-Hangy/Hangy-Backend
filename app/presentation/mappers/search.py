@@ -6,6 +6,7 @@ from app.domain.entities import (
     SearchEventsQuery,
     SearchFilters,
     SearchQuery,
+    SearchUsersQuery,
 )
 from app.domain.services.search import (
     DEFAULT_SEARCH_PREVIEW_LIMIT,
@@ -45,6 +46,21 @@ class SearchMapper:
             tag_ids=tag_ids,
             date_from=date_from,
             date_to=date_to,
+            cursor=cursor,
+        )
+
+    @staticmethod
+    def to_users_query(
+        viewer_id: UUID,
+        *,
+        limit: str,
+        q: str | None = None,
+        cursor: str | None = None,
+    ) -> SearchUsersQuery:
+        return SearchUsersQuery(
+            viewer_id=viewer_id,
+            query=q,
+            limit=limit,
             cursor=cursor,
         )
 
