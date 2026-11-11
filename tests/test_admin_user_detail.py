@@ -247,7 +247,11 @@ def test_history_is_newest_first_and_only_has_moderation_actions(
         user_id = add_user(db, "Lucas")
         add_audit(db, admin_id, user_id, AuditActionEnum.USER_SUSPENDED, day)
         add_audit(
-            db, admin_id, user_id, AuditActionEnum.USER_REVERTED, day + timedelta(days=1)
+            db,
+            admin_id,
+            user_id,
+            AuditActionEnum.USER_REVERTED,
+            day + timedelta(days=1),
         )
         add_audit(
             db, admin_id, user_id, AuditActionEnum.USER_BANNED, day + timedelta(days=2)
@@ -282,9 +286,7 @@ def test_metrics_ignore_archived_deleted_and_other_users(
 
         add_event(db, user_id)
         add_event(db, user_id)
-        cancelled_id = add_event(
-            db, user_id, event_status=EventStatusEnum.CANCELLED
-        )
+        cancelled_id = add_event(db, user_id, event_status=EventStatusEnum.CANCELLED)
         add_event(db, user_id, deleted_at=datetime.now(UTC))
         other_event_id = add_event(db, other_id)
 

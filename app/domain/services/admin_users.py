@@ -107,8 +107,7 @@ class AdminUsersService:
             banned_at=_as_utc(record.banned_at) if record.banned_at else None,
             suspended_until=(
                 _as_utc(record.suspended_until)
-                if status == ModerationStatusEnum.SUSPENDED
-                and record.suspended_until
+                if status == ModerationStatusEnum.SUSPENDED and record.suspended_until
                 else None
             ),
             metrics=record.metrics,
