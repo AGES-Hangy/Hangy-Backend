@@ -5,6 +5,7 @@ from uuid import UUID
 from app.domain.entities import (
     AdminReportDetail,
     AdminReportDetailRecord,
+    AdminReportEvent,
     AdminReportOrganizer,
     AdminReportPreviousCounts,
     AdminReportQueueItem,
@@ -170,6 +171,21 @@ class AdminReportsService:
                 if target_type == "EVENT"
                 else None
             ),
+            event=cls._resolve_event(record),
+        )
+
+    @staticmethod
+    def _resolve_event(record: AdminReportDetailRecord) -> AdminReportEvent | None:
+        if (
+            record.reported_event_id is None
+            or record.reported_event_title is None
+            or record.reported_event_moderation_status is None
+        ):
+            return None
+        return AdminReportEvent(
+            id=record.reported_event_id,
+            title=record.reported_event_title,
+            moderation_status=record.reported_event_moderation_status,
         )
 
     @staticmethod

@@ -151,7 +151,7 @@ class SqlAlchemyAdminReportsRepository:
         target_user = aliased(UserModel)
 
         row = self.db.execute(
-            select(ReportModel, creator_user, target_user)
+            select(ReportModel, creator_user, target_user, EventModel)
             .join(creator_user, creator_user.user_id == ReportModel.report_creator_id)
             .outerjoin(EventModel, EventModel.event_id == ReportModel.reported_event_id)
             .outerjoin(
@@ -175,7 +175,7 @@ class SqlAlchemyAdminReportsRepository:
         if row is None:
             return None
 
-        model, creator, target = row
+        model, creator, target, event = row
         if target is None:
             return None
 
@@ -205,6 +205,7 @@ class SqlAlchemyAdminReportsRepository:
             previous_resolved=previous_resolved,
             resolved_by_name=resolved_by_name,
             target_reports_count=target_reports_count,
+            event=event,
         )
 
     def _count_target_events(self, target_user_id: UUID) -> int:
@@ -276,6 +277,7 @@ class SqlAlchemyAdminReportsRepository:
         previous_resolved: int,
         resolved_by_name: str | None,
         target_reports_count: int,
+        event: EventModel | None = None,
     ) -> AdminReportDetailRecord:
         opened_at = _as_utc(model.created_at)
         # ReportModel has no separate reported_at column, so opened_at and
@@ -322,4 +324,8 @@ class SqlAlchemyAdminReportsRepository:
             resolution_action=model.resolution_action,
             target_photo_url=target.profile_photo_url,
             target_reports_count=target_reports_count,
+            reported_event_title=event.event_title if event is not None else None,
+            reported_event_moderation_status=(
+                event.moderation_status if event is not None else None
+            ),
         )

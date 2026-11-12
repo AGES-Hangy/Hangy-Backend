@@ -4,6 +4,7 @@ from typing import Literal
 from uuid import UUID
 
 from app.domain.enums import (
+    EventModerationStatusEnum,
     ModerationStatusEnum,
     ReportStatusEnum,
     ReportTypeEnum,
@@ -13,6 +14,7 @@ from app.domain.enums import (
 __all__ = [
     "AdminReportDetail",
     "AdminReportDetailRecord",
+    "AdminReportEvent",
     "AdminReportOrganizer",
     "AdminReportPreviousCounts",
     "AdminReportQueueItem",
@@ -40,6 +42,15 @@ class AdminReportTarget:
     member_since: date
     event_count: int
     moderation_status: ModerationStatusEnum
+
+
+@dataclass(frozen=True, slots=True)
+class AdminReportEvent:
+    """The reported event itself, so the admin can act on it (remove)."""
+
+    id: UUID
+    title: str
+    moderation_status: EventModerationStatusEnum
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +109,8 @@ class AdminReportDetailRecord:
     # Only filled for event reports, where the target is the event's organizer.
     target_photo_url: str | None = None
     target_reports_count: int = 0
+    reported_event_title: str | None = None
+    reported_event_moderation_status: EventModerationStatusEnum | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +127,7 @@ class AdminReportDetail:
     previous_reports: AdminReportPreviousCounts
     resolution: AdminReportResolution | None = None
     organizer: AdminReportOrganizer | None = None
+    event: AdminReportEvent | None = None
 
 
 @dataclass(frozen=True, slots=True)

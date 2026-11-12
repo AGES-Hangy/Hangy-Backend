@@ -4,10 +4,16 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.domain.enums import ModerationStatusEnum, ReportStatusEnum, ReportTypeEnum
+from app.domain.enums import (
+    EventModerationStatusEnum,
+    ModerationStatusEnum,
+    ReportStatusEnum,
+    ReportTypeEnum,
+)
 
 __all__ = [
     "AdminReportDetailOutput",
+    "AdminReportEventOutput",
     "AdminReportItemOutput",
     "AdminReportOrganizerOutput",
     "AdminReportPreviousReportsOutput",
@@ -30,6 +36,12 @@ class AdminReportTargetOutput(BaseModel):
     member_since: date
     event_count: int
     moderation_status: ModerationStatusEnum
+
+
+class AdminReportEventOutput(BaseModel):
+    id: UUID
+    title: str
+    moderation_status: EventModerationStatusEnum
 
 
 class AdminReportOrganizerOutput(BaseModel):
@@ -67,6 +79,9 @@ class AdminReportDetailOutput(BaseModel):
     resolution: AdminReportResolutionOutput | None
     # Only present when target.type is EVENT; omitted for user and business.
     organizer: AdminReportOrganizerOutput | None = None
+    # The reported event (`id` for `PATCH /admin/events/{event_id}/moderation`).
+    # Same rule as `organizer`: only for EVENT targets.
+    event: AdminReportEventOutput | None = None
 
 
 class AdminReportItemOutput(BaseModel):
