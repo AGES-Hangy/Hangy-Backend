@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.config import settings
 from app.domain.enums import (
+    EventModerationStatusEnum,
     EventPrivacyEnum,
     EventStatusEnum,
     ReportStatusEnum,
@@ -234,3 +235,44 @@ def test_organizer_is_present_only_for_event_targets(
         "BUSINESS" if user_type.value == "BUSINESS" else "USER"
     )
     assert "organizer" not in body
+    assert "event" not in body
+
+
+def test_event_report_detail_includes_the_reported_event(
+    detail_client: DetailClient,
+) -> None:
+    client, session_factory = detail_client
+    with session_factory() as db:
+        admin_id = add_user(db, role=UserRoleEnum.ADMIN, name="Admin")
+        organizer_id = add_user(db, name="Rafael Costa")
+        event_id = add_event(db, organizer_id)
+        report_id = add_report(db, add_user(db), reported_event_id=event_id)
+
+    body = get_detail(client, admin_id, report_id)
+
+    assert body["event"] == {
+        "id": str(event_id),
+        "title": "Evento",
+        "moderation_status": "ACTIVE",
+    }
+
+
+def test_removed_event_keeps_the_event_block_with_its_status(
+    detail_client: DetailClient,
+) -> None:
+    client, session_factory = detail_client
+    with session_factory() as db:
+        admin_id = add_user(db, role=UserRoleEnum.ADMIN, name="Admin")
+        organizer_id = add_user(db, name="Rafael Costa")
+        event_id = add_event(db, organizer_id, deleted_at=NOW)
+        event = db.get(EventModel, event_id)
+        assert event is not None
+        event.moderation_status = EventModerationStatusEnum.REMOVED
+        event.removed_at = NOW
+        db.commit()
+        report_id = add_report(db, add_user(db), reported_event_id=event_id)
+
+    event_block = get_detail(client, admin_id, report_id)["event"]
+
+    assert event_block["id"] == str(event_id)
+    assert event_block["moderation_status"] == "REMOVED"

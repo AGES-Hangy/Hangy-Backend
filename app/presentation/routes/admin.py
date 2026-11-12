@@ -285,7 +285,7 @@ def list_admin_reports(
 @router.get(
     "/admin/reports/{report_id}",
     response_model=AdminReportDetailOutput,
-    # Keeps `organizer` out of the body unless the assembler set it.
+    # Keeps `organizer` and `event` out of the body unless the assembler set them.
     response_model_exclude_unset=True,
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(require_admin)],
@@ -297,7 +297,9 @@ def list_admin_reports(
         "contra o mesmo alvo e, quando já resolvida, os dados da resolução. "
         "Quando `target.type` é `EVENT`, traz também o bloco `organizer` "
         "(`user_id`, `name`, `photo_url`, `moderation_status`, `events_count`, "
-        "`reports_count`); nos demais alvos o campo não vem na resposta. "
+        "`reports_count`) e o bloco `event` (`id`, `title`, `moderation_status`), "
+        "com o `event_id` para `PATCH /admin/events/{event_id}/moderation`; nos "
+        "demais alvos esses campos não vêm na resposta. "
         "Exige Bearer token de um usuário com `role = ADMIN`."
     ),
     responses={
@@ -340,7 +342,7 @@ def read_admin_report_detail(
 @router.patch(
     "/admin/reports/{report_id}/archive",
     response_model=AdminReportDetailOutput,
-    # Keeps `organizer` out of the body unless the assembler set it.
+    # Keeps `organizer` and `event` out of the body unless the assembler set them.
     response_model_exclude_unset=True,
     status_code=status.HTTP_200_OK,
     summary="Arquivar uma denúncia sem agir sobre a conta",

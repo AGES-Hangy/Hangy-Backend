@@ -1,5 +1,6 @@
 from app.domain.entities import (
     AdminReportDetail,
+    AdminReportEvent,
     AdminReportOrganizer,
     AdminReportQueueItem,
     AdminReportResolution,
@@ -9,6 +10,7 @@ from app.domain.entities import (
 from app.domain.enums import UserTypeEnum
 from app.presentation.dtos.admin_report import (
     AdminReportDetailOutput,
+    AdminReportEventOutput,
     AdminReportItemOutput,
     AdminReportOrganizerOutput,
     AdminReportPreviousReportsOutput,
@@ -32,13 +34,15 @@ class AdminReportAssembler:
     def to_detail_dto(detail: AdminReportDetail) -> AdminReportDetailOutput:
         target = detail.target
         previous = detail.previous_reports
-        # `organizer` is left unset (and so omitted, see the route's
-        # response_model_exclude_unset) unless the target is an event.
+        # `organizer` and `event` are left unset (and so omitted, see the
+        # route's response_model_exclude_unset) unless the target is an event.
         extra = {}
         if detail.organizer is not None:
             extra["organizer"] = AdminReportAssembler._to_organizer_dto(
                 detail.organizer
             )
+        if detail.event is not None:
+            extra["event"] = AdminReportAssembler._to_event_dto(detail.event)
         return AdminReportDetailOutput(
             report_id=detail.report_id,
             report_number=detail.report_number,
@@ -106,6 +110,14 @@ class AdminReportAssembler:
             reason=item.report_type,
             description_excerpt=excerpt,
             opened_at=item.opened_at,
+        )
+
+    @staticmethod
+    def _to_event_dto(event: AdminReportEvent) -> AdminReportEventOutput:
+        return AdminReportEventOutput(
+            id=event.id,
+            title=event.title,
+            moderation_status=event.moderation_status,
         )
 
     @staticmethod
