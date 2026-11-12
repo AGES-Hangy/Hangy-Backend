@@ -41,6 +41,8 @@ class SqlAlchemyAdminReportsRepository:
         statuses: tuple[ReportStatusEnum, ...],
         search: str | None,
         report_number: int | None,
+        target_user_id: UUID | None,
+        target_event_id: UUID | None,
         limit: int,
         after: tuple[datetime, UUID] | None,
     ) -> list[AdminReportQueueItem]:
@@ -48,6 +50,10 @@ class SqlAlchemyAdminReportsRepository:
             ReportModel.deleted_at.is_(None),
             ReportModel.status.in_(statuses),
         ]
+        if target_user_id is not None:
+            conditions.append(ReportModel.reported_user_id == target_user_id)
+        if target_event_id is not None:
+            conditions.append(ReportModel.reported_event_id == target_event_id)
         if search is not None:
             matching = self._matching_targets(statuses, search, report_number)
             conditions.append(_target_key(ReportModel).in_(matching))

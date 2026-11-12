@@ -38,6 +38,7 @@ from app.domain.services import (
     InvalidPaginationError,
     ModeratedUserNotFoundError,
     NotificationDispatcher,
+    OnlyOneTargetFilterError,
     ParentTagNotCategoryError,
     ParentTagNotFoundError,
     ReportAlreadyResolvedError,
@@ -214,15 +215,28 @@ def read_admin_dashboard(
         "total em `report_count`. A linha mostra a denúncia aberta mais "
         "recentemente para o alvo, da mais nova para a mais antiga. Sem "
         "`status`, devolve tudo menos `REJECTED`. `search` busca pelo nome do "
-        "usuário, título do evento ou número da denúncia. Exige Bearer token "
-        "de um usuário com `role = ADMIN`."
+        "usuário, título do evento ou número da denúncia. `target_user_id` e "
+        "`target_event_id` restringem a fila às denúncias contra aquela conta "
+        "ou aquele evento e não podem ser usados juntos; um alvo sem denúncias "
+        "devolve a lista vazia. Exige Bearer token de um usuário com "
+        "`role = ADMIN`."
     ),
     responses={
         status.HTTP_400_BAD_REQUEST: {
-            "description": "`cursor` malformado.",
+            "description": (
+                "`cursor` malformado, ou `target_user_id` e `target_event_id` "
+                "informados ao mesmo tempo."
+            ),
             "content": {
                 "application/json": {
-                    "example": {"detail": "Invalid pagination parameters"}
+                    "examples": {
+                        "pagination": {
+                            "value": {"detail": "Invalid pagination parameters"}
+                        },
+                        "target_filters": {
+                            "value": {"detail": "Only one target filter is allowed"}
+                        },
+                    }
                 }
             },
         },
@@ -258,6 +272,14 @@ def list_admin_reports(
             description="Nome do alvo, título do evento ou número da denúncia.",
         ),
     ] = None,
+    target_user_id: Annotated[
+        UUID | None,
+        Query(description="Só denúncias contra este usuário ou estabelecimento."),
+    ] = None,
+    target_event_id: Annotated[
+        UUID | None,
+        Query(description="Só denúncias contra este evento."),
+    ] = None,
     limit: Annotated[
         int,
         Query(
@@ -272,8 +294,18 @@ def list_admin_reports(
 ) -> AdminReportsOutput:
     try:
         page = reports_service.list_reports(
-            status=report_status, search=search, limit=limit, cursor=cursor
+            status=report_status,
+            search=search,
+            limit=limit,
+            cursor=cursor,
+            target_user_id=target_user_id,
+            target_event_id=target_event_id,
         )
+    except OnlyOneTargetFilterError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only one target filter is allowed",
+        ) from error
     except InvalidPaginationError as error:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
