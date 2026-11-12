@@ -52,6 +52,12 @@ case "$1" in
   plan)
     [[ "$TF_VAR_gitlab_project_path" == '2026-2/2jk-4jk/hangy/hangy-backend' ]]
     [[ "$TF_VAR_gitlab_url" == 'https://tools.ages.pucrs.br' ]]
+    [[ "$TF_VAR_email_from" == 'reset@hangy.example' ]]
+    if [[ "$MOCK_CASE" == ses_sandbox ]]; then
+      [[ "$TF_VAR_ses_test_recipient" == tester@hangy.example ]]
+    else
+      [[ -z "${TF_VAR_ses_test_recipient:-}" ]]
+    fi
     [[ "$TF_VAR_api_allowed_cidrs" == '["0.0.0.0/0"]' ]]
     if [[ "$MOCK_CASE" == shared* ]]; then
       [[ "$TF_VAR_gitlab_oidc_provider_arn" == 'arn:aws:iam::123456789012:oidc-provider/tools.ages.pucrs.br' ]]
@@ -103,6 +109,25 @@ case "$1 $2" in
     [[ "$3" == --open-id-connect-provider-arn && "$4" == 'arn:aws:iam::123456789012:oidc-provider/tools.ages.pucrs.br' ]]
     [[ "$5" == --client-id && "$6" == 'https://tools.ages.pucrs.br' ]]
     ;;
+  'sesv2 get-email-identity')
+    [[ "$AWS_ACCESS_KEY_ID" == provisioning-key && "$3 $4" == '--region us-east-2' ]]
+    if [[ "$MOCK_CASE" == ses_unverified ]]; then
+      echo '{"VerifiedForSendingStatus":false}'
+    else
+      echo '{"VerifiedForSendingStatus":true}'
+    fi
+    ;;
+  'sesv2 get-account')
+    [[ "$AWS_ACCESS_KEY_ID" == provisioning-key && "$3 $4" == '--region us-east-2' ]]
+    if [[ "$MOCK_CASE" == ses_request_pending || "$MOCK_CASE" == ses_sandbox ]]; then
+      echo '{"SendingEnabled":true,"ProductionAccessEnabled":false}'
+    else
+      echo '{"SendingEnabled":true,"ProductionAccessEnabled":true}'
+    fi
+    ;;
+  'sesv2 put-account-details')
+    [[ "$AWS_ACCESS_KEY_ID" == provisioning-key && "$MOCK_CASE" == ses_request_pending ]]
+    ;;
   'sts assume-role-with-web-identity')
     [[ -z "${AWS_ACCESS_KEY_ID:-}" && -z "${AWS_SECRET_ACCESS_KEY:-}" && -z "${AWS_SESSION_TOKEN:-}" ]]
     [[ "$3" == --role-arn && "$4" == 'arn:aws:iam::123456789012:role/hangy-gitlab-deploy' ]]
@@ -142,6 +167,16 @@ run_case() {
     export AWS_SESSION_TOKEN=provisioning-token CI_JOB_JWT_V2=oidc-token
     if [[ "$scenario" == missing_token ]]; then unset CI_JOB_JWT_V2; fi
     export FRONTEND_BASE_URL=https://hangy.example AWS_REGION=us-east-2
+    export EMAIL_FROM=reset@hangy.example
+    export SES_REQUIRE_PRODUCTION_ACCESS=true SES_REQUEST_PRODUCTION_ACCESS=false
+    unset SES_TEST_RECIPIENT SES_WEBSITE_URL SES_USE_CASE_DESCRIPTION TF_VAR_ses_test_recipient
+    if [[ "$scenario" == ses_sandbox ]]; then
+      export SES_REQUIRE_PRODUCTION_ACCESS=false SES_TEST_RECIPIENT=tester@hangy.example
+    fi
+    if [[ "$scenario" == ses_request_pending ]]; then
+      export SES_REQUEST_PRODUCTION_ACCESS=true SES_USE_CASE_DESCRIPTION='Test SES use case.'
+    fi
+    if [[ "$scenario" == missing_sender ]]; then unset EMAIL_FROM; fi
     unset CORS_ORIGINS API_ALLOWED_CIDRS TF_STATE_KEY
     bash scripts/deploy-gitlab.sh
   ) > "$work_dir/output" 2>&1 || result=$?
@@ -170,6 +205,19 @@ run_case() {
         [[ ! -s "$work_dir/operations" ]]
         grep -q 'Missing CI/CD variable: CI_JOB_JWT_V2' "$work_dir/output"
         ;;
+      missing_sender)
+        [[ ! -s "$work_dir/operations" ]]
+        grep -q 'Missing CI/CD variable: EMAIL_FROM' "$work_dir/output"
+        ;;
+      ses_unverified|ses_request_pending)
+        grep -q 'terraform apply' "$work_dir/operations"
+        ! grep -q 'docker buildx build' "$work_dir/operations"
+        ! grep -q 'aws ssm send-command' "$work_dir/operations"
+        if [[ "$scenario" == ses_request_pending ]]; then
+          grep -q 'aws sesv2 put-account-details' "$work_dir/operations"
+          grep -q 'AWS approval is pending' "$work_dir/output"
+        fi
+        ;;
       build_failure|oidc_failure) ! grep -q 'aws ssm send-command' "$work_dir/operations" ;;
       smoke_timeout)
         grep -q 'Smoke test did not become healthy within 300 seconds.' "$work_dir/output"
@@ -190,9 +238,13 @@ run_case managed success arm64
 run_case shared success
 run_case shared_ready success
 run_case missing_token failure
+run_case missing_sender failure
 run_case stale failure
 run_case build_failure failure
 run_case slow_start success
 run_case smoke_timeout failure
 run_case oidc_failure failure
 run_case ssm_failure failure
+run_case ses_sandbox success
+run_case ses_unverified failure
+run_case ses_request_pending failure

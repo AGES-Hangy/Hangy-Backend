@@ -93,6 +93,9 @@ resource "aws_secretsmanager_secret_version" "app" {
     FRONTEND_BASE_URL           = var.frontend_base_url
     INVITE_LINK_BASE_URL        = "hangy://invite/"
     AWS_REGION                  = var.aws_region
+    EMAIL_BACKEND               = "ses"
+    EMAIL_FROM                  = aws_sesv2_email_identity.password_reset.email_identity
+    SES_REGION                  = var.aws_region
     S3_BUCKET_NAME              = aws_s3_bucket.app.bucket
     AWS_S3_BUCKET               = aws_s3_bucket.app.bucket
   })
