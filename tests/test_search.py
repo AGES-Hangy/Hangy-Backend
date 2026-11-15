@@ -2,6 +2,7 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from unittest.mock import Mock
 from uuid import UUID
 
 import jwt
@@ -18,10 +19,21 @@ from app.domain.enums import (
     EventPrivacyEnum,
     EventStatusEnum,
     SearchResultType,
+    UserConnectionStatusEnum,
     UserRoleEnum,
     UserTypeEnum,
 )
-from app.domain.services import SearchService, visible_events_query
+from app.domain.services import (
+    DEFAULT_SEARCH_LIMIT,
+    InvalidPaginationError,
+    InvalidSearchDateFormatError,
+    SearchQueryTooShortError,
+    SearchService,
+    SearchTagNotFoundError,
+    encode_cursor,
+    encode_text_cursor,
+    visible_events_query,
+)
 from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import (
     BusinessProfileModel,
@@ -30,12 +42,15 @@ from app.infrastructure.repository.models import (
     PersonProfileModel,
     TagModel,
     UserBlockModel,
+    UserConnectionModel,
     UserModel,
     event_tag,
+    user_follows,
     user_tag,
 )
 from app.infrastructure.repository.search import SqlAlchemySearchRepository
 from app.main import app
+from app.presentation.mappers import SearchMapper
 
 USER_EMAIL = "searcher@hangy.com"
 NOW = datetime.now(UTC)
@@ -1046,3 +1061,944 @@ def test_search_service_supports_type_and_offset_parameterization(
     assert result.events.has_more is True
     assert result.businesses.items == ()
     assert result.users.items == ()
+
+
+# US10.4 — Lista completa de eventos por cursor.
+
+
+def test_search_events_returns_only_events_when_all_types_match(context):
+    person_id = create_person(context.db, "Copa Pessoa")
+    create_business(context.db, "Copa Arena")
+    event_id = create_event(context.db, person_id, "Copa Evento")
+    params = {"q": "copa"}
+
+    preview = context.client.get("/search", params=params, headers=context.auth_headers)
+    assert preview.status_code == 200
+    for result_type in ("events", "businesses", "users"):
+        assert preview.json()[result_type]["total"] == 1
+
+    response = context.client.get(
+        "/search/events", params=params, headers=context.auth_headers
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"items", "next_cursor", "total"}
+    assert body["total"] == 1
+    assert body["next_cursor"] is None
+    assert [item["event_id"] for item in body["items"]] == [str(event_id)]
+    assert body["items"][0]["title"] == "Copa Evento"
+    assert "user_id" not in body["items"][0]
+
+
+def test_search_events_cursor_pages_with_equal_dates(context):
+    creator = create_person(context.db, "Organizador")
+    ids = [UUID(int=value) for value in (30, 10, 20)]
+    for event_id in ids:
+        create_event(context.db, creator, "Copa", event_id=event_id)
+    params = {"q": "copa", "limit": 1}
+    for expected in sorted(ids):
+        response = context.client.get(
+            "/search/events", params=params, headers=context.auth_headers
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body) == {"items", "next_cursor", "total"}
+        assert body["total"] == 3
+        assert [item["event_id"] for item in body["items"]] == [str(expected)]
+        if expected != max(ids):
+            assert body["next_cursor"]
+            params["cursor"] = body["next_cursor"]
+        else:
+            assert body["next_cursor"] is None
+
+
+def test_search_events_cursor_survives_previous_item_deletion(context):
+    creator = create_person(context.db, "Organizador")
+    ids = [
+        create_event(
+            context.db, creator, "Festival", starts_at=NOW + timedelta(days=day)
+        )
+        for day in (2, 3, 4)
+    ]
+    first = context.client.get(
+        "/search/events",
+        params={"q": "festival", "limit": 1},
+        headers=context.auth_headers,
+    ).json()
+    context.db.delete(context.db.get(EventModel, ids[0]))
+    context.db.commit()
+    second = context.client.get(
+        "/search/events",
+        params={"q": "festival", "limit": 1, "cursor": first["next_cursor"]},
+        headers=context.auth_headers,
+    )
+    assert second.status_code == 200
+    assert second.json()["items"][0]["event_id"] == str(ids[1])
+    assert second.json()["total"] == 2
+
+
+def test_search_events_preserves_preview_filters(context):
+    creator = create_person(context.db, "Organizador")
+    macro = create_tag(context.db, "Esportes")
+    micro = create_tag(context.db, "Futebol", parent_id=macro)
+    music = create_tag(context.db, "Música")
+    target = NOW + timedelta(days=5)
+    expected = create_event(
+        context.db, creator, "Copa de Férias", tag_ids=(micro,), starts_at=target
+    )
+    create_event(
+        context.db, creator, "Copa de Música", tag_ids=(music,), starts_at=target
+    )
+    create_event(
+        context.db,
+        creator,
+        "Copa Amanhã",
+        tag_ids=(micro,),
+        starts_at=target + timedelta(days=1),
+    )
+    create_event(
+        context.db, creator, "Outro evento", tag_ids=(micro,), starts_at=target
+    )
+    params = {
+        "q": "copa",
+        "tag_ids": str(macro),
+        "date_from": target.date().isoformat(),
+        "date_to": target.date().isoformat(),
+    }
+    preview = context.client.get("/search", params=params, headers=context.auth_headers)
+    response = context.client.get(
+        "/search/events", params=params, headers=context.auth_headers
+    )
+    assert response.status_code == 200
+    assert response.json()["items"] == preview.json()["events"]["items"]
+    assert [item["event_id"] for item in response.json()["items"]] == [str(expected)]
+    assert response.json()["next_cursor"] is None
+    assert response.json()["total"] == 1
+
+
+def test_search_events_home_tag_and_empty_state(context):
+    creator = create_person(context.db, "Organizador")
+    tag = create_tag(context.db, "Esportes")
+    event_id = create_event(context.db, creator, "Pelada", tag_ids=(tag,))
+    response = context.client.get(
+        "/search/events", params={"tag_ids": str(tag)}, headers=context.auth_headers
+    )
+    assert response.status_code == 200
+    assert response.json()["items"][0]["event_id"] == str(event_id)
+    empty = context.client.get(
+        "/search/events", params={"q": "inexistente"}, headers=context.auth_headers
+    )
+    assert empty.status_code == 200
+    assert empty.json() == {"items": [], "next_cursor": None, "total": 0}
+
+
+def test_search_events_visibility_and_private_address(context):
+    creator = create_person(context.db, "Organizador")
+    public = create_event(context.db, creator, "Encontro público")
+    private = create_event(
+        context.db,
+        creator,
+        "Encontro privado",
+        privacy=EventPrivacyEnum.PRIVATE,
+        location_name="Rua secreta, 123",
+        neighborhood="Bom Fim",
+    )
+    invited = create_event(
+        context.db, creator, "Encontro convidado", privacy=EventPrivacyEnum.INVITE_ONLY
+    )
+    add_participant(context.db, invited, context.user_id)
+    create_event(
+        context.db, creator, "Encontro fechado", privacy=EventPrivacyEnum.INVITE_ONLY
+    )
+    create_event(
+        context.db, creator, "Encontro passado", starts_at=NOW - timedelta(days=1)
+    )
+    create_event(
+        context.db,
+        creator,
+        "Encontro cancelado",
+        event_status=EventStatusEnum.CANCELLED,
+    )
+    deleted = create_event(context.db, creator, "Encontro removido")
+    context.db.get(EventModel, deleted).deleted_at = NOW
+    for reverse in (False, True):
+        blocked = create_person(context.db, f"Bloqueado {reverse}")
+        context.db.add(
+            UserBlockModel(
+                blocker_id=blocked if reverse else context.user_id,
+                blocked_id=context.user_id if reverse else blocked,
+            )
+        )
+        create_event(context.db, blocked, "Encontro bloqueado")
+    context.db.commit()
+    response = context.client.get(
+        "/search/events", params={"q": "encontro"}, headers=context.auth_headers
+    )
+    assert response.status_code == 200
+    body = response.json()
+    items = {item["event_id"]: item for item in body["items"]}
+    assert set(items) == {str(public), str(private), str(invited)}
+    assert body["total"] == 3
+    assert items[str(private)]["is_preview"] is True
+    assert items[str(public)]["is_preview"] is False
+    assert items[str(invited)]["is_preview"] is False
+    assert items[str(private)]["location_name"] == "Bom Fim, Porto Alegre"
+    assert items[str(private)]["location_precision"] == "APPROXIMATE"
+    assert items[str(private)]["description"] is None
+    assert "Rua secreta" not in response.text
+    add_participant(context.db, private, context.user_id)
+    full = context.client.get(
+        "/search/events", params={"q": "encontro privado"}, headers=context.auth_headers
+    ).json()["items"][0]
+    assert full["is_preview"] is False
+    assert full["location_name"] == "Rua secreta, 123"
+    assert full["location_precision"] == "EXACT"
+
+
+@pytest.mark.parametrize("limit", ["0", "-1", "51", "abc", "1.5", "", "9" * 20])
+def test_search_events_invalid_limit(context, limit):
+    response = context.client.get(
+        "/search/events",
+        params={"q": "copa", "limit": limit},
+        headers=context.auth_headers,
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid pagination parameters"}
+
+
+@pytest.mark.parametrize(
+    "cursor",
+    [
+        "",
+        "malformed",
+        "x" * 257,
+        encode_cursor(datetime(2026, 1, 1), UUID(int=1)),
+        encode_cursor(datetime(2026, 1, 1, tzinfo=UTC), UUID(int=1)) + "!",
+    ],
+)
+def test_search_events_invalid_cursor(context, cursor):
+    response = context.client.get(
+        "/search/events",
+        params={"q": "copa", "cursor": cursor},
+        headers=context.auth_headers,
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid pagination parameters"}
+
+
+@pytest.mark.parametrize(
+    "params, detail, status",
+    [
+        ({"q": "copa", "tag_ids": str(UUID(int=99))}, "Tag not found", 404),
+        ({"q": "copa", "tag_ids": "invalid"}, "Tag not found", 404),
+        ({"q": "copa", "date_from": "invalid"}, "Invalid date format", 400),
+        (
+            {"q": "copa", "date_from": "2026-12-02", "date_to": "2026-12-01"},
+            "date_from must be before date_to",
+            400,
+        ),
+        ({"q": "a"}, "Query is too short", 400),
+    ],
+)
+def test_search_events_filter_errors(context, params, detail, status):
+    response = context.client.get(
+        "/search/events", params=params, headers=context.auth_headers
+    )
+    assert response.status_code == status
+    assert response.json() == {"detail": detail}
+
+
+@pytest.mark.parametrize("token", [None, "invalid", "expired"])
+def test_search_events_authentication(context, token):
+    headers = {}
+    if token == "expired":
+        token = jwt.encode(
+            {
+                "sub": str(context.user_id),
+                "exp": datetime.now(UTC) - timedelta(minutes=1),
+            },
+            settings.jwt_secret_key,
+            algorithm=settings.jwt_algorithm,
+        )
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+    response = context.client.get(
+        "/search/events", params={"q": "copa"}, headers=headers
+    )
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Could not validate credentials"}
+
+
+def test_search_events_default_and_maximum_page_size(context):
+    creator = create_person(context.db, "Organizador")
+    for i in range(51):
+        create_event(context.db, creator, f"Festival {i}")
+    default = context.client.get(
+        "/search/events", params={"q": "festival"}, headers=context.auth_headers
+    )
+    assert default.status_code == 200
+    assert len(default.json()["items"]) == 20
+    assert default.json()["total"] == 51
+    maximum = context.client.get(
+        "/search/events",
+        params={"q": "festival", "limit": 50},
+        headers=context.auth_headers,
+    )
+    assert maximum.status_code == 200
+    assert len(maximum.json()["items"]) == 50
+    assert maximum.json()["next_cursor"]
+
+
+def test_search_events_cursor_after_last_item_keeps_filtered_total(context):
+    creator = create_person(context.db, "Organizador")
+    create_event(context.db, creator, "Copa")
+    cursor = encode_cursor(NOW + timedelta(days=30), UUID(int=1))
+    response = context.client.get(
+        "/search/events",
+        params={"q": "copa", "cursor": cursor},
+        headers=context.auth_headers,
+    )
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "next_cursor": None, "total": 1}
+
+
+@pytest.mark.parametrize(
+    "params, expected_error",
+    [
+        ({"limit": "invalid"}, InvalidPaginationError),
+        ({"limit": "0"}, InvalidPaginationError),
+        ({"cursor": "invalid"}, InvalidPaginationError),
+        ({"date_from": "invalid"}, InvalidSearchDateFormatError),
+        ({"date_to": "2026-13-40"}, InvalidSearchDateFormatError),
+        ({"tag_ids": "invalid"}, SearchTagNotFoundError),
+        ({"tag_ids": ","}, SearchTagNotFoundError),
+    ],
+)
+def test_search_events_service_owns_input_validation(params, expected_error):
+    # Mapping even malformed input must succeed; domain errors belong to the service.
+    criteria = SearchMapper.to_events_query(
+        uuid.uuid4(), q="copa", **{"limit": "20", **params}
+    )
+    repository = Mock()
+    with pytest.raises(expected_error):
+        SearchService(repository).search_events(criteria)
+    repository.search_events.assert_not_called()
+
+
+# ============================================================================
+# US10.4 — Lista completa de estabelecimentos por cursor.
+# ============================================================================
+
+
+def follow_business(db: Session, follower_id: UUID, business_id: UUID) -> None:
+    db.execute(
+        user_follows.insert().values(
+            follower_id=follower_id, followed_business_id=business_id
+        )
+    )
+    db.commit()
+
+
+def test_search_businesses_returns_only_businesses_with_page_shape(context):
+    create_person(context.db, "Copa Pessoa")
+    create_event(context.db, create_person(context.db, "Org"), "Copa Evento")
+    business_id = create_business(context.db, "Copa Arena")
+
+    response = context.client.get(
+        "/search/businesses", params={"q": "copa"}, headers=context.auth_headers
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "items": [
+            {
+                "user_id": str(business_id),
+                "business_name": "Copa Arena",
+                "photo_url": None,
+                "city": None,
+                "is_following": False,
+            }
+        ],
+        "next_cursor": None,
+        "total": 1,
+    }
+
+
+def test_search_businesses_marks_followed_businesses(context):
+    followed = create_business(context.db, "Bar Seguido")
+    create_business(context.db, "Bar Livre")
+    follow_business(context.db, context.user_id, followed)
+
+    items = context.client.get(
+        "/search/businesses", params={"q": "bar"}, headers=context.auth_headers
+    ).json()["items"]
+
+    assert {item["business_name"]: item["is_following"] for item in items} == {
+        "Bar Seguido": True,
+        "Bar Livre": False,
+    }
+
+
+def test_search_businesses_is_following_is_per_viewer(context):
+    business_id = create_business(context.db, "Bar Alheio")
+    other_id = create_person(context.db, "Outro Usuario")
+    follow_business(context.db, other_id, business_id)
+
+    item = context.client.get(
+        "/search/businesses", params={"q": "bar"}, headers=context.auth_headers
+    ).json()["items"][0]
+
+    assert item["is_following"] is False
+
+
+def test_search_businesses_cursor_does_not_repeat_or_skip_items(context):
+    # UUID order is the reverse of name order, so the cursor must follow the name.
+    names = ["Bar A", "Bar B", "Bar C", "Bar D", "Bar E"]
+    for index, name in enumerate(names):
+        create_business(context.db, name, user_id=UUID(int=100 - index))
+
+    seen: list[str] = []
+    params: dict[str, str | int] = {"q": "bar", "limit": 2}
+    pages = 0
+    while True:
+        body = context.client.get(
+            "/search/businesses", params=params, headers=context.auth_headers
+        ).json()
+        assert body["total"] == 5
+        seen.extend(item["business_name"] for item in body["items"])
+        pages += 1
+        if body["next_cursor"] is None:
+            break
+        params["cursor"] = body["next_cursor"]
+
+    assert pages == 3
+    assert seen == names
+
+
+def test_search_businesses_cursor_pages_with_equal_names(context):
+    ids = [UUID(int=value) for value in (30, 10, 20)]
+    for business_id in ids:
+        create_business(context.db, "Bar Igual", user_id=business_id)
+
+    seen: list[str] = []
+    params: dict[str, str | int] = {"q": "bar", "limit": 1}
+    for _ in ids:
+        body = context.client.get(
+            "/search/businesses", params=params, headers=context.auth_headers
+        ).json()
+        seen.append(body["items"][0]["user_id"])
+        params["cursor"] = body["next_cursor"]
+
+    assert seen == [str(business_id) for business_id in sorted(ids)]
+
+
+def test_search_businesses_cursor_handles_separator_in_name(context):
+    create_business(context.db, "Bar | Um")
+    create_business(context.db, "Bar | Dois")
+
+    first = context.client.get(
+        "/search/businesses",
+        params={"q": "bar", "limit": 1},
+        headers=context.auth_headers,
+    ).json()
+    second = context.client.get(
+        "/search/businesses",
+        params={"q": "bar", "limit": 1, "cursor": first["next_cursor"]},
+        headers=context.auth_headers,
+    ).json()
+
+    names = [first["items"][0]["business_name"], second["items"][0]["business_name"]]
+    assert names == ["Bar | Dois", "Bar | Um"]
+    assert second["next_cursor"] is None
+
+
+def test_search_businesses_default_and_maximum_page_size(context):
+    for index in range(51):
+        create_business(context.db, f"Bar {index:02d}")
+
+    default = context.client.get(
+        "/search/businesses", params={"q": "bar"}, headers=context.auth_headers
+    ).json()
+    maximum = context.client.get(
+        "/search/businesses",
+        params={"q": "bar", "limit": 50},
+        headers=context.auth_headers,
+    ).json()
+
+    assert len(default["items"]) == DEFAULT_SEARCH_LIMIT == 20
+    assert default["total"] == 51
+    assert len(maximum["items"]) == 50
+    assert maximum["next_cursor"]
+
+
+def test_search_businesses_excludes_blocked_in_both_directions(context):
+    blocked = create_business(context.db, "Bar Bloqueado")
+    blocker = create_business(context.db, "Bar Bloqueador")
+    create_business(context.db, "Bar Visivel")
+    context.db.add_all(
+        [
+            UserBlockModel(blocker_id=context.user_id, blocked_id=blocked),
+            UserBlockModel(blocker_id=blocker, blocked_id=context.user_id),
+        ]
+    )
+    context.db.commit()
+
+    body = context.client.get(
+        "/search/businesses", params={"q": "bar"}, headers=context.auth_headers
+    ).json()
+
+    assert [item["business_name"] for item in body["items"]] == ["Bar Visivel"]
+    assert body["total"] == 1
+
+
+def test_search_businesses_excludes_deleted_accounts(context):
+    deleted = create_business(context.db, "Bar Excluido")
+    create_business(context.db, "Bar Ativo")
+    context.db.get(UserModel, deleted).deleted_at = NOW
+    context.db.commit()
+
+    body = context.client.get(
+        "/search/businesses", params={"q": "bar"}, headers=context.auth_headers
+    ).json()
+
+    assert [item["business_name"] for item in body["items"]] == ["Bar Ativo"]
+
+
+def test_search_businesses_is_accent_and_case_insensitive(context):
+    create_business(context.db, "Café Açaí")
+
+    body = context.client.get(
+        "/search/businesses", params={"q": "CAFE acai"}, headers=context.auth_headers
+    ).json()
+
+    assert body["total"] == 1
+
+
+@pytest.mark.parametrize("limit", ["0", "-1", "51", "abc", "1.5", "", "9" * 20])
+def test_search_businesses_invalid_limit(context, limit):
+    response = context.client.get(
+        "/search/businesses",
+        params={"q": "bar", "limit": limit},
+        headers=context.auth_headers,
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid pagination parameters"}
+
+
+def test_search_businesses_cursor_accepts_long_accented_name(context):
+    # 120 characters is the longest name the API accepts; accented letters take
+    # two bytes in UTF-8, so the cursor ends up longer than 256 characters.
+    long_name = "Bar " + "ç" * 116
+    first_id = create_business(context.db, long_name, user_id=UUID(int=1))
+    second_id = create_business(context.db, long_name, user_id=UUID(int=2))
+
+    first = context.client.get(
+        "/search/businesses",
+        params={"q": "bar", "limit": 1},
+        headers=context.auth_headers,
+    )
+    assert first.status_code == 200
+    first_body = first.json()
+    assert [item["user_id"] for item in first_body["items"]] == [str(first_id)]
+    assert len(first_body["next_cursor"]) > 256
+
+    second = context.client.get(
+        "/search/businesses",
+        params={"q": "bar", "limit": 1, "cursor": first_body["next_cursor"]},
+        headers=context.auth_headers,
+    )
+    assert second.status_code == 200
+    assert [item["user_id"] for item in second.json()["items"]] == [str(second_id)]
+
+
+@pytest.mark.parametrize(
+    "cursor",
+    [
+        "",
+        "malformed",
+        "x" * 693,
+        encode_text_cursor("Bar", UUID(int=1)) + "!",
+        encode_cursor(datetime(2026, 1, 1, tzinfo=UTC), UUID(int=1))[:-4],
+    ],
+)
+def test_search_businesses_invalid_cursor(context, cursor):
+    response = context.client.get(
+        "/search/businesses",
+        params={"q": "bar", "cursor": cursor},
+        headers=context.auth_headers,
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid pagination parameters"}
+
+
+@pytest.mark.parametrize("params", [{}, {"q": "a"}, {"q": "   "}])
+def test_search_businesses_requires_query_of_two_characters(context, params):
+    response = context.client.get(
+        "/search/businesses", params=params, headers=context.auth_headers
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Query is too short"}
+
+
+@pytest.mark.parametrize("token", [None, "invalid", "expired"])
+def test_search_businesses_authentication(context, token):
+    headers = {}
+    if token == "expired":
+        token = jwt.encode(
+            {
+                "sub": str(context.user_id),
+                "exp": datetime.now(UTC) - timedelta(minutes=1),
+            },
+            settings.jwt_secret_key,
+            algorithm=settings.jwt_algorithm,
+        )
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+    response = context.client.get(
+        "/search/businesses", params={"q": "bar"}, headers=headers
+    )
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Could not validate credentials"}
+
+
+def test_search_businesses_service_owns_input_validation():
+    # Mapping even malformed input must succeed; domain errors belong to the service.
+    criteria = SearchMapper.to_businesses_query(
+        uuid.uuid4(), q="bar", limit="invalid", cursor="invalid"
+    )
+    repository = Mock()
+    with pytest.raises(InvalidPaginationError):
+        SearchService(repository).search_businesses(criteria)
+    repository.search_businesses.assert_not_called()
+
+
+def test_search_businesses_is_following_persists_across_cursor_pages(context):
+    followed = create_business(context.db, "Bar Seguido")
+    create_business(context.db, "Bar Livre")
+    follow_business(context.db, context.user_id, followed)
+
+    first = context.client.get(
+        "/search/businesses",
+        params={"q": "bar", "limit": 1},
+        headers=context.auth_headers,
+    ).json()
+    second = context.client.get(
+        "/search/businesses",
+        params={"q": "bar", "limit": 1, "cursor": first["next_cursor"]},
+        headers=context.auth_headers,
+    ).json()
+
+    all_items = first["items"] + second["items"]
+    assert {item["business_name"]: item["is_following"] for item in all_items} == {
+        "Bar Seguido": True,
+        "Bar Livre": False,
+    }
+
+
+# US10.4 — Lista completa de pessoas por cursor.
+
+
+def test_search_users_returns_only_users_when_all_types_match(context):
+    person_id = create_person(context.db, "Bruno Lima")
+    create_business(context.db, "Bruno Bar")
+    create_event(context.db, person_id, "Bruno Fest")
+    params = {"q": "bruno"}
+
+    preview = context.client.get("/search", params=params, headers=context.auth_headers)
+    assert preview.status_code == 200
+    for result_type in ("events", "businesses", "users"):
+        assert preview.json()[result_type]["total"] == 1
+
+    response = context.client.get(
+        "/search/users", params=params, headers=context.auth_headers
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert set(body) == {"items", "next_cursor", "total"}
+    assert body["total"] == 1
+    assert body["next_cursor"] is None
+    assert body["items"] == preview.json()["users"]["items"]
+    assert [item["user_id"] for item in body["items"]] == [str(person_id)]
+    assert body["items"][0]["name"] == "Bruno Lima"
+    assert body["items"][0]["city"] == "Porto Alegre"
+    assert body["items"][0]["connection_status"] is None
+    assert "event_id" not in body["items"][0]
+    assert "business_name" not in body["items"][0]
+
+
+def test_search_users_orders_by_name_and_uuid_and_pages_by_cursor(context):
+    high_uuid = UUID("ffffffff-0000-4000-8000-000000000001")
+    mid_uuid_a = UUID("00000020-0000-4000-8000-000000000001")
+    mid_uuid_b = UUID("00000010-0000-4000-8000-000000000001")
+    low_uuid = UUID("00000001-0000-4000-8000-000000000001")
+
+    create_person(context.db, "Zeca Bruno", user_id=low_uuid)
+    create_person(context.db, "Bruno Empate", user_id=mid_uuid_a)
+    create_person(context.db, "Bruno Empate", user_id=mid_uuid_b)
+    create_person(context.db, "Ana Bruno", user_id=high_uuid)
+
+    expected_order = [high_uuid, mid_uuid_b, mid_uuid_a, low_uuid]
+    params: dict[str, str | int] = {"q": "bruno", "limit": 1}
+    seen_ids: list[str] = []
+
+    for index, expected_id in enumerate(expected_order):
+        response = context.client.get(
+            "/search/users", params=params, headers=context.auth_headers
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body) == {"items", "next_cursor", "total"}
+        assert body["total"] == 4
+        assert [item["user_id"] for item in body["items"]] == [str(expected_id)]
+        seen_ids.append(body["items"][0]["user_id"])
+        if index < len(expected_order) - 1:
+            assert body["next_cursor"]
+            params["cursor"] = body["next_cursor"]
+        else:
+            assert body["next_cursor"] is None
+
+    assert len(seen_ids) == len(set(seen_ids)) == 4
+
+
+def test_search_users_cursor_accepts_long_accented_name(context):
+    # 120 characters is the longest name the API accepts; accented letters take
+    # two bytes in UTF-8, so the cursor ends up longer than 256 characters.
+    long_name = "Bruno " + "ç" * 114
+    first_id = create_person(context.db, long_name, user_id=UUID(int=1))
+    second_id = create_person(context.db, long_name, user_id=UUID(int=2))
+
+    first = context.client.get(
+        "/search/users",
+        params={"q": "bruno", "limit": 1},
+        headers=context.auth_headers,
+    )
+    assert first.status_code == 200
+    first_body = first.json()
+    assert [item["user_id"] for item in first_body["items"]] == [str(first_id)]
+    assert len(first_body["next_cursor"]) > 256
+
+    second = context.client.get(
+        "/search/users",
+        params={"q": "bruno", "limit": 1, "cursor": first_body["next_cursor"]},
+        headers=context.auth_headers,
+    )
+    assert second.status_code == 200
+    assert [item["user_id"] for item in second.json()["items"]] == [str(second_id)]
+
+
+def test_search_users_cursor_survives_previous_item_deletion(context):
+    ids = [create_person(context.db, f"Bruno {letter}") for letter in ("A", "B", "C")]
+    first = context.client.get(
+        "/search/users",
+        params={"q": "bruno", "limit": 1},
+        headers=context.auth_headers,
+    ).json()
+    context.db.get(UserModel, ids[0]).deleted_at = NOW
+    context.db.commit()
+    second = context.client.get(
+        "/search/users",
+        params={"q": "bruno", "limit": 1, "cursor": first["next_cursor"]},
+        headers=context.auth_headers,
+    )
+    assert second.status_code == 200
+    assert second.json()["items"][0]["user_id"] == str(ids[1])
+    assert second.json()["total"] == 2
+
+
+def test_search_users_excludes_blocked_and_deleted_and_resolves_connection_status(
+    context,
+):
+    none_user = create_person(context.db, "Bruno Sem Conexao")
+    pending_sent = create_person(context.db, "Bruno Pendente Enviado")
+    pending_received = create_person(context.db, "Bruno Pendente Recebido")
+    confirmed_user = create_person(context.db, "Bruno Confirmado")
+    rejected_user = create_person(context.db, "Bruno Rejeitado")
+    undone_user = create_person(context.db, "Bruno Desfeito")
+    deleted_user = create_person(context.db, "Bruno Removido")
+    context.db.get(UserModel, deleted_user).deleted_at = NOW
+
+    for reverse in (False, True):
+        blocked = create_person(context.db, f"Bruno Bloqueado {reverse}")
+        context.db.add(
+            UserBlockModel(
+                blocker_id=blocked if reverse else context.user_id,
+                blocked_id=context.user_id if reverse else blocked,
+            )
+        )
+
+    context.db.add_all(
+        [
+            UserConnectionModel(
+                requester_id=context.user_id,
+                receiver_id=pending_sent,
+                status=UserConnectionStatusEnum.PENDING,
+            ),
+            UserConnectionModel(
+                requester_id=pending_received,
+                receiver_id=context.user_id,
+                status=UserConnectionStatusEnum.PENDING,
+            ),
+            UserConnectionModel(
+                requester_id=confirmed_user,
+                receiver_id=context.user_id,
+                status=UserConnectionStatusEnum.CONFIRMED,
+            ),
+            UserConnectionModel(
+                requester_id=context.user_id,
+                receiver_id=rejected_user,
+                status=UserConnectionStatusEnum.REJECTED,
+            ),
+            UserConnectionModel(
+                requester_id=context.user_id,
+                receiver_id=undone_user,
+                status=UserConnectionStatusEnum.CONFIRMED,
+                deleted_at=NOW,
+            ),
+        ]
+    )
+    context.db.commit()
+
+    response = context.client.get(
+        "/search/users", params={"q": "bruno"}, headers=context.auth_headers
+    )
+    assert response.status_code == 200
+    body = response.json()
+    items = {item["user_id"]: item for item in body["items"]}
+    assert set(items) == {
+        str(none_user),
+        str(pending_sent),
+        str(pending_received),
+        str(confirmed_user),
+        str(rejected_user),
+        str(undone_user),
+    }
+    assert body["total"] == 6
+    assert items[str(none_user)]["connection_status"] is None
+    assert items[str(pending_sent)]["connection_status"] == "PENDING"
+    assert items[str(pending_received)]["connection_status"] == "PENDING"
+    assert items[str(confirmed_user)]["connection_status"] == "CONFIRMED"
+    assert items[str(rejected_user)]["connection_status"] == "REJECTED"
+    assert items[str(undone_user)]["connection_status"] is None
+
+
+def test_search_users_empty_state(context):
+    empty = context.client.get(
+        "/search/users", params={"q": "inexistente"}, headers=context.auth_headers
+    )
+    assert empty.status_code == 200
+    assert empty.json() == {"items": [], "next_cursor": None, "total": 0}
+
+
+def test_search_users_default_and_maximum_page_size(context):
+    for i in range(51):
+        create_person(context.db, f"Bruno {i:02d}")
+    default = context.client.get(
+        "/search/users", params={"q": "bruno"}, headers=context.auth_headers
+    )
+    assert default.status_code == 200
+    assert len(default.json()["items"]) == 20
+    assert default.json()["total"] == 51
+    assert default.json()["next_cursor"]
+    maximum = context.client.get(
+        "/search/users",
+        params={"q": "bruno", "limit": 50},
+        headers=context.auth_headers,
+    )
+    assert maximum.status_code == 200
+    assert len(maximum.json()["items"]) == 50
+    assert maximum.json()["next_cursor"]
+
+
+def test_search_users_cursor_after_last_item_keeps_filtered_total(context):
+    create_person(context.db, "Bruno Lima")
+    cursor = encode_text_cursor("Zzz Bruno", UUID(int=1))
+    response = context.client.get(
+        "/search/users",
+        params={"q": "bruno", "cursor": cursor},
+        headers=context.auth_headers,
+    )
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "next_cursor": None, "total": 1}
+
+
+@pytest.mark.parametrize("limit", ["0", "-1", "51", "abc", "1.5", "", "9" * 20])
+def test_search_users_invalid_limit(context, limit):
+    response = context.client.get(
+        "/search/users",
+        params={"q": "bruno", "limit": limit},
+        headers=context.auth_headers,
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid pagination parameters"}
+
+
+@pytest.mark.parametrize(
+    "cursor",
+    [
+        "",
+        "malformed",
+        "x" * 693,
+        encode_text_cursor("   ", UUID(int=1)),
+        encode_text_cursor("Bruno\x00Lima", UUID(int=1)),
+        encode_text_cursor("x" * 121, UUID(int=1)),
+        encode_text_cursor("Bruno Lima", UUID(int=1)) + "!",
+    ],
+)
+def test_search_users_invalid_cursor(context, cursor):
+    response = context.client.get(
+        "/search/users",
+        params={"q": "bruno", "cursor": cursor},
+        headers=context.auth_headers,
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid pagination parameters"}
+
+
+@pytest.mark.parametrize("params", [{"q": "a"}, {"q": " x "}, {"q": ""}, {}])
+def test_search_users_query_errors(context, params):
+    response = context.client.get(
+        "/search/users", params=params, headers=context.auth_headers
+    )
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Query is too short"}
+
+
+@pytest.mark.parametrize("token", [None, "invalid", "expired"])
+def test_search_users_authentication(context, token):
+    headers = {}
+    if token == "expired":
+        token = jwt.encode(
+            {
+                "sub": str(context.user_id),
+                "exp": datetime.now(UTC) - timedelta(minutes=1),
+            },
+            settings.jwt_secret_key,
+            algorithm=settings.jwt_algorithm,
+        )
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+    response = context.client.get(
+        "/search/users", params={"q": "bruno"}, headers=headers
+    )
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Could not validate credentials"}
+
+
+@pytest.mark.parametrize(
+    "params, expected_error",
+    [
+        ({"limit": "invalid"}, InvalidPaginationError),
+        ({"limit": "0"}, InvalidPaginationError),
+        ({"cursor": "invalid"}, InvalidPaginationError),
+        ({"q": "a"}, SearchQueryTooShortError),
+        ({"q": None}, SearchQueryTooShortError),
+    ],
+)
+def test_search_users_service_owns_input_validation(params, expected_error):
+    criteria = SearchMapper.to_users_query(
+        uuid.uuid4(), **{"q": "bruno", "limit": "20", **params}
+    )
+    repository = Mock()
+    with pytest.raises(expected_error):
+        SearchService(repository).search_users(criteria)
+    repository.search_users.assert_not_called()

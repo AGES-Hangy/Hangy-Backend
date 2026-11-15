@@ -183,25 +183,41 @@ def test_admin_lists_users_with_counts_and_derived_status(
         add_event(db, rafael, deleted_at=NOW)
         bar_event = add_event(db, bar)
 
+        rep1 = add_user(
+            db, name="Rep 1", created_at=NOW - timedelta(days=3), deleted_at=NOW
+        )
+        rep2 = add_user(
+            db, name="Rep 2", created_at=NOW - timedelta(days=3), deleted_at=NOW
+        )
+        rep3 = add_user(
+            db, name="Rep 3", created_at=NOW - timedelta(days=3), deleted_at=NOW
+        )
+        rep4 = add_user(
+            db, name="Rep 4", created_at=NOW - timedelta(days=3), deleted_at=NOW
+        )
+        rep5 = add_user(
+            db, name="Rep 5", created_at=NOW - timedelta(days=3), deleted_at=NOW
+        )
+        rep6 = add_user(
+            db, name="Rep 6", created_at=NOW - timedelta(days=3), deleted_at=NOW
+        )
+        rep7 = add_user(
+            db, name="Rep 7", created_at=NOW - timedelta(days=3), deleted_at=NOW
+        )
+
         # Against Rafael: his profile (non-archived statuses), and one of his
         # events.
-        add_report(db, marina, reported_user_id=rafael)
-        add_report(
-            db, marina, reported_user_id=rafael, status=ReportStatusEnum.REVIEWED
-        )
-        add_report(
-            db, marina, reported_user_id=rafael, status=ReportStatusEnum.RESOLVED
-        )
-        add_report(db, marina, reported_event_id=rafael_event)
+        add_report(db, rep1, reported_user_id=rafael)
+        add_report(db, rep2, reported_user_id=rafael, status=ReportStatusEnum.REVIEWED)
+        add_report(db, rep3, reported_user_id=rafael, status=ReportStatusEnum.RESOLVED)
+        add_report(db, rep4, reported_event_id=rafael_event)
         # Archived (REJECTED) reports do not count, against the profile or
         # an event, and neither do deleted ones.
+        add_report(db, rep5, reported_user_id=rafael, status=ReportStatusEnum.REJECTED)
         add_report(
-            db, marina, reported_user_id=rafael, status=ReportStatusEnum.REJECTED
+            db, rep6, reported_event_id=rafael_event, status=ReportStatusEnum.REJECTED
         )
-        add_report(
-            db, marina, reported_event_id=rafael_event, status=ReportStatusEnum.REJECTED
-        )
-        add_report(db, marina, reported_user_id=rafael, deleted_at=NOW)
+        add_report(db, rep7, reported_user_id=rafael, deleted_at=NOW)
         # Against the business's event, not Rafael's.
         add_report(db, rafael, reported_event_id=bar_event)
         # Marina's only report is archived, so her count is 0.

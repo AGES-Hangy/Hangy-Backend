@@ -636,6 +636,15 @@ SEED_NOTIFICATIONS = (
         event=(BUSINESS_EMAIL, "Pelada"),
     ),
     SeedNotification(
+        "user@hangy.com",
+        "event-removed",
+        NotificationTypeEnum.EVENT_REMOVED,
+        age=timedelta(days=5),
+        read=True,
+        # Demo payload only: the seeded event itself stays live.
+        event=(BUSINESS_EMAIL, "Fut society no fim de tarde"),
+    ),
+    SeedNotification(
         "maria@hangy.com",
         "connection-accepted",
         NotificationTypeEnum.CONNECTION_ACCEPTED,

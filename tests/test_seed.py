@@ -793,6 +793,7 @@ def test_seed_gives_user_every_notification_type_with_its_payload(
     assert payloads["EVENT_REQUEST_APPROVED"]["sender"]["name"] == "Maria Silva"
     assert payloads["EVENT_UPDATED"]["event_title"] == "Pelada no Parcão"
     assert payloads["EVENT_CANCELLED"]["event_title"] == "Pelada"
+    assert payloads["EVENT_REMOVED"]["event_title"] == "Fut society no fim de tarde"
 
 
 def test_seeded_notifications_match_the_state_they_describe(
@@ -847,7 +848,10 @@ def test_seeded_notifications_match_the_state_they_describe(
                 detail = notification.event_cancelled_detail
                 assert detail is not None
                 assert detail.event.event_status == EventStatusEnum.CANCELLED
-            elif kind == NotificationTypeEnum.EVENT_UPDATED:
+            elif kind in (
+                NotificationTypeEnum.EVENT_UPDATED,
+                NotificationTypeEnum.EVENT_REMOVED,
+            ):
                 assert notification.event_cancelled_detail is not None
             else:
                 detail = notification.connection_detail

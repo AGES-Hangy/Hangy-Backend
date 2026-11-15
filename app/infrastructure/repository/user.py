@@ -85,8 +85,9 @@ class SqlAlchemyUserRepository:
     ) -> User:
         """Apply the new banned_at/suspended_until pair.
 
-        Flush only: the caller commits, so the user change and its audit row
-        (and the report resolution, when there is one) are one transaction.
+        Flush only: the caller (AdminUserModerationService.apply_action) commits
+        after recording the audit row (and resolving the report, when there is
+        one), so all of it lands in one transaction.
         """
         model = self.db.scalar(select(UserModel).where(UserModel.user_id == user_id))
         if model is None:
@@ -95,6 +96,9 @@ class SqlAlchemyUserRepository:
         model.suspended_until = suspended_until
         self.db.flush()
         return self._to_entity(model)
+
+    def commit(self) -> None:
+        self.db.commit()
 
     def soft_delete(self, user_id: UUID, deleted_at: datetime) -> None:
         model = self.db.scalar(select(UserModel).where(UserModel.user_id == user_id))

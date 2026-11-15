@@ -1,22 +1,64 @@
 from app.domain.entities import (
+    SearchBusinessesPage,
     SearchBusinessItem,
     SearchEventItem,
+    SearchEventsPage,
     SearchResult,
     SearchUserItem,
+    SearchUsersPage,
 )
 from app.presentation.dtos import (
     SearchAppliedFiltersOutput,
     SearchBusinessesBlockOutput,
+    SearchBusinessesPageOutput,
     SearchBusinessItemOutput,
+    SearchBusinessPageItemOutput,
     SearchEventItemOutput,
     SearchEventsBlockOutput,
+    SearchEventsPageOutput,
     SearchOutput,
     SearchUserItemOutput,
     SearchUsersBlockOutput,
+    SearchUsersPageOutput,
 )
 
 
 class SearchAssembler:
+    @staticmethod
+    def to_events_page_dto(page: SearchEventsPage) -> SearchEventsPageOutput:
+        return SearchEventsPageOutput(
+            items=[SearchAssembler._to_event_dto(item) for item in page.items],
+            next_cursor=page.next_cursor,
+            total=page.total,
+        )
+
+    @staticmethod
+    def to_businesses_page_dto(
+        page: SearchBusinessesPage,
+    ) -> SearchBusinessesPageOutput:
+        return SearchBusinessesPageOutput(
+            items=[
+                SearchBusinessPageItemOutput(
+                    user_id=item.user_id,
+                    business_name=item.business_name,
+                    photo_url=item.photo_url,
+                    city=item.city,
+                    is_following=item.is_following,
+                )
+                for item in page.items
+            ],
+            next_cursor=page.next_cursor,
+            total=page.total,
+        )
+
+    @staticmethod
+    def to_users_page_dto(page: SearchUsersPage) -> SearchUsersPageOutput:
+        return SearchUsersPageOutput(
+            items=[SearchAssembler._to_user_dto(item) for item in page.items],
+            next_cursor=page.next_cursor,
+            total=page.total,
+        )
+
     @staticmethod
     def to_dto(result: SearchResult) -> SearchOutput:
         return SearchOutput(
@@ -85,6 +127,7 @@ class SearchAssembler:
             city=item.city,
             state=item.state,
             photo_url=item.photo_url,
+            connection_status=item.connection_status,
         )
 
 

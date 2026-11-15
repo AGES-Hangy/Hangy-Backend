@@ -2,63 +2,116 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from pydantic import BeforeValidator
 from sqlalchemy.orm import Session
 
 from app.domain.assemblers import (
     AdminDashboardAssembler,
+    AdminEventModerationAssembler,
     AdminReportAssembler,
     AdminUserModerationAssembler,
+    AuditLogAssembler,
     TagAssembler,
 )
 from app.domain.entities import User
+from app.domain.enums import AuditTargetTypeEnum, ReportStatusEnum
 from app.domain.services import (
+    DEFAULT_ADMIN_REPORTS_LIMIT,
+    MAX_ADMIN_REPORTS_LIMIT,
+    MAX_ADMIN_REPORTS_SEARCH_LENGTH,
+    MIN_ADMIN_REPORTS_LIMIT,
     AccountAlreadyBannedError,
     AccountNotModeratedError,
     AdminDashboardService,
+    AdminEventModerationService,
+    AdminReportArchiveService,
     AdminReportsService,
+    AdminTagNotFoundError,
     AdminTagsService,
     AdminUserModerationService,
+    AuditLogger,
+    AuditLogService,
+    CategoryHasTagsError,
+    EventAlreadyRemovedError,
+    EventModerationNotFoundError,
+    InvalidPaginationError,
     ModeratedUserNotFoundError,
+    NotificationDispatcher,
     ParentTagNotCategoryError,
     ParentTagNotFoundError,
     ReportAlreadyResolvedError,
+    ReportNotAboutEventError,
     ReportNotAboutUserError,
     ReportNotFoundError,
     SelfModerationError,
+    TagInUseError,
     TagNameAlreadyExistsError,
 )
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.admin_dashboard import (
     SqlAlchemyAdminDashboardRepository,
 )
+from app.infrastructure.repository.admin_event_moderation import (
+    SqlAlchemyEventModerationRepository,
+)
 from app.infrastructure.repository.admin_report import (
     SqlAlchemyAdminReportsRepository,
 )
-from app.infrastructure.repository.audit import SqlAlchemyAuditRepository
+from app.infrastructure.repository.audit_log import SqlAlchemyAuditLogRepository
 from app.infrastructure.repository.report import SqlAlchemyReportRepository
 from app.infrastructure.repository.tag import SqlAlchemyTagRepository
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
 from app.presentation.dependencies.admin import require_admin
 from app.presentation.dtos import (
     AdminDashboardOutput,
+    AdminEventModerationInput,
+    AdminEventModerationOutput,
     AdminReportDetailOutput,
+    AdminReportsOutput,
     AdminTagOutput,
     AdminUserModerationInput,
     AdminUserModerationOutput,
+    AuditLogPaginatedResponse,
     CreateAdminTagInput,
+    RenameAdminTagInput,
 )
-from app.presentation.mappers import AdminTagMapper, AdminUserModerationMapper
+from app.presentation.mappers import (
+    AdminEventModerationMapper,
+    AdminTagMapper,
+    AdminUserModerationMapper,
+)
+from app.presentation.routes.events import get_notification_dispatcher
 
 router = APIRouter(tags=["Admin"])
 
 __all__ = ["router"]
 
 
+def _parse_limit(value: str | int) -> int:
+    try:
+        return int(value)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters",
+        ) from error
+
+
 def get_admin_dashboard_service(
     db: Annotated[Session, Depends(get_db)],
 ) -> AdminDashboardService:
     return AdminDashboardService(repository=SqlAlchemyAdminDashboardRepository(db))
+
+
+def get_audit_log_service(db: Annotated[Session, Depends(get_db)]) -> AuditLogService:
+    return AuditLogService(repository=SqlAlchemyAuditLogRepository(db))
+
+
+def get_audit_logger(db: Annotated[Session, Depends(get_db)]) -> AuditLogger:
+    """Shared factory for other admin routes (ban, suspend, report, tag CRUD)."""
+    repository = SqlAlchemyAuditLogRepository(db)
+    return AuditLogger(repository=repository, label_resolver=repository)
 
 
 def get_admin_reports_service(
@@ -69,20 +122,45 @@ def get_admin_reports_service(
 
 def get_admin_tags_service(
     db: Annotated[Session, Depends(get_db)],
+    audit_logger: Annotated[AuditLogger, Depends(get_audit_logger)],
 ) -> AdminTagsService:
     return AdminTagsService(
         repository=SqlAlchemyTagRepository(db),
-        audit_repository=SqlAlchemyAuditRepository(db),
+        audit_logger=audit_logger,
     )
 
 
 def get_admin_user_moderation_service(
     db: Annotated[Session, Depends(get_db)],
+    audit_logger: Annotated[AuditLogger, Depends(get_audit_logger)],
 ) -> AdminUserModerationService:
     return AdminUserModerationService(
         user_repository=SqlAlchemyUserRepository(db),
         report_repository=SqlAlchemyReportRepository(db),
-        audit_repository=SqlAlchemyAuditRepository(db),
+        audit_logger=audit_logger,
+    )
+
+
+def get_admin_report_archive_service(
+    db: Annotated[Session, Depends(get_db)],
+    audit_logger: Annotated[AuditLogger, Depends(get_audit_logger)],
+) -> AdminReportArchiveService:
+    return AdminReportArchiveService(
+        report_repository=SqlAlchemyReportRepository(db),
+        audit_logger=audit_logger,
+    )
+
+
+def get_admin_event_moderation_service(
+    db: Annotated[Session, Depends(get_db)],
+    audit_logger: Annotated[AuditLogger, Depends(get_audit_logger)],
+    dispatcher: Annotated[NotificationDispatcher, Depends(get_notification_dispatcher)],
+) -> AdminEventModerationService:
+    return AdminEventModerationService(
+        event_repository=SqlAlchemyEventModerationRepository(db),
+        report_repository=SqlAlchemyReportRepository(db),
+        audit_logger=audit_logger,
+        dispatcher=dispatcher,
     )
 
 
@@ -125,8 +203,90 @@ def read_admin_dashboard(
 
 
 @router.get(
+    "/admin/reports",
+    response_model=AdminReportsOutput,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_admin)],
+    summary="Fila de denúncias",
+    description=(
+        "Lista a fila administrativa agrupada por alvo: várias denúncias contra "
+        "o mesmo usuário, estabelecimento ou evento viram uma linha, com o "
+        "total em `report_count`. A linha mostra a denúncia aberta mais "
+        "recentemente para o alvo, da mais nova para a mais antiga. Sem "
+        "`status`, devolve tudo menos `REJECTED`. `search` busca pelo nome do "
+        "usuário, título do evento ou número da denúncia. Exige Bearer token "
+        "de um usuário com `role = ADMIN`."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "`cursor` malformado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid pagination parameters"}
+                }
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Usuário autenticado, mas `role != ADMIN`.",
+            "content": {
+                "application/json": {"example": {"detail": "Admin access required"}}
+            },
+        },
+    },
+)
+def list_admin_reports(
+    reports_service: Annotated[AdminReportsService, Depends(get_admin_reports_service)],
+    report_status: Annotated[
+        ReportStatusEnum | None,
+        Query(
+            alias="status",
+            description="`PENDING`, `REVIEWED`, `RESOLVED` ou `REJECTED`.",
+        ),
+    ] = None,
+    search: Annotated[
+        str | None,
+        Query(
+            max_length=MAX_ADMIN_REPORTS_SEARCH_LENGTH,
+            description="Nome do alvo, título do evento ou número da denúncia.",
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        Query(
+            ge=MIN_ADMIN_REPORTS_LIMIT,
+            le=MAX_ADMIN_REPORTS_LIMIT,
+            description="Tamanho da página.",
+        ),
+    ] = DEFAULT_ADMIN_REPORTS_LIMIT,
+    cursor: Annotated[
+        str | None, Query(description="Cursor opaco de paginação.")
+    ] = None,
+) -> AdminReportsOutput:
+    try:
+        page = reports_service.list_reports(
+            status=report_status, search=search, limit=limit, cursor=cursor
+        )
+    except InvalidPaginationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters",
+        ) from error
+    return AdminReportAssembler.to_queue_dto(page)
+
+
+@router.get(
     "/admin/reports/{report_id}",
     response_model=AdminReportDetailOutput,
+    # Keeps `organizer` and `event` out of the body unless the assembler set them.
+    response_model_exclude_unset=True,
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(require_admin)],
     summary="Detalhe de uma denúncia",
@@ -135,6 +295,11 @@ def read_admin_dashboard(
         "(usuário, estabelecimento ou organizador do evento denunciado), motivo, "
         "relato de quem denunciou, histórico de denúncias anteriores fechadas "
         "contra o mesmo alvo e, quando já resolvida, os dados da resolução. "
+        "Quando `target.type` é `EVENT`, traz também o bloco `organizer` "
+        "(`user_id`, `name`, `photo_url`, `moderation_status`, `events_count`, "
+        "`reports_count`) e o bloco `event` (`id`, `title`, `moderation_status`), "
+        "com o `event_id` para `PATCH /admin/events/{event_id}/moderation`; nos "
+        "demais alvos esses campos não vêm na resposta. "
         "Exige Bearer token de um usuário com `role = ADMIN`."
     ),
     responses={
@@ -171,6 +336,76 @@ def read_admin_report_detail(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Report not found",
         ) from error
+    return AdminReportAssembler.to_detail_dto(detail)
+
+
+@router.patch(
+    "/admin/reports/{report_id}/archive",
+    response_model=AdminReportDetailOutput,
+    # Keeps `organizer` and `event` out of the body unless the assembler set them.
+    response_model_exclude_unset=True,
+    status_code=status.HTTP_200_OK,
+    summary="Arquivar uma denúncia sem agir sobre a conta",
+    description=(
+        "Arquiva uma denúncia avaliada como improcedente: marca `status` como "
+        "`REJECTED`, com `resolution.action = ARCHIVED`, sem aplicar nenhuma "
+        "ação sobre a conta ou o evento denunciado. Só é permitido para "
+        "denúncias `PENDING` ou `REVIEWED`; arquivar uma denúncia já "
+        "`RESOLVED`/`REJECTED` devolve 409. Registra `REPORT_ARCHIVED` no log "
+        "de auditoria. Devolve o mesmo formato de `GET /admin/reports/"
+        "{report_id}`. Exige Bearer token de um usuário com `role = ADMIN`."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Usuário autenticado, mas `role != ADMIN`.",
+            "content": {
+                "application/json": {"example": {"detail": "Admin access required"}}
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Denúncia não encontrada.",
+            "content": {
+                "application/json": {"example": {"detail": "Report not found"}}
+            },
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "A denúncia já está `RESOLVED` ou `REJECTED`.",
+            "content": {
+                "application/json": {"example": {"detail": "Report already resolved"}}
+            },
+        },
+    },
+)
+def archive_admin_report(
+    report_id: UUID,
+    current_admin: Annotated[User, Depends(require_admin)],
+    archive_service: Annotated[
+        AdminReportArchiveService, Depends(get_admin_report_archive_service)
+    ],
+    reports_service: Annotated[AdminReportsService, Depends(get_admin_reports_service)],
+) -> AdminReportDetailOutput:
+    assert current_admin.user_id is not None
+    try:
+        archive_service.archive_report(report_id, actor_id=current_admin.user_id)
+    except ReportNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found",
+        ) from error
+    except ReportAlreadyResolvedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Report already resolved",
+        ) from error
+    detail = reports_service.get_report_detail(report_id)
     return AdminReportAssembler.to_detail_dto(detail)
 
 
@@ -249,6 +484,208 @@ def create_admin_tag(
             detail="Tag name already exists at this level",
         ) from error
     return TagAssembler.to_admin_dto(created)
+
+
+@router.patch(
+    "/admin/tags/{tag_id}",
+    response_model=AdminTagOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Renomear uma tag ou categoria",
+    description=(
+        "Renomeia uma tag micro ou uma categoria existente, mantendo o "
+        "`parent_id` atual — mover uma tag entre categorias nao e suportado "
+        "por este endpoint. O novo nome deve ser unico no mesmo nivel, exceto "
+        "quando igual ao nome atual. Registra o evento de auditoria "
+        "`TAG_UPDATED` com o nome antigo e o novo. Exige Bearer token de um "
+        "usuario com `role = ADMIN`."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Usuário autenticado, mas `role != ADMIN`.",
+            "content": {
+                "application/json": {"example": {"detail": "Admin access required"}}
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "A tag informada nao existe.",
+            "content": {"application/json": {"example": {"detail": "Tag not found"}}},
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "Ja existe uma tag com esse nome no mesmo nivel.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Tag name already exists at this level"}
+                }
+            },
+        },
+    },
+)
+def rename_admin_tag(
+    tag_id: UUID,
+    payload: RenameAdminTagInput,
+    current_admin: Annotated[User, Depends(require_admin)],
+    admin_tags_service: Annotated[AdminTagsService, Depends(get_admin_tags_service)],
+) -> AdminTagOutput:
+    try:
+        renamed = admin_tags_service.rename_tag(
+            tag_id, payload.name, actor_id=current_admin.user_id
+        )
+    except AdminTagNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tag not found",
+        ) from error
+    except TagNameAlreadyExistsError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Tag name already exists at this level",
+        ) from error
+    return TagAssembler.to_admin_dto(renamed)
+
+
+@router.delete(
+    "/admin/tags/{tag_id}",
+    response_model=None,
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Remover uma tag ou categoria",
+    description=(
+        "Remove uma tag ou uma categoria vazia. Tags associadas a usuarios ou "
+        "eventos exigem `force=true`. Categorias com tags filhas nunca podem ser "
+        "removidas, mesmo com `force=true`. Registra `TAG_DELETED` na auditoria. "
+        "Exige Bearer token de um usuario com `role = ADMIN`."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, invalido ou expirado.",
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Usuario autenticado, mas `role != ADMIN`.",
+            "content": {
+                "application/json": {"example": {"detail": "Admin access required"}}
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "A tag informada nao existe.",
+            "content": {"application/json": {"example": {"detail": "Tag not found"}}},
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "A tag esta em uso ou a categoria ainda possui tags.",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "tag_in_use": {
+                            "value": {"detail": "Tag is in use", "usage_count": 34}
+                        },
+                        "category_has_tags": {"value": {"detail": "Category has tags"}},
+                    }
+                }
+            },
+        },
+    },
+)
+def delete_admin_tag(
+    tag_id: UUID,
+    current_admin: Annotated[User, Depends(require_admin)],
+    admin_tags_service: Annotated[AdminTagsService, Depends(get_admin_tags_service)],
+    *,
+    force: bool = False,
+) -> Response:
+    try:
+        admin_tags_service.delete_tag(
+            tag_id,
+            actor_id=current_admin.user_id,
+            force=force,
+        )
+    except AdminTagNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Tag not found",
+        ) from error
+    except CategoryHasTagsError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Category has tags",
+        ) from error
+    except TagInUseError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"detail": "Tag is in use", "usage_count": error.usage_count},
+        ) from error
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/admin/audit-log",
+    response_model=AuditLogPaginatedResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Listar o log de auditoria de ações administrativas",
+    description=(
+        "Lista os registros de auditoria mais recentes primeiro. Filtra "
+        "opcionalmente por `target_type` (USER, REPORT, TAG ou EVENT)."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "Parâmetros de paginação inválidos.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid pagination parameters"}
+                }
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "O usuário autenticado não é administrador.",
+            "content": {
+                "application/json": {"example": {"detail": "Admin access required"}}
+            },
+        },
+    },
+)
+def get_audit_log(
+    current_admin: Annotated[User, Depends(require_admin)],
+    audit_log_service: Annotated[AuditLogService, Depends(get_audit_log_service)],
+    target_type: Annotated[
+        AuditTargetTypeEnum | None,
+        Query(description="Filtra por USER, REPORT, TAG ou EVENT"),
+    ] = None,
+    limit: Annotated[
+        int,
+        BeforeValidator(_parse_limit),
+        Query(description="Tamanho da página (1–100)."),
+    ] = 20,
+    cursor: Annotated[str | None, Query(description="Cursor opaco de paginação.")] = (
+        None
+    ),
+) -> AuditLogPaginatedResponse:
+    assert current_admin.user_id is not None
+    try:
+        entries, next_cursor = audit_log_service.list_audit_log(
+            target_type=target_type, limit=limit, cursor=cursor
+        )
+    except InvalidPaginationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters",
+        ) from error
+
+    return AuditLogAssembler.to_paginated_response(
+        entries, next_cursor, current_admin.user_id
+    )
 
 
 @router.patch(
@@ -353,3 +790,108 @@ def patch_admin_user_moderation(
             detail="Admins cannot moderate their own account",
         ) from error
     return AdminUserModerationAssembler.to_dto(updated, now=now)
+
+
+@router.patch(
+    "/admin/events/{event_id}/moderation",
+    response_model=AdminEventModerationOutput,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_admin)],
+    summary="Remover um evento denunciado",
+    description=(
+        "Ação de moderação sobre um evento. Hoje só existe `REMOVE`: remoção "
+        "por moderação (soft delete). O evento some do feed, da busca, do mapa "
+        "e do perfil do organizador, e o detalhe passa a devolver `404`; os "
+        "dados continuam no banco para auditoria. As participações ativas "
+        "(`CONFIRMED` e `PENDING`) são canceladas e participantes e organizador "
+        "recebem a notificação `EVENT_REMOVED`. A conta do organizador não é "
+        "alterada (banir/suspender continua em `/admin/users/{user_id}/"
+        "moderation`). `report_id` é opcional: quando informado, aquela "
+        "denúncia vira `RESOLVED` com `resolution = EVENT_REMOVED`; as demais "
+        "denúncias ainda abertas do mesmo evento são resolvidas junto, com a "
+        "mesma resolução. Sem `report_id`, `report_id` e `report_status` "
+        "voltam `null`. Registra `EVENT_REMOVED` no log de auditoria. Exige "
+        "Bearer token de um usuário com `role = ADMIN`."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "O `report_id` informado denuncia outro alvo.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Report does not belong to this event"}
+                }
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Usuário autenticado, mas `role != ADMIN`.",
+            "content": {
+                "application/json": {"example": {"detail": "Admin access required"}}
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": (
+                "O evento não existe (`Event not found`) ou o `report_id` "
+                "informado não existe (`Report not found`)."
+            ),
+            "content": {"application/json": {"example": {"detail": "Event not found"}}},
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": (
+                "O evento já foi removido (`Event already removed`) ou o "
+                "`report_id` é de uma denúncia já `RESOLVED`/`REJECTED` "
+                "(`Report already resolved`)."
+            ),
+            "content": {
+                "application/json": {"example": {"detail": "Event already removed"}}
+            },
+        },
+    },
+)
+def patch_admin_event_moderation(
+    event_id: UUID,
+    payload: AdminEventModerationInput,
+    current_admin: Annotated[User, Depends(require_admin)],
+    moderation_service: Annotated[
+        AdminEventModerationService, Depends(get_admin_event_moderation_service)
+    ],
+) -> AdminEventModerationOutput:
+    assert current_admin.user_id is not None
+    action = AdminEventModerationMapper.to_entity(payload)
+    try:
+        result = moderation_service.apply_action(
+            event_id, action, actor_id=current_admin.user_id
+        )
+    except EventModerationNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found",
+        ) from error
+    except ReportNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found",
+        ) from error
+    except EventAlreadyRemovedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Event already removed",
+        ) from error
+    except ReportAlreadyResolvedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Report already resolved",
+        ) from error
+    except ReportNotAboutEventError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Report does not belong to this event",
+        ) from error
+    return AdminEventModerationAssembler.to_dto(result)

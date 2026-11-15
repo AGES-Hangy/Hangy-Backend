@@ -32,6 +32,14 @@ class EventDetailsNotFoundError(Exception):
     """Raised when an event does not exist or is not visible to this viewer."""
 
 
+class EventInviteOnlyError(EventDetailsNotFoundError):
+    """Raised for an invite-only event the viewer did not join.
+
+    It is still a "not found" for event details (so GET /events/{id} keeps
+    answering 404); callers that must tell it apart, like reports, catch it first.
+    """
+
+
 class EventDetailsService:
     def __init__(self, repository: EventDetailsRepository) -> None:
         self.repository = repository
@@ -54,7 +62,7 @@ class EventDetailsService:
             and not is_organizer
             and participation_status is not EventParticipantStatusEnum.CONFIRMED
         ):
-            raise EventDetailsNotFoundError
+            raise EventInviteOnlyError
         if event.event_status is EventStatusEnum.CANCELLED:
             raise EventCancelledError
 

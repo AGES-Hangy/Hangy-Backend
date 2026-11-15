@@ -167,6 +167,22 @@ class SqlAlchemyNotificationRepository:
         )
         return notification.notification_id
 
+    def notify_event_removed(self, recipient_id: UUID, event_id: UUID) -> UUID | None:
+        # No block check, unlike the organizer's own events: a moderation
+        # notice is not an interaction between two users.
+        notification = NotificationModel(
+            user_id=recipient_id, type=NotificationTypeEnum.EVENT_REMOVED
+        )
+        self.db.add(notification)
+        self.db.flush()
+        self.db.add(
+            EventCancelledNotificationModel(
+                notification_id=notification.notification_id,
+                event_id=event_id,
+            )
+        )
+        return notification.notification_id
+
     def notify_event_updated(self, recipient_id: UUID, event_id: UUID) -> UUID | None:
         context = self.get_push_context(
             NotificationTypeEnum.EVENT_UPDATED, event_id=event_id
@@ -420,10 +436,11 @@ def _build_payload(model: NotificationModel) -> dict:
             }
         return {}
 
-    # Event-cancelled / event-updated notifications
+    # Event-cancelled / event-updated / event-removed notifications
     if t in (
         NotificationTypeEnum.EVENT_CANCELLED,
         NotificationTypeEnum.EVENT_UPDATED,
+        NotificationTypeEnum.EVENT_REMOVED,
     ):
         if model.event_cancelled_detail and model.event_cancelled_detail.event:
             ev: EventModel = model.event_cancelled_detail.event

@@ -10,9 +10,23 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.config import settings
-from app.domain.enums import AuditActionEnum, UserRoleEnum, UserTypeEnum
+from app.domain.enums import (
+    AuditActionEnum,
+    AuditTargetTypeEnum,
+    EventPrivacyEnum,
+    EventStatusEnum,
+    UserRoleEnum,
+    UserTypeEnum,
+)
 from app.infrastructure.repository import Base, get_db
-from app.infrastructure.repository.models import AuditLogModel, TagModel, UserModel
+from app.infrastructure.repository.models import (
+    AuditLogModel,
+    EventModel,
+    TagModel,
+    UserModel,
+    event_tag,
+    user_tag,
+)
 from app.main import app
 
 AdminTagsClient = tuple[TestClient, sessionmaker[Session]]
@@ -70,6 +84,25 @@ def add_tag(db: Session, name: str, parent_id: UUID | None = None) -> UUID:
     db.add(TagModel(tag_id=tag_id, tag_name=name, tag_parent_id=parent_id))
     db.commit()
     return tag_id
+
+
+def add_event_with_tag(db: Session, creator_id: UUID, tag_id: UUID) -> UUID:
+    starts_at = datetime.now(UTC) + timedelta(days=1)
+    event = EventModel(
+        event_creator_id=creator_id,
+        event_title="Evento com tag",
+        event_latitude=-30.0,
+        event_longitude=-51.0,
+        starts_at=starts_at,
+        ends_at=starts_at + timedelta(hours=2),
+        event_status=EventStatusEnum.PUBLISHED,
+        event_privacy=EventPrivacyEnum.PUBLIC,
+    )
+    db.add(event)
+    db.flush()
+    db.execute(event_tag.insert().values(event_id=event.event_id, tag_id=tag_id))
+    db.commit()
+    return event.event_id
 
 
 def admin_headers(session_factory: sessionmaker[Session]) -> dict[str, str]:
@@ -360,6 +393,8 @@ def test_creating_a_tag_records_a_tag_created_audit_row(
     assert row.action == AuditActionEnum.TAG_CREATED
     assert row.actor_id == admin_id
     assert str(row.target_id) == response.json()["tag_id"]
+    assert row.target_type == AuditTargetTypeEnum.TAG
+    assert row.target_label == "Escalada"
     created_at = row.created_at.replace(tzinfo=UTC)
     assert before - timedelta(seconds=1) <= created_at <= datetime.now(UTC)
 
@@ -379,6 +414,8 @@ def test_creating_a_category_records_an_audit_row(
     [row] = audit_rows(session_factory)
     assert row.action == AuditActionEnum.TAG_CREATED
     assert str(row.target_id) == response.json()["tag_id"]
+    assert row.target_type == AuditTargetTypeEnum.TAG
+    assert row.target_label == "Vida Noturna"
 
 
 def test_failed_requests_record_no_audit_row(tags_client: AdminTagsClient) -> None:
@@ -405,30 +442,485 @@ def test_failed_requests_record_no_audit_row(tags_client: AdminTagsClient) -> No
     assert audit_rows(session_factory) == []
 
 
-def test_audit_failure_rolls_back_the_tag(
+def test_audit_failure_does_not_roll_back_the_tag(
     tags_client: AdminTagsClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from app.infrastructure.repository.audit import SqlAlchemyAuditRepository
+    """The audit write is savepoint-isolated (see AuditLogger): a failure there
+    must not undo the tag creation, same as NotificationDispatcher failures
+    never undo the action that triggered them.
+    """
+    from app.infrastructure.repository.audit_log import SqlAlchemyAuditLogRepository
 
     client, session_factory = tags_client
     headers = admin_headers(session_factory)
 
-    def fail_commit(self: Session) -> None:
+    def failing_record(self: SqlAlchemyAuditLogRepository, **kwargs: object) -> None:
         raise RuntimeError("audit failed")
 
-    original_add = SqlAlchemyAuditRepository.add
+    monkeypatch.setattr(SqlAlchemyAuditLogRepository, "record", failing_record)
 
-    def add_with_failing_commit(self: SqlAlchemyAuditRepository, event) -> None:
-        monkeypatch.setattr(self.db, "commit", lambda: fail_commit(self.db))
-        original_add(self, event)
-
-    monkeypatch.setattr(SqlAlchemyAuditRepository, "add", add_with_failing_commit)
-
-    failing_client = TestClient(app, raise_server_exceptions=False)
-    response = failing_client.post(
+    response = client.post(
         "/admin/tags", json={"name": "Vida Noturna", "parent_id": None}, headers=headers
     )
 
-    assert response.status_code == 500
+    assert response.status_code == 201
+    assert "Vida Noturna" in tree_by_name(client)
+    assert audit_rows(session_factory) == []
+
+
+def test_rename_category_returns_200_and_updates_tree(
+    tags_client: AdminTagsClient,
+) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        category_id = add_tag(db, "Esportes")
+
+    response = client.patch(
+        f"/admin/tags/{category_id}",
+        json={"name": "Esporte Radical"},
+        headers=admin_headers(session_factory),
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["tag_id"] == str(category_id)
+    assert body["name"] == "Esporte Radical"
+    assert body["parent_id"] is None
+    assert body["type"] == "MACRO"
+    tree = tree_by_name(client)
+    assert "Esportes" not in tree
+    assert tree["Esporte Radical"]["id"] == str(category_id)
+
+
+def test_rename_micro_tag_returns_200_and_updates_tree(
+    tags_client: AdminTagsClient,
+) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        category_id = add_tag(db, "Esportes")
+        tag_id = add_tag(db, "Escalada", category_id)
+
+    response = client.patch(
+        f"/admin/tags/{tag_id}",
+        json={"name": "Escalada indoor"},
+        headers=admin_headers(session_factory),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Escalada indoor"
+    children = tree_by_name(client)["Esportes"]["children"]
+    assert children == [{"id": str(tag_id), "name": "Escalada indoor", "type": "MICRO"}]
+
+
+def test_rename_does_not_change_parent_id(tags_client: AdminTagsClient) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        category_id = add_tag(db, "Esportes")
+        tag_id = add_tag(db, "Escalada", category_id)
+
+    response = client.patch(
+        f"/admin/tags/{tag_id}",
+        json={"name": "Escalada indoor"},
+        headers=admin_headers(session_factory),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["parent_id"] == str(category_id)
+    assert tree_by_name(client)["Esportes"]["children"][0]["name"] == "Escalada indoor"
+
+
+def test_duplicate_category_name_on_rename_returns_409(
+    tags_client: AdminTagsClient,
+) -> None:
+    client, session_factory = tags_client
+    headers = admin_headers(session_factory)
+    with session_factory() as db:
+        add_tag(db, "Esportes")
+        cultura_id = add_tag(db, "Cultura")
+
+    response = client.patch(
+        f"/admin/tags/{cultura_id}", json={"name": "Esportes"}, headers=headers
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Tag name already exists at this level"}
+    assert set(tree_by_name(client)) == {"Esportes", "Cultura"}
+
+
+def test_duplicate_micro_name_on_rename_returns_409(
+    tags_client: AdminTagsClient,
+) -> None:
+    client, session_factory = tags_client
+    headers = admin_headers(session_factory)
+    with session_factory() as db:
+        category_id = add_tag(db, "Esportes")
+        add_tag(db, "Escalada", category_id)
+        boulder_id = add_tag(db, "Boulder", category_id)
+
+    response = client.patch(
+        f"/admin/tags/{boulder_id}", json={"name": "Escalada"}, headers=headers
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Tag name already exists at this level"}
+    names = {child["name"] for child in tree_by_name(client)["Esportes"]["children"]}
+    assert names == {"Escalada", "Boulder"}
+
+
+def test_rename_to_name_used_in_another_category_is_allowed(
+    tags_client: AdminTagsClient,
+) -> None:
+    client, session_factory = tags_client
+    headers = admin_headers(session_factory)
+    with session_factory() as db:
+        gastronomy_id = add_tag(db, "Gastronomia")
+        add_tag(db, "Bar", gastronomy_id)
+        nightlife_id = add_tag(db, "Vida Noturna")
+        tag_id = add_tag(db, "Balada", nightlife_id)
+
+    response = client.patch(
+        f"/admin/tags/{tag_id}", json={"name": "Bar"}, headers=headers
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Bar"
+
+
+def test_rename_to_current_name_is_a_no_op_and_returns_200(
+    tags_client: AdminTagsClient,
+) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        category_id = add_tag(db, "Esportes")
+
+    response = client.patch(
+        f"/admin/tags/{category_id}",
+        json={"name": "Esportes"},
+        headers=admin_headers(session_factory),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Esportes"
+    assert audit_rows(session_factory) == []
+
+
+def test_rename_unknown_tag_returns_404(tags_client: AdminTagsClient) -> None:
+    client, session_factory = tags_client
+
+    response = client.patch(
+        f"/admin/tags/{uuid4()}",
+        json={"name": "Esportes"},
+        headers=admin_headers(session_factory),
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Tag not found"}
+    assert audit_rows(session_factory) == []
+
+
+def test_non_admin_cannot_rename_tag(tags_client: AdminTagsClient) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        tag_id = add_tag(db, "Esportes")
+        user_id = add_user(db, UserRoleEnum.USER)
+
+    response = client.patch(
+        f"/admin/tags/{tag_id}",
+        json={"name": "Esporte Radical"},
+        headers=header_for(user_id),
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Admin access required"}
+    assert tree_by_name(client)["Esportes"]["id"] == str(tag_id)
+    assert audit_rows(session_factory) == []
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [{}, {"Authorization": "Bearer invalid"}],
+    ids=["missing token", "invalid token"],
+)
+def test_rename_missing_or_invalid_token_returns_401(
+    tags_client: AdminTagsClient, headers: dict[str, str]
+) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        tag_id = add_tag(db, "Esportes")
+
+    response = client.patch(
+        f"/admin/tags/{tag_id}", json={"name": "Esporte Radical"}, headers=headers
+    )
+
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["", "   ", "x" * 51],
+    ids=["empty", "blank", "too long"],
+)
+def test_rename_invalid_name_returns_422(
+    tags_client: AdminTagsClient, name: str
+) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        tag_id = add_tag(db, "Esportes")
+
+    response = client.patch(
+        f"/admin/tags/{tag_id}",
+        json={"name": name},
+        headers=admin_headers(session_factory),
+    )
+
+    assert response.status_code == 422
+
+
+def test_rename_name_at_the_length_limit_is_accepted(
+    tags_client: AdminTagsClient,
+) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        tag_id = add_tag(db, "Esportes")
+
+    response = client.patch(
+        f"/admin/tags/{tag_id}",
+        json={"name": "x" * 50},
+        headers=admin_headers(session_factory),
+    )
+
+    assert response.status_code == 200
+
+
+def test_rename_malformed_tag_id_returns_422(tags_client: AdminTagsClient) -> None:
+    client, session_factory = tags_client
+
+    response = client.patch(
+        "/admin/tags/not-a-uuid",
+        json={"name": "Esportes"},
+        headers=admin_headers(session_factory),
+    )
+
+    assert response.status_code == 422
+
+
+def test_renaming_a_tag_records_a_tag_updated_audit_row(
+    tags_client: AdminTagsClient,
+) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        admin_id = add_user(db, UserRoleEnum.ADMIN)
+        tag_id = add_tag(db, "Escalada")
+    before = datetime.now(UTC)
+
+    response = client.patch(
+        f"/admin/tags/{tag_id}",
+        json={"name": "Escalada indoor"},
+        headers=header_for(admin_id),
+    )
+
+    assert response.status_code == 200
+    [row] = audit_rows(session_factory)
+    assert row.action == AuditActionEnum.TAG_UPDATED
+    assert row.actor_id == admin_id
+    assert row.target_id == tag_id
+    assert row.extra_metadata == {
+        "old_name": "Escalada",
+        "new_name": "Escalada indoor",
+    }
+    created_at = row.created_at.replace(tzinfo=UTC)
+    assert before - timedelta(seconds=1) <= created_at <= datetime.now(UTC)
+
+
+def test_failed_rename_requests_record_no_audit_row(
+    tags_client: AdminTagsClient,
+) -> None:
+    client, session_factory = tags_client
+    headers = admin_headers(session_factory)
+    with session_factory() as db:
+        add_tag(db, "Esportes")
+        cultura_id = add_tag(db, "Cultura")
+        non_admin = header_for(add_user(db, UserRoleEnum.USER))
+
+    attempts = [
+        (cultura_id, {"name": "Esportes"}, headers),  # 409
+        (uuid4(), {"name": "Qualquer"}, headers),  # 404
+        (cultura_id, {"name": ""}, headers),  # 422
+        (cultura_id, {"name": "Lazer"}, non_admin),  # 403
+    ]
+    codes = [
+        client.patch(f"/admin/tags/{tag_id}", json=body, headers=h).status_code
+        for tag_id, body, h in attempts
+    ]
+
+    assert codes == [409, 404, 422, 403]
+    assert audit_rows(session_factory) == []
+
+
+def test_audit_failure_does_not_roll_back_the_rename(
+    tags_client: AdminTagsClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The audit write is savepoint-isolated (see AuditLogger): a failure there
+    must not undo the rename, same as for tag creation.
+    """
+    from app.infrastructure.repository.audit_log import SqlAlchemyAuditLogRepository
+
+    client, session_factory = tags_client
+    headers = admin_headers(session_factory)
+    with session_factory() as db:
+        tag_id = add_tag(db, "Esportes")
+
+    def failing_record(self: SqlAlchemyAuditLogRepository, **kwargs: object) -> None:
+        raise RuntimeError("audit failed")
+
+    monkeypatch.setattr(SqlAlchemyAuditLogRepository, "record", failing_record)
+
+    response = client.patch(
+        f"/admin/tags/{tag_id}", json={"name": "Esporte Radical"}, headers=headers
+    )
+
+    assert response.status_code == 200
+    tree = tree_by_name(client)
+    assert "Esporte Radical" in tree
+    assert "Esportes" not in tree
+    assert audit_rows(session_factory) == []
+
+
+def test_delete_unused_micro_tag_returns_204_and_removes_it_from_tree(
+    tags_client: AdminTagsClient,
+) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        admin_id = add_user(db, UserRoleEnum.ADMIN)
+        category_id = add_tag(db, "Esportes")
+        tag_id = add_tag(db, "Escalada", category_id)
+
+    response = client.delete(f"/admin/tags/{tag_id}", headers=header_for(admin_id))
+
+    assert response.status_code == 204
+    assert response.content == b""
+    assert tree_by_name(client)["Esportes"]["children"] == []
+    [row] = audit_rows(session_factory)
+    assert row.action == AuditActionEnum.TAG_DELETED
+    assert row.actor_id == admin_id
+    assert row.target_id == tag_id
+    assert row.target_type == AuditTargetTypeEnum.TAG
+    assert row.target_label == "Escalada"
+    assert row.extra_metadata == {"name": "Escalada", "usage_count": 0}
+
+
+def test_delete_tag_in_use_without_force_returns_usage_count_and_keeps_tag(
+    tags_client: AdminTagsClient,
+) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        admin_id = add_user(db, UserRoleEnum.ADMIN)
+        interested_user_id = add_user(db, UserRoleEnum.USER)
+        category_id = add_tag(db, "Esportes")
+        tag_id = add_tag(db, "Escalada", category_id)
+        db.execute(user_tag.insert().values(user_id=interested_user_id, tag_id=tag_id))
+        db.commit()
+        add_event_with_tag(db, admin_id, tag_id)
+
+    response = client.delete(f"/admin/tags/{tag_id}", headers=header_for(admin_id))
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Tag is in use", "usage_count": 2}
+    assert tree_by_name(client)["Esportes"]["children"] == [
+        {"id": str(tag_id), "name": "Escalada", "type": "MICRO"}
+    ]
+    assert audit_rows(session_factory) == []
+
+
+def test_delete_tag_in_use_with_force_returns_204_and_removes_associations(
+    tags_client: AdminTagsClient,
+) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        admin_id = add_user(db, UserRoleEnum.ADMIN)
+        interested_user_id = add_user(db, UserRoleEnum.USER)
+        category_id = add_tag(db, "Esportes")
+        tag_id = add_tag(db, "Escalada", category_id)
+        db.execute(user_tag.insert().values(user_id=interested_user_id, tag_id=tag_id))
+        db.commit()
+        add_event_with_tag(db, admin_id, tag_id)
+
+    response = client.delete(
+        f"/admin/tags/{tag_id}",
+        params={"force": "true"},
+        headers=header_for(admin_id),
+    )
+
+    assert response.status_code == 204
+    with session_factory() as db:
+        assert (
+            db.scalar(select(user_tag.c.tag_id).where(user_tag.c.tag_id == tag_id))
+            is None
+        )
+        assert (
+            db.scalar(select(event_tag.c.tag_id).where(event_tag.c.tag_id == tag_id))
+            is None
+        )
+        assert db.get(TagModel, tag_id) is None
+    [row] = audit_rows(session_factory)
+    assert row.extra_metadata == {"name": "Escalada", "usage_count": 2}
+
+
+def test_delete_empty_category_returns_204(tags_client: AdminTagsClient) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        category_id = add_tag(db, "Esportes")
+
+    response = client.delete(
+        f"/admin/tags/{category_id}", headers=admin_headers(session_factory)
+    )
+
+    assert response.status_code == 204
     assert tree_by_name(client) == {}
+
+
+@pytest.mark.parametrize("force", [False, True], ids=["without force", "with force"])
+def test_delete_category_with_children_returns_409_even_with_force(
+    tags_client: AdminTagsClient, force: bool
+) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        category_id = add_tag(db, "Esportes")
+        add_tag(db, "Escalada", category_id)
+
+    response = client.delete(
+        f"/admin/tags/{category_id}",
+        params={"force": str(force).lower()},
+        headers=admin_headers(session_factory),
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Category has tags"}
+    assert tree_by_name(client)["Esportes"]["children"][0]["name"] == "Escalada"
+    assert audit_rows(session_factory) == []
+
+
+def test_delete_unknown_tag_returns_404(tags_client: AdminTagsClient) -> None:
+    client, session_factory = tags_client
+
+    response = client.delete(
+        f"/admin/tags/{uuid4()}", headers=admin_headers(session_factory)
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Tag not found"}
+    assert audit_rows(session_factory) == []
+
+
+def test_non_admin_cannot_delete_tag(tags_client: AdminTagsClient) -> None:
+    client, session_factory = tags_client
+    with session_factory() as db:
+        tag_id = add_tag(db, "Esportes")
+        user_id = add_user(db, UserRoleEnum.USER)
+
+    response = client.delete(f"/admin/tags/{tag_id}", headers=header_for(user_id))
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Admin access required"}
+    assert tree_by_name(client)["Esportes"]["id"] == str(tag_id)
     assert audit_rows(session_factory) == []

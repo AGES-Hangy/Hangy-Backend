@@ -23,6 +23,7 @@ from app.infrastructure.repository.models import UserModel
 from app.infrastructure.repository.models.event_model import EventModel
 from app.infrastructure.repository.models.report_model import ReportModel
 from app.main import app
+from tests.report_helpers import free_report_type
 
 DashboardClient = tuple[TestClient, sessionmaker[Session]]
 
@@ -94,12 +95,18 @@ def add_report(
     opened_at: datetime | None = None,
     reported_user_id: UUID | None = None,
     reported_event_id: UUID | None = None,
-    report_type: ReportTypeEnum = ReportTypeEnum.HARASSMENT,
+    report_type: ReportTypeEnum | None = None,
     description: str = "Mensagens ofensivas",
     deleted_at: datetime | None = None,
     report_id: UUID | None = None,
 ) -> UUID:
     report_id = report_id or uuid4()
+    report_type = report_type or free_report_type(
+        db,
+        creator_id,
+        reported_user_id=reported_user_id,
+        reported_event_id=reported_event_id,
+    )
     db.add(
         ReportModel(
             report_id=report_id,
@@ -155,12 +162,20 @@ def test_admin_receives_the_dashboard_metrics(
         add_user(db, created_at=now - timedelta(days=1), deleted_at=now)
         target = add_user(db, name="Lucas Ferreira")
 
+        first_event = add_event(db, target, "Primeiro evento")
+        second_event = add_event(db, target, "Segundo evento")
         add_report(db, reporter, reported_user_id=target, opened_at=now)
         add_report(
-            db, reporter, reported_user_id=target, opened_at=now - timedelta(hours=3)
+            db,
+            reporter,
+            reported_event_id=first_event,
+            opened_at=now - timedelta(hours=3),
         )
         add_report(
-            db, reporter, reported_user_id=target, opened_at=now - timedelta(days=3)
+            db,
+            reporter,
+            reported_event_id=second_event,
+            opened_at=now - timedelta(days=3),
         )
         add_report(
             db,
@@ -180,7 +195,13 @@ def test_admin_receives_the_dashboard_metrics(
             reported_user_id=target,
             status=ReportStatusEnum.REJECTED,
         )
-        add_report(db, reporter, reported_user_id=target, deleted_at=now)
+        add_report(
+            db,
+            reporter,
+            reported_user_id=target,
+            status=ReportStatusEnum.REVIEWED,
+            deleted_at=now,
+        )
 
     response = client.get("/admin/dashboard", headers=header_for(admin_id))
 
@@ -260,10 +281,19 @@ def test_recent_reports_exclude_resolved_and_rejected(
     admin_id = make_admin(session_factory)
     with session_factory() as db:
         reporter = add_user(db)
-        pending = add_report(db, reporter, status=ReportStatusEnum.PENDING)
-        reviewed = add_report(db, reporter, status=ReportStatusEnum.REVIEWED)
-        add_report(db, reporter, status=ReportStatusEnum.RESOLVED)
-        add_report(db, reporter, status=ReportStatusEnum.REJECTED)
+        target = add_user(db)
+        pending = add_report(
+            db, reporter, reported_user_id=target, status=ReportStatusEnum.PENDING
+        )
+        reviewed = add_report(
+            db, reporter, reported_user_id=target, status=ReportStatusEnum.REVIEWED
+        )
+        add_report(
+            db, reporter, reported_user_id=target, status=ReportStatusEnum.RESOLVED
+        )
+        add_report(
+            db, reporter, reported_user_id=target, status=ReportStatusEnum.REJECTED
+        )
 
     response = client.get("/admin/dashboard", headers=header_for(admin_id))
 
@@ -286,6 +316,7 @@ def test_recent_reports_are_limited_to_five_newest_first(
             add_report(
                 db,
                 reporter,
+                reported_user_id=add_user(db),  # <- linha nova
                 report_id=report_id,
                 opened_at=now - timedelta(hours=len(ids) - index),
             )

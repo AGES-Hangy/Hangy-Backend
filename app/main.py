@@ -1,5 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.presentation.routes import (
@@ -22,6 +24,7 @@ from app.presentation.routes import (
     search_router,
     tags_router,
     terms_router,
+    universal_links_router,
     uploads_router,
     users_router,
 )
@@ -31,6 +34,20 @@ app = FastAPI(
     description="API backend do projeto Hangy.",
     version="0.1.0",
 )
+
+
+@app.exception_handler(HTTPException)
+async def structured_http_exception_handler(
+    request: Request, exception: HTTPException
+) -> JSONResponse:
+    if isinstance(exception.detail, dict):
+        return JSONResponse(
+            status_code=exception.status_code,
+            content=exception.detail,
+            headers=exception.headers,
+        )
+    return await http_exception_handler(request, exception)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -61,3 +78,4 @@ app.include_router(search_router)
 app.include_router(users_router)
 app.include_router(admin_router)
 app.include_router(admin_users_router)
+app.include_router(universal_links_router)

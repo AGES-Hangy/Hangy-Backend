@@ -9,7 +9,6 @@ __all__ = [
     "AccountAlreadyBannedError",
     "AccountNotModeratedError",
     "AdminUserModerationService",
-    "AuditRepository",
     "ModeratedUserNotFoundError",
     "ReportAlreadyResolvedError",
     "ReportNotAboutUserError",
@@ -23,7 +22,6 @@ from typing import Protocol
 from uuid import UUID
 
 from app.domain.entities import (
-    AuditEvent,
     BanUserAction,
     Report,
     RevertUserModerationAction,
@@ -33,12 +31,14 @@ from app.domain.entities import (
 )
 from app.domain.enums import (
     AuditActionEnum,
+    AuditTargetTypeEnum,
     ModerationStatusEnum,
     ReportResolutionActionEnum,
     ReportStatusEnum,
 )
 from app.domain.services.admin_reports import ReportNotFoundError
 from app.domain.services.admin_users import derive_moderation_status
+from app.domain.services.audit_logger import AuditLogger
 
 # Reports still open for action; anything else (RESOLVED, REJECTED) is final.
 _RESOLVABLE_REPORT_STATUSES = (ReportStatusEnum.PENDING, ReportStatusEnum.REVIEWED)
@@ -55,6 +55,8 @@ class UserModerationRepository(Protocol):
         suspended_until: datetime | None,
     ) -> User: ...
 
+    def commit(self) -> None: ...
+
 
 class ReportRepository(Protocol):
     def get_by_id(self, report_id: UUID) -> Report | None: ...
@@ -67,10 +69,6 @@ class ReportRepository(Protocol):
         resolved_at: datetime,
         resolution_action: ReportResolutionActionEnum,
     ) -> None: ...
-
-
-class AuditRepository(Protocol):
-    def add(self, event: AuditEvent) -> None: ...
 
 
 class ModeratedUserNotFoundError(Exception):
@@ -111,11 +109,11 @@ class AdminUserModerationService:
         self,
         user_repository: UserModerationRepository,
         report_repository: ReportRepository,
-        audit_repository: AuditRepository,
+        audit_logger: AuditLogger,
     ) -> None:
         self.user_repository = user_repository
         self.report_repository = report_repository
-        self.audit_repository = audit_repository
+        self.audit_logger = audit_logger
 
     def apply_action(
         self,
@@ -171,14 +169,15 @@ class AdminUserModerationService:
                 resolution_action=resolution_action,
             )
 
-        self.audit_repository.add(
-            AuditEvent(
-                action=audit_action,
-                actor_id=actor_id,
-                target_id=user_id,
-                created_at=now,
-            )
+        self.audit_logger.record(
+            actor_id=actor_id,
+            action=audit_action,
+            target_type=AuditTargetTypeEnum.USER,
+            target_id=user_id,
         )
+        # The audit write is a savepoint (see AuditLogger): it never fails this
+        # commit even when it was itself rolled back.
+        self.user_repository.commit()
         return updated
 
     def _check_report_resolvable(self, report_id: UUID, user_id: UUID) -> None:

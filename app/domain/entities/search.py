@@ -7,6 +7,7 @@ from app.domain.enums import (
     EventParticipantStatusEnum,
     EventPrivacyEnum,
     SearchResultType,
+    UserConnectionStatusEnum,
 )
 
 
@@ -29,6 +30,39 @@ class SearchQuery:
     filters: SearchFilters = field(default_factory=SearchFilters)
     result_type: SearchResultType | None = None
     offset: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class SearchEventsQuery:
+    """Event listing input, interpreted and validated by the search service."""
+
+    viewer_id: UUID
+    limit: str
+    query: str | None = None
+    tag_ids: str | None = None
+    date_from: str | None = None
+    date_to: str | None = None
+    cursor: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SearchBusinessesQuery:
+    """Business listing input, interpreted and validated by the search service."""
+
+    viewer_id: UUID
+    limit: str
+    query: str | None = None
+    cursor: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SearchUsersQuery:
+    """User listing input, interpreted and validated by the search service."""
+
+    viewer_id: UUID
+    limit: str
+    query: str | None = None
+    cursor: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +90,13 @@ class SearchEventItem:
 
 
 @dataclass(frozen=True, slots=True)
+class SearchEventsPage:
+    items: tuple[SearchEventItem, ...]
+    next_cursor: str | None
+    total: int
+
+
+@dataclass(frozen=True, slots=True)
 class SearchBusinessItem:
     """A business profile item in the search results."""
 
@@ -65,6 +106,16 @@ class SearchBusinessItem:
     description: str | None = None
     address: str | None = None
     photo_url: str | None = None
+    # ``business_profile`` has no city column yet (only ``address``).
+    city: str | None = None
+    is_following: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class SearchBusinessesPage:
+    items: tuple[SearchBusinessItem, ...]
+    next_cursor: str | None
+    total: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +128,14 @@ class SearchUserItem:
     city: str | None = None
     state: str | None = None
     photo_url: str | None = None
+    connection_status: UserConnectionStatusEnum | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SearchUsersPage:
+    items: tuple[SearchUserItem, ...]
+    next_cursor: str | None
+    total: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,11 +160,17 @@ class SearchResult:
 
 __all__ = [
     "SearchBusinessItem",
+    "SearchBusinessesPage",
+    "SearchBusinessesQuery",
     "SearchEventCandidate",
     "SearchEventItem",
+    "SearchEventsPage",
+    "SearchEventsQuery",
     "SearchFilters",
     "SearchQuery",
     "SearchResult",
     "SearchResultBlock",
     "SearchUserItem",
+    "SearchUsersPage",
+    "SearchUsersQuery",
 ]

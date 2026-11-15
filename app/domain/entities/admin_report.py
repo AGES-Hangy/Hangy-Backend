@@ -4,6 +4,7 @@ from typing import Literal
 from uuid import UUID
 
 from app.domain.enums import (
+    EventModerationStatusEnum,
     ModerationStatusEnum,
     ReportStatusEnum,
     ReportTypeEnum,
@@ -13,10 +14,14 @@ from app.domain.enums import (
 __all__ = [
     "AdminReportDetail",
     "AdminReportDetailRecord",
+    "AdminReportEvent",
+    "AdminReportOrganizer",
     "AdminReportPreviousCounts",
+    "AdminReportQueueItem",
     "AdminReportResolution",
     "AdminReportTarget",
     "AdminReportUserSummary",
+    "AdminReportsPage",
     "ReportTargetType",
 ]
 
@@ -37,6 +42,27 @@ class AdminReportTarget:
     member_since: date
     event_count: int
     moderation_status: ModerationStatusEnum
+
+
+@dataclass(frozen=True, slots=True)
+class AdminReportEvent:
+    """The reported event itself, so the admin can act on it (remove)."""
+
+    id: UUID
+    title: str
+    moderation_status: EventModerationStatusEnum
+
+
+@dataclass(frozen=True, slots=True)
+class AdminReportOrganizer:
+    """The organizer behind a reported event, shaped like a user-list row."""
+
+    user_id: UUID
+    name: str | None
+    photo_url: str | None
+    moderation_status: ModerationStatusEnum
+    events_count: int
+    reports_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +106,11 @@ class AdminReportDetailRecord:
     resolved_by_name: str | None = None
     resolved_at: datetime | None = None
     resolution_action: str | None = None
+    # Only filled for event reports, where the target is the event's organizer.
+    target_photo_url: str | None = None
+    target_reports_count: int = 0
+    reported_event_title: str | None = None
+    reported_event_moderation_status: EventModerationStatusEnum | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,3 +126,25 @@ class AdminReportDetail:
     reported_at: datetime
     previous_reports: AdminReportPreviousCounts
     resolution: AdminReportResolution | None = None
+    organizer: AdminReportOrganizer | None = None
+    event: AdminReportEvent | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class AdminReportQueueItem:
+    report_id: UUID
+    report_number: int
+    report_type: ReportTypeEnum
+    status: ReportStatusEnum
+    description: str
+    opened_at: datetime
+    report_count: int
+    reported_user_name: str | None
+    reported_user_type: UserTypeEnum | None
+    reported_event_title: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class AdminReportsPage:
+    items: tuple[AdminReportQueueItem, ...]
+    next_cursor: str | None

@@ -18,7 +18,11 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.domain.enums import EventPrivacyEnum, EventStatusEnum
+from app.domain.enums import (
+    EventModerationStatusEnum,
+    EventPrivacyEnum,
+    EventStatusEnum,
+)
 from app.domain.services.event_location import approximate_point
 from app.infrastructure.repository.base import Base
 from app.infrastructure.repository.models.types import enum_column
@@ -103,6 +107,15 @@ class EventModel(Base):
         onupdate=func.now(),
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Admin takedown (soft delete). Removing also sets deleted_at, so every
+    # existing `deleted_at IS NULL` filter hides the event; these two columns
+    # keep the reason and the moment for audit and for "already removed".
+    moderation_status: Mapped[EventModerationStatusEnum] = mapped_column(
+        enum_column(EventModerationStatusEnum),
+        default=EventModerationStatusEnum.ACTIVE,
+        server_default=EventModerationStatusEnum.ACTIVE.value,
+    )
+    removed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     def __init__(self, **kwargs: Any) -> None:
         # EventsService computes the approximate point itself; this covers rows

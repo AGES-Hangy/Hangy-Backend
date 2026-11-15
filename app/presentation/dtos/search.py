@@ -3,7 +3,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from app.domain.enums import EventPrivacyEnum, LocationPrecisionEnum
+from app.domain.enums import (
+    EventPrivacyEnum,
+    LocationPrecisionEnum,
+    UserConnectionStatusEnum,
+)
 from app.domain.services.search import DEFAULT_SEARCH_PREVIEW_LIMIT
 
 
@@ -66,6 +70,14 @@ class SearchBusinessItemOutput(BaseModel):
     photo_url: str | None = None
 
 
+class SearchBusinessPageItemOutput(BaseModel):
+    user_id: UUID
+    business_name: str | None
+    photo_url: str | None
+    city: str | None
+    is_following: bool
+
+
 class SearchUserItemOutput(BaseModel):
     user_id: UUID
     name: str | None
@@ -73,12 +85,25 @@ class SearchUserItemOutput(BaseModel):
     city: str | None = None
     state: str | None = None
     photo_url: str | None = None
+    connection_status: UserConnectionStatusEnum | None = None
 
 
 class SearchEventsBlockOutput(BaseModel):
     items: list[SearchEventItemOutput]
     total: int
     has_more: bool
+
+
+class SearchEventsPageOutput(BaseModel):
+    items: list[SearchEventItemOutput]
+    next_cursor: str | None
+    total: int
+
+
+class SearchBusinessesPageOutput(BaseModel):
+    items: list[SearchBusinessPageItemOutput]
+    next_cursor: str | None
+    total: int
 
 
 class SearchBusinessesBlockOutput(BaseModel):
@@ -93,6 +118,12 @@ class SearchUsersBlockOutput(BaseModel):
     has_more: bool
 
 
+class SearchUsersPageOutput(BaseModel):
+    items: list[SearchUserItemOutput]
+    next_cursor: str | None
+    total: int
+
+
 class SearchOutput(BaseModel):
     query: str | None
     applied_filters: SearchAppliedFiltersOutput
@@ -104,11 +135,15 @@ class SearchOutput(BaseModel):
 __all__ = [
     "SearchAppliedFiltersOutput",
     "SearchBusinessItemOutput",
+    "SearchBusinessPageItemOutput",
     "SearchBusinessesBlockOutput",
+    "SearchBusinessesPageOutput",
     "SearchEventItemOutput",
     "SearchEventsBlockOutput",
+    "SearchEventsPageOutput",
     "SearchOutput",
     "SearchQueryParams",
     "SearchUserItemOutput",
     "SearchUsersBlockOutput",
+    "SearchUsersPageOutput",
 ]
