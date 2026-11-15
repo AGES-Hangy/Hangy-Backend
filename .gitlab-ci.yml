@@ -59,6 +59,48 @@ validate-infra:
     - bash scripts/tests/deploy-gitlab.sh
     - bash scripts/tests/deploy-ec2.sh
 
+# Blocks the deploy stage when the image has fixable HIGH/CRITICAL CVEs.
+# Accepted risks go in .trivyignore.yaml with a statement and expired_at.
+container-scan:
+  stage: validate
+  image: docker:29-cli
+  services:
+    - name: docker:29-dind
+      alias: docker
+      command: ["--tls=false"]
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+    HEALTHCHECK_TCP_PORT: "2375"
+    # Pinned by digest: bump both together after reviewing the release notes.
+    TRIVY_IMAGE: aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c
+    SCAN_IMAGE: hangy-backend:scan-$CI_COMMIT_SHORT_SHA
+    TRIVY_CACHE_DIR: $CI_PROJECT_DIR/.trivycache
+    TRIVY_NO_PROGRESS: "true"
+    TRIVY_IGNOREFILE: .trivyignore.yaml
+  cache:
+    key: trivy-db
+    paths:
+      - .trivycache/
+  timeout: 30m
+  before_script:
+    # Run the pinned scanner binary in this job; it reaches dind through DOCKER_HOST.
+    - trivy_container=$(docker create "$TRIVY_IMAGE")
+    - docker cp "$trivy_container:/usr/local/bin/trivy" /usr/local/bin/trivy
+    - docker rm "$trivy_container" >/dev/null
+    - trivy --version
+  script:
+    - docker build --pull --tag "$SCAN_IMAGE" .
+    - trivy image --download-db-only
+    - trivy image --skip-db-update --format json --output trivy-report.json "$SCAN_IMAGE"
+    - trivy image --skip-db-update --severity LOW,MEDIUM,HIGH,CRITICAL "$SCAN_IMAGE"
+    - trivy image --skip-db-update --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 "$SCAN_IMAGE"
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - trivy-report.json
+
 deploy:
   stage: deploy
   image: docker:29-cli

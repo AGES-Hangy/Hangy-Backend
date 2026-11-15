@@ -1,0 +1,9 @@
+# Vulnerabilities accepted by the container-scan job (.gitlab-ci.yml).
+# Prefer upgrading the dependency or base image. Add an entry only when no fix
+# is usable yet, always with a reason and an expiry so it gets re-reviewed:
+#
+# vulnerabilities:
+#   - id: CVE-2026-00000
+#     statement: "No upstream fix; the vulnerable code path is not used by the API"
+#     expired_at: 2027-01-31
+vulnerabilities: []

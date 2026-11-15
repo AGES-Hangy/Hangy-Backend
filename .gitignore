@@ -228,3 +228,7 @@ __marimo__/
 *.tfbackend
 crash.log
 crash.*.log
+
+# Trivy (container-scan)
+.trivycache/
+trivy-report.json
