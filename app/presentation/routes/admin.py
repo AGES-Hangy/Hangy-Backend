@@ -735,8 +735,9 @@ def get_audit_log(
         "Ponto único de escrita para toda ação de moderação sobre uma conta: "
         "`BAN` (definitivo), `SUSPEND` (até `duration_days` dias) ou `REVERT` "
         "(remove o banimento/suspensão e devolve o acesso imediatamente). "
-        "`report_id` é opcional em `BAN`/`SUSPEND` e, quando informado, marca "
-        "aquela denúncia como `RESOLVED` na mesma transação. Gera sempre uma "
+        "`report_id` é opcional em `BAN`/`SUSPEND`. A denúncia pode ser da "
+        "própria conta ou de um evento organizado por ela. A ação resolve a "
+        "denúncia informada na mesma transação e gera uma "
         "linha de auditoria. Exige Bearer token de um usuário com "
         "`role = ADMIN`."
     ),

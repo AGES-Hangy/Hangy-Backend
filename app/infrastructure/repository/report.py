@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -13,6 +13,7 @@ from app.domain.enums import (
     ReportTypeEnum,
 )
 from app.domain.services.report import ReportAlreadyUnderReviewError
+from app.infrastructure.repository.models.event_model import EventModel
 from app.infrastructure.repository.models.report_model import ReportModel
 
 OPEN_UNIQUE_INDEXES = ("uq_report_open_user_type", "uq_report_open_event_type")
@@ -65,14 +66,38 @@ class SqlAlchemyReportRepository:
             )
         return set(self.db.scalars(statement))
 
-    def get_by_id(self, report_id: UUID) -> Report | None:
-        model = self.db.scalar(
-            select(ReportModel).where(
-                ReportModel.report_id == report_id,
-                ReportModel.deleted_at.is_(None),
-            )
+    def get_by_id(self, report_id: UUID, *, for_update: bool = False) -> Report | None:
+        """Return the active report.
+
+        for_update locks the row until the caller commits, so two admin
+        actions closing the same report can't both see it open.
+        """
+        statement = select(ReportModel).where(
+            ReportModel.report_id == report_id,
+            ReportModel.deleted_at.is_(None),
         )
+        if for_update:
+            statement = statement.with_for_update()
+        model = self.db.scalar(statement)
         return self._to_entity(model) if model is not None else None
+
+    def get_target_for_account_moderation(
+        self, report_id: UUID
+    ) -> tuple[UUID | None, ReportStatusEnum] | None:
+        """Lock the report and return its target account and current status."""
+        row = self.db.execute(
+            select(
+                func.coalesce(
+                    ReportModel.reported_user_id, EventModel.event_creator_id
+                ),
+                ReportModel.status,
+            )
+            .select_from(ReportModel)
+            .outerjoin(EventModel, EventModel.event_id == ReportModel.reported_event_id)
+            .where(ReportModel.report_id == report_id, ReportModel.deleted_at.is_(None))
+            .with_for_update(of=ReportModel)
+        ).one_or_none()
+        return (row[0], row[1]) if row is not None else None
 
     def resolve(
         self,
