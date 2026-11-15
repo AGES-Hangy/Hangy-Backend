@@ -811,3 +811,57 @@ def test_report_detail_shows_event_resolution_after_removal(
     assert body["organizer"]["user_id"] == str(organizer_id)
     # The removed event no longer counts as one of the organizer's events.
     assert body["organizer"]["events_count"] == 0
+
+
+@pytest.mark.parametrize(
+    ("action", "status", "audit_action"),
+    [
+        ({"action": "BAN"}, "BANNED", AuditActionEnum.USER_BANNED),
+        (
+            {"action": "SUSPEND", "duration_days": 7},
+            "SUSPENDED",
+            AuditActionEnum.USER_SUSPENDED,
+        ),
+    ],
+)
+def test_event_report_moderates_only_its_organizer(
+    moderation_client: ModerationClient,
+    action: dict,
+    status: str,
+    audit_action: AuditActionEnum,
+) -> None:
+    client, sessions = moderation_client
+    headers = admin_headers(sessions)
+    with sessions() as db:
+        organizer = add_user(db)
+        reporter = add_user(db)
+        event_id = add_event(db, organizer)
+        report_id = add_event_report(db, reporter, event_id)
+        other_report = add_event_report(db, add_user(db), event_id)
+
+    body = {**action, "report_id": str(report_id)}
+    wrong_target = client.patch(
+        f"/admin/users/{reporter}/moderation", json=body, headers=headers
+    )
+    assert wrong_target.status_code == 409
+    assert wrong_target.json()["detail"] == "Report is not about this user"
+    assert report_row(sessions, report_id).status == ReportStatusEnum.PENDING
+    assert not audit_rows(sessions)
+    assert client.get("/users/me", headers=header_for(reporter)).status_code == 200
+
+    response = client.patch(
+        f"/admin/users/{organizer}/moderation", json=body, headers=headers
+    )
+    assert response.status_code == 200
+    assert response.json()["moderation_status"] == status
+    assert client.get("/users/me", headers=header_for(organizer)).status_code == 401
+    report = report_row(sessions, report_id)
+    assert report.status == ReportStatusEnum.RESOLVED
+    assert report.resolution_action == status
+    assert report_row(sessions, other_report).status == ReportStatusEnum.PENDING
+    assert (
+        event_row(sessions, event_id).moderation_status
+        == EventModerationStatusEnum.ACTIVE
+    )
+    (entry,) = audit_rows(sessions)
+    assert (entry.action, entry.target_id) == (audit_action, organizer)
