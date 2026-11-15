@@ -393,6 +393,22 @@ def test_target_filter_combines_with_status(queue_client: QueueClient) -> None:
     assert payload["items"][0]["report_count"] == 1
 
 
+@pytest.mark.parametrize(
+    ("term", "expected"),
+    [("Lucas", [2]), ("Ana", []), ("Pelada", [])],
+)
+def test_target_filter_combines_with_search(
+    queue_client: QueueClient, term: str, expected: list[int]
+) -> None:
+    client, session_factory = queue_client
+    with session_factory() as db:
+        admin_id, lucas_id, _ = build_target_queue(db)
+
+    payload = get_queue(client, admin_id, target_user_id=str(lucas_id), search=term)
+
+    assert numbers(payload) == expected
+
+
 def test_both_target_filters_return_400(queue_client: QueueClient) -> None:
     client, session_factory = queue_client
     with session_factory() as db:

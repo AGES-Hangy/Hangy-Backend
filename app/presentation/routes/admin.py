@@ -274,7 +274,12 @@ def list_admin_reports(
     ] = None,
     target_user_id: Annotated[
         UUID | None,
-        Query(description="Só denúncias contra este usuário ou estabelecimento."),
+        Query(
+            description=(
+                "Só denúncias contra este usuário ou estabelecimento. Denúncias "
+                "contra eventos organizados por essa conta ficam de fora."
+            )
+        ),
     ] = None,
     target_event_id: Annotated[
         UUID | None,
