@@ -1,7 +1,20 @@
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, and_, false, func, null, or_, select, true
+from sqlalchemy import (
+    ColumnElement,
+    ColumnExpressionArgument,
+    Select,
+    SQLColumnExpression,
+    and_,
+    false,
+    func,
+    null,
+    or_,
+    select,
+    true,
+)
 from sqlalchemy.orm import Session, aliased
 
 from app.domain.entities import (
@@ -13,6 +26,7 @@ from app.domain.entities import (
 )
 from app.domain.enums import (
     AuditActionEnum,
+    AuditTargetTypeEnum,
     EventStatusEnum,
     ModerationStatusEnum,
     ReportResolutionActionEnum,
@@ -61,21 +75,8 @@ class SqlAlchemyAdminUsersRepository:
             .correlate(UserModel)
             .scalar_subquery()
         )
-        # A report counts against the user whether it targets their profile
-        # (personal or business) or one of the events they created. Archived
-        # reports (task 246: status REJECTED) do not count.
         report_count = (
-            select(func.count())
-            .select_from(ReportModel)
-            .outerjoin(EventModel, EventModel.event_id == ReportModel.reported_event_id)
-            .where(
-                ReportModel.deleted_at.is_(None),
-                ReportModel.status != ReportStatusEnum.REJECTED,
-                or_(
-                    ReportModel.reported_user_id == UserModel.user_id,
-                    EventModel.event_creator_id == UserModel.user_id,
-                ),
-            )
+            self._reports_against(UserModel.user_id, func.count())
             .correlate(UserModel)
             .scalar_subquery()
         )
@@ -149,19 +150,10 @@ class SqlAlchemyAdminUsersRepository:
             )
         ).one()
         report_count, report_upheld_count = self.db.execute(
-            select(
+            self._reports_against(
+                user_id,
                 func.count(),
                 func.count().filter(ReportModel.resolution_action.in_(UPHELD_ACTIONS)),
-            )
-            .select_from(ReportModel)
-            .outerjoin(EventModel, EventModel.event_id == ReportModel.reported_event_id)
-            .where(
-                ReportModel.deleted_at.is_(None),
-                ReportModel.status != ReportStatusEnum.REJECTED,
-                or_(
-                    ReportModel.reported_user_id == user_id,
-                    EventModel.event_creator_id == user_id,
-                ),
             )
         ).one()
         return AdminUserMetrics(
@@ -173,23 +165,17 @@ class SqlAlchemyAdminUsersRepository:
 
     def _history(self, user_id: UUID) -> tuple[AdminModerationEntry, ...]:
         actor = aliased(UserModel)
-        report = aliased(ReportModel)
         rows = self.db.execute(
-            select(AuditLogModel, actor.user_id, actor.name, report.report_id)
+            select(AuditLogModel, actor.user_id, actor.name)
             .outerjoin(actor, actor.user_id == AuditLogModel.actor_id)
-            .outerjoin(
-                report,
-                and_(
-                    report.reported_user_id == AuditLogModel.target_id,
-                    report.resolved_by_id == AuditLogModel.actor_id,
-                    report.resolved_at == AuditLogModel.created_at,
-                ),
-            )
             .where(
+                AuditLogModel.target_type == AuditTargetTypeEnum.USER,
                 AuditLogModel.target_id == user_id,
                 AuditLogModel.action.in_(MODERATION_ACTIONS),
             )
-            .order_by(AuditLogModel.created_at.desc(), AuditLogModel.audit_id.desc())
+            .order_by(
+                AuditLogModel.created_at.desc(), AuditLogModel.audit_log_id.desc()
+            )
             .limit(MODERATION_HISTORY_LIMIT)
         ).all()
         return tuple(
@@ -201,9 +187,43 @@ class SqlAlchemyAdminUsersRepository:
                     else None
                 ),
                 occurred_at=log.created_at,
-                report_id=report_id,
+                report_id=self._report_id_from(log.extra_metadata),
             )
-            for log, actor_id, actor_name, report_id in rows
+            for log, actor_id, actor_name in rows
+        )
+
+    @staticmethod
+    def _report_id_from(metadata: dict[str, Any] | None) -> UUID | None:
+        # AdminUserModerationService records the report it resolved in the
+        # audit metadata. Older rows and actions without a report have none.
+        raw = (metadata or {}).get("report_id")
+        if not isinstance(raw, str):
+            return None
+        try:
+            return UUID(raw)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _reports_against(
+        user_id: UUID | SQLColumnExpression[UUID],
+        *columns: ColumnExpressionArgument[Any],
+    ) -> Select[Any]:
+        # A report counts against the user whether it targets their profile
+        # (personal or business) or one of the events they created. Archived
+        # reports (task 246: status REJECTED) do not count.
+        return (
+            select(*columns)
+            .select_from(ReportModel)
+            .outerjoin(EventModel, EventModel.event_id == ReportModel.reported_event_id)
+            .where(
+                ReportModel.deleted_at.is_(None),
+                ReportModel.status != ReportStatusEnum.REJECTED,
+                or_(
+                    ReportModel.reported_user_id == user_id,
+                    EventModel.event_creator_id == user_id,
+                ),
+            )
         )
 
     @staticmethod

@@ -1,5 +1,6 @@
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID, uuid4
 
 import jwt
@@ -12,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 from app.config import settings
 from app.domain.enums import (
     AuditActionEnum,
+    AuditTargetTypeEnum,
     EventPrivacyEnum,
     EventStatusEnum,
     ReportResolutionActionEnum,
@@ -20,6 +22,7 @@ from app.domain.enums import (
     UserRoleEnum,
 )
 from app.infrastructure.repository import Base, get_db
+from app.infrastructure.repository.audit_log import SqlAlchemyAuditLogRepository
 from app.infrastructure.repository.models import AuditLogModel, UserModel
 from app.infrastructure.repository.models.event_model import EventModel
 from app.infrastructure.repository.models.report_model import ReportModel
@@ -130,6 +133,7 @@ def add_report(
     *,
     user_id: UUID | None = None,
     event_id: UUID | None = None,
+    report_type: ReportTypeEnum = ReportTypeEnum.HARASSMENT,
     status: ReportStatusEnum = ReportStatusEnum.PENDING,
     resolution_action: ReportResolutionActionEnum | None = None,
     resolved_by_id: UUID | None = None,
@@ -143,7 +147,7 @@ def add_report(
             report_creator_id=creator_id,
             reported_user_id=user_id,
             reported_event_id=event_id,
-            report_type=ReportTypeEnum.HARASSMENT,
+            report_type=report_type,
             description="Mensagens ofensivas",
             status=status,
             resolution_action=resolution_action,
@@ -162,15 +166,23 @@ def add_audit(
     target_id: UUID,
     action: AuditActionEnum,
     created_at: datetime,
+    *,
+    target_type: AuditTargetTypeEnum = AuditTargetTypeEnum.USER,
+    metadata: dict[str, Any] | None = None,
 ) -> None:
-    db.add(
-        AuditLogModel(
-            action=action,
-            actor_id=actor_id,
-            target_id=target_id,
-            created_at=created_at,
-        )
+    # Written through the real repository; only created_at is pinned afterwards
+    # so the ordering of the history can be asserted.
+    audit_log_id = SqlAlchemyAuditLogRepository(db).record(
+        actor_id=actor_id,
+        action=action,
+        target_type=target_type,
+        target_id=target_id,
+        target_label=None,
+        metadata=metadata,
     )
+    row = db.get(AuditLogModel, audit_log_id)
+    assert row is not None
+    row.created_at = created_at
     db.commit()
 
 
@@ -212,17 +224,7 @@ def test_banned_user_has_banned_at_and_the_ban_in_the_history(
     client, session_factory = detail_client
     with session_factory() as db:
         admin_id = add_admin(db)
-        creator_id = add_user(db, "Denunciante")
         user_id = add_user(db, "Lucas Ferreira", banned_at=BANNED_AT)
-        report_id = add_report(
-            db,
-            creator_id,
-            user_id=user_id,
-            status=ReportStatusEnum.RESOLVED,
-            resolution_action=ReportResolutionActionEnum.BANNED,
-            resolved_by_id=admin_id,
-            resolved_at=BANNED_AT,
-        )
         add_audit(db, admin_id, user_id, AuditActionEnum.USER_BANNED, BANNED_AT)
 
     body = get_detail(client, admin_id, user_id).json()
@@ -233,8 +235,83 @@ def test_banned_user_has_banned_at_and_the_ban_in_the_history(
     entry = body["moderation_history"][0]
     assert entry["action"] == "BANNED"
     assert entry["actor"] == {"id": str(admin_id), "name": "Admin"}
-    assert entry["report_id"] == str(report_id)
+    assert entry["report_id"] is None
     assert datetime.fromisoformat(entry["occurred_at"]) == BANNED_AT
+
+
+def test_history_links_the_report_resolved_by_the_moderation_endpoint(
+    detail_client: DetailClient,
+) -> None:
+    client, session_factory = detail_client
+    with session_factory() as db:
+        admin_id = add_admin(db)
+        creator_id = add_user(db, "Denunciante")
+        user_id = add_user(db, "Lucas Ferreira")
+        ban_report_id = add_report(db, creator_id, user_id=user_id)
+        suspend_report_id = add_report(
+            db, creator_id, user_id=user_id, report_type=ReportTypeEnum.SPAM
+        )
+
+    suspended = client.patch(
+        f"/admin/users/{user_id}/moderation",
+        json={
+            "action": "SUSPEND",
+            "duration_days": 7,
+            "report_id": str(suspend_report_id),
+        },
+        headers=header_for(admin_id),
+    )
+    reverted = client.patch(
+        f"/admin/users/{user_id}/moderation",
+        json={"action": "REVERT"},
+        headers=header_for(admin_id),
+    )
+    banned = client.patch(
+        f"/admin/users/{user_id}/moderation",
+        json={"action": "BAN", "report_id": str(ban_report_id)},
+        headers=header_for(admin_id),
+    )
+    assert [suspended.status_code, reverted.status_code, banned.status_code] == [
+        200,
+        200,
+        200,
+    ]
+
+    body = get_detail(client, admin_id, user_id).json()
+
+    history = sorted(body["moderation_history"], key=lambda item: item["action"])
+    assert [(item["action"], item["report_id"]) for item in history] == [
+        ("BANNED", str(ban_report_id)),
+        ("REVERTED", None),
+        ("SUSPENDED", str(suspend_report_id)),
+    ]
+    assert all(item["actor"]["id"] == str(admin_id) for item in history)
+    assert body["metrics"]["report_upheld_count"] == 2
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [None, {}, {"report_id": 42}, {"report_id": "not-a-uuid"}],
+)
+def test_history_without_a_valid_report_in_metadata_has_null_report_id(
+    detail_client: DetailClient, metadata: dict[str, Any] | None
+) -> None:
+    client, session_factory = detail_client
+    with session_factory() as db:
+        admin_id = add_admin(db)
+        user_id = add_user(db, "Lucas")
+        add_audit(
+            db,
+            admin_id,
+            user_id,
+            AuditActionEnum.USER_SUSPENDED,
+            BANNED_AT,
+            metadata=metadata,
+        )
+
+    [entry] = get_detail(client, admin_id, user_id).json()["moderation_history"]
+
+    assert entry["report_id"] is None
 
 
 def test_history_is_newest_first_and_only_has_moderation_actions(
@@ -314,7 +391,13 @@ def test_metrics_ignore_archived_deleted_and_other_users(
         )
         add_report(db, creator_id, user_id=user_id)
         add_report(db, creator_id, event_id=cancelled_id)
-        add_report(db, creator_id, user_id=user_id, deleted_at=datetime.now(UTC))
+        add_report(
+            db,
+            creator_id,
+            user_id=user_id,
+            report_type=ReportTypeEnum.SPAM,
+            deleted_at=datetime.now(UTC),
+        )
         add_report(db, creator_id, user_id=other_id)
         add_report(db, creator_id, event_id=other_event_id)
 
