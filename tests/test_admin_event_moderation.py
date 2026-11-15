@@ -6,6 +6,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
+from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -40,6 +41,7 @@ from app.infrastructure.repository.models.report_model import ReportModel
 from app.infrastructure.repository.notification import (
     SqlAlchemyNotificationRepository,
 )
+from app.infrastructure.repository.report import SqlAlchemyReportRepository
 from app.main import app
 
 ModerationClient = tuple[TestClient, sessionmaker[Session]]
@@ -865,3 +867,131 @@ def test_event_report_moderates_only_its_organizer(
     )
     (entry,) = audit_rows(sessions)
     assert (entry.action, entry.target_id) == (audit_action, organizer)
+
+
+def test_report_resolved_by_event_removal_cannot_moderate_the_organizer(
+    moderation_client: ModerationClient,
+) -> None:
+    client, sessions = moderation_client
+    headers = admin_headers(sessions)
+    with sessions() as db:
+        organizer = add_user(db)
+        event_id = add_event(db, organizer)
+        report_id = add_event_report(db, add_user(db), event_id)
+
+    assert (
+        remove(client, event_id, headers, report_id=str(report_id)).status_code == 200
+    )
+    (removal_audit,) = audit_rows(sessions)
+
+    response = client.patch(
+        f"/admin/users/{organizer}/moderation",
+        json={"action": "BAN", "report_id": str(report_id)},
+        headers=headers,
+    )
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Report already resolved"}
+    report = report_row(sessions, report_id)
+    assert report.status == ReportStatusEnum.RESOLVED
+    assert report.resolution_action == ReportResolutionActionEnum.EVENT_REMOVED
+    assert [row.audit_log_id for row in audit_rows(sessions)] == [
+        removal_audit.audit_log_id
+    ]
+    assert client.get("/users/me", headers=header_for(organizer)).status_code == 200
+
+
+def test_report_resolved_by_banning_the_organizer_cannot_remove_the_event(
+    moderation_client: ModerationClient,
+) -> None:
+    client, sessions = moderation_client
+    headers = admin_headers(sessions)
+    with sessions() as db:
+        organizer = add_user(db)
+        event_id = add_event(db, organizer)
+        report_id = add_event_report(db, add_user(db), event_id)
+
+    banned = client.patch(
+        f"/admin/users/{organizer}/moderation",
+        json={"action": "BAN", "report_id": str(report_id)},
+        headers=headers,
+    )
+    assert banned.status_code == 200
+    (ban_audit,) = audit_rows(sessions)
+
+    response = remove(client, event_id, headers, report_id=str(report_id))
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Report already resolved"}
+    assert (
+        event_row(sessions, event_id).moderation_status
+        == EventModerationStatusEnum.ACTIVE
+    )
+    assert report_row(sessions, report_id).resolution_action == (
+        ReportResolutionActionEnum.BANNED
+    )
+    assert [row.audit_log_id for row in audit_rows(sessions)] == [
+        ban_audit.audit_log_id
+    ]
+
+
+class _CapturingSession:
+    """Stands in for Session to inspect the statement get_by_id builds."""
+
+    statement = None
+
+    def scalar(self, statement):
+        self.statement = statement
+
+
+@pytest.mark.parametrize("for_update", [False, True])
+def test_get_by_id_locks_the_active_report_only_when_asked(for_update: bool) -> None:
+    db = _CapturingSession()
+    SqlAlchemyReportRepository(db).get_by_id(uuid4(), for_update=for_update)  # type: ignore[arg-type]
+    sql = str(db.statement.compile(dialect=postgresql.dialect()))
+    assert "report.deleted_at IS NULL" in sql
+    assert ("FOR UPDATE" in sql) is for_update
+
+
+@pytest.mark.parametrize("flow", ["remove", "archive", "ban"])
+def test_every_report_resolver_locks_the_report_before_checking_it(
+    moderation_client: ModerationClient,
+    monkeypatch: pytest.MonkeyPatch,
+    flow: str,
+) -> None:
+    client, sessions = moderation_client
+    headers = admin_headers(sessions)
+    with sessions() as db:
+        organizer = add_user(db)
+        event_id = add_event(db, organizer)
+        report_id = add_event_report(db, add_user(db), event_id)
+
+    locked_reads: list[str] = []
+    repository = SqlAlchemyReportRepository
+    get_by_id = repository.get_by_id
+    get_target = repository.get_target_for_account_moderation
+
+    def spy_get_by_id(self, report_id, *, for_update=False):
+        if for_update:
+            locked_reads.append("get_by_id")
+        return get_by_id(self, report_id, for_update=for_update)
+
+    def spy_get_target(self, report_id):
+        locked_reads.append("get_target_for_account_moderation")
+        return get_target(self, report_id)
+
+    monkeypatch.setattr(repository, "get_by_id", spy_get_by_id)
+    monkeypatch.setattr(repository, "get_target_for_account_moderation", spy_get_target)
+
+    if flow == "remove":
+        response = remove(client, event_id, headers, report_id=str(report_id))
+    elif flow == "archive":
+        response = client.patch(f"/admin/reports/{report_id}/archive", headers=headers)
+    else:
+        response = client.patch(
+            f"/admin/users/{organizer}/moderation",
+            json={"action": "BAN", "report_id": str(report_id)},
+            headers=headers,
+        )
+    assert response.status_code == 200
+    assert locked_reads[:1] == [
+        "get_target_for_account_moderation" if flow == "ban" else "get_by_id"
+    ]

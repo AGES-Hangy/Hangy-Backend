@@ -66,13 +66,19 @@ class SqlAlchemyReportRepository:
             )
         return set(self.db.scalars(statement))
 
-    def get_by_id(self, report_id: UUID) -> Report | None:
-        model = self.db.scalar(
-            select(ReportModel).where(
-                ReportModel.report_id == report_id,
-                ReportModel.deleted_at.is_(None),
-            )
+    def get_by_id(self, report_id: UUID, *, for_update: bool = False) -> Report | None:
+        """Return the active report.
+
+        for_update locks the row until the caller commits, so two admin
+        actions closing the same report can't both see it open.
+        """
+        statement = select(ReportModel).where(
+            ReportModel.report_id == report_id,
+            ReportModel.deleted_at.is_(None),
         )
+        if for_update:
+            statement = statement.with_for_update()
+        model = self.db.scalar(statement)
         return self._to_entity(model) if model is not None else None
 
     def get_target_for_account_moderation(
