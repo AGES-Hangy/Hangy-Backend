@@ -11,8 +11,9 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.config import settings
+from app.domain.entities import PasswordResetRequest
 from app.domain.enums import UserTypeEnum
-from app.domain.services.password_reset import password_hash
+from app.domain.services.password_reset import PasswordResetService, password_hash
 from app.infrastructure.email import get_email_sender
 from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import PasswordResetTokenModel, UserModel
@@ -146,6 +147,51 @@ def test_sender_failure_preserves_response_and_token_without_logging_code(
     assert "Password reset email delivery failed" in caplog.text
     assert "000042" not in caplog.text
     assert "provider echoed" not in caplog.text
+
+
+class _InMemoryResetRepository:
+    def __init__(self, user_id: UUID) -> None:
+        self.user_id = user_id
+        self.tokens: list = []
+
+    def get_active_user_id_by_email(self, email: str) -> UUID | None:
+        return self.user_id
+
+    def expire_unverified_codes(self, user_id: UUID, expired_at: datetime) -> None:
+        pass
+
+    def create(self, token):
+        self.tokens.append(token)
+        return token
+
+
+def test_email_delivery_is_deferred_until_after_the_request(caplog):
+    repository = _InMemoryResetRepository(uuid4())
+    sender = Mock()
+    sender.send.side_effect = RuntimeError("provider down")
+    scheduled = []
+    service = PasswordResetService(
+        repository=repository,
+        jwt_secret_key="test-secret",
+        jwt_algorithm="HS256",
+        email_sender=sender,
+        run_in_background=lambda func, *args: scheduled.append((func, args)),
+    )
+
+    service.request_password_reset(
+        PasswordResetRequest(email="deferred-reset@hangy.com")
+    )
+
+    assert len(repository.tokens) == 1
+    sender.send.assert_not_called()
+    assert len(scheduled) == 1
+
+    func, args = scheduled[0]
+    func(*args)
+
+    sender.send.assert_called_once()
+    assert sender.send.call_args.args[0] == "deferred-reset@hangy.com"
+    assert "Password reset email delivery failed" in caplog.text
 
 
 def test_deleted_user_does_not_receive_email(client, email_sender):

@@ -65,4 +65,4 @@ fi
 if [[ -n "${SES_TEST_RECIPIENT:-}" && "$SES_TEST_RECIPIENT" != "$EMAIL_FROM" ]]; then
   verified "$SES_TEST_RECIPIENT"
 fi
-echo "SES sandbox in $region: only verified recipients can receive email. No delivery test was performed."
+echo "WARNING: SES is still in the sandbox in $region; only verified recipients receive password reset codes. Request production access to reach all users." >&2

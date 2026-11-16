@@ -3,6 +3,7 @@ import logging
 import secrets
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from threading import Lock
@@ -37,10 +38,19 @@ request_limit = 3
 request_window_seconds = 15 * 60
 max_code_attempts = 5
 RESET_TOKEN_SCOPE = "password_reset"
+RESET_CODE_EXPIRE_MINUTES = 15
 
 
 class EmailSender(Protocol):
     def send(self, recipient: str, subject: str, body: str) -> None: ...
+
+
+class TaskRunner(Protocol):
+    def __call__(self, func: Callable[..., None], /, *args: object) -> None: ...
+
+
+def _run_now(func: Callable[..., None], /, *args: object) -> None:
+    func(*args)
 
 
 class PasswordResetTokenRepository(Protocol):
@@ -90,11 +100,14 @@ class PasswordResetService:
         jwt_secret_key: str,
         jwt_algorithm: str,
         email_sender: EmailSender,
+        run_in_background: TaskRunner = _run_now,
     ) -> None:
         self.repository = repository
         self.jwt_secret_key = jwt_secret_key
         self.jwt_algorithm = jwt_algorithm
         self.email_sender = email_sender
+        # Delivery runs after the response so its latency does not reveal accounts.
+        self.run_in_background = run_in_background
 
     def request_password_reset(self, request: PasswordResetRequest) -> None:
         _enforce_request_limit(request.email)
@@ -110,19 +123,22 @@ class PasswordResetService:
             code_hash=password_hash.hash(code),
             attempts=0,
             verified_at=None,
-            expires_at=now + timedelta(minutes=15),
+            expires_at=now + timedelta(minutes=RESET_CODE_EXPIRE_MINUTES),
             used_at=None,
             created_at=now,
         )
         self.repository.expire_unverified_codes(user_id, now)
         self.repository.create(token)
+        self.run_in_background(self._send_reset_code, request.email, code)
+
+    def _send_reset_code(self, recipient: str, code: str) -> None:
         try:
             self.email_sender.send(
-                request.email,
+                recipient,
                 "Seu código de redefinição de senha do Hangy",
                 f"Use o código {code} para redefinir sua senha no Hangy. "
-                "Ele vale por 15 minutos. Se você não pediu a redefinição, "
-                "ignore esta mensagem.",
+                f"Ele vale por {RESET_CODE_EXPIRE_MINUTES} minutos. "
+                "Se você não pediu a redefinição, ignore esta mensagem.",
             )
         except Exception:
             # Provider exceptions can contain the request body, including the code.

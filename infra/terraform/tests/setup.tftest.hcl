@@ -69,7 +69,7 @@ run "password_reset_email" {
         Sid       = "SendPasswordResetEmails"
         Effect    = "Allow"
         Action    = ["ses:SendEmail"]
-        Resource  = aws_sesv2_email_identity.password_reset.arn
+        Resource  = [aws_sesv2_email_identity.password_reset.arn]
         Condition = { StringEquals = { "ses:FromAddress" = var.email_from } }
       }),
     ])
@@ -93,6 +93,13 @@ run "ses_sandbox_test_recipient" {
   assert {
     condition     = length(aws_sesv2_email_identity.test_recipient) == 1 && aws_sesv2_email_identity.test_recipient[0].email_identity == var.ses_test_recipient
     error_message = "The optional sandbox test recipient must be managed in SES."
+  }
+  assert {
+    condition = one([for statement in jsondecode(aws_iam_role_policy.ec2.policy).Statement : statement.Resource if try(statement.Sid, "") == "SendPasswordResetEmails"]) == [
+      aws_sesv2_email_identity.password_reset.arn,
+      aws_sesv2_email_identity.test_recipient[0].arn,
+    ]
+    error_message = "Sandbox sends must also be authorized on the verified test recipient identity."
   }
 }
 

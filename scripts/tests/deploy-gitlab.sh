@@ -119,7 +119,7 @@ case "$1 $2" in
     ;;
   'sesv2 get-account')
     [[ "$AWS_ACCESS_KEY_ID" == provisioning-key && "$3 $4" == '--region us-east-2' ]]
-    if [[ "$MOCK_CASE" == ses_request_pending || "$MOCK_CASE" == ses_sandbox ]]; then
+    if [[ "$MOCK_CASE" == ses_request_pending || "$MOCK_CASE" == ses_sandbox* ]]; then
       echo '{"SendingEnabled":true,"ProductionAccessEnabled":false}'
     else
       echo '{"SendingEnabled":true,"ProductionAccessEnabled":true}'
@@ -173,6 +173,7 @@ run_case() {
     if [[ "$scenario" == ses_sandbox ]]; then
       export SES_REQUIRE_PRODUCTION_ACCESS=false SES_TEST_RECIPIENT=tester@hangy.example
     fi
+    if [[ "$scenario" == ses_sandbox_default ]]; then unset SES_REQUIRE_PRODUCTION_ACCESS; fi
     if [[ "$scenario" == ses_request_pending ]]; then
       export SES_REQUEST_PRODUCTION_ACCESS=true SES_USE_CASE_DESCRIPTION='Test SES use case.'
     fi
@@ -191,6 +192,9 @@ run_case() {
     fi
     if [[ "$scenario" == managed ]]; then
       ! grep -q 'aws iam list-open-id-connect-providers' "$work_dir/operations"
+    fi
+    if [[ "$scenario" == ses_sandbox* ]]; then
+      grep -q 'WARNING: SES is still in the sandbox' "$work_dir/output"
     fi
     if [[ "$scenario" == shared ]]; then
       grep -q 'aws iam add-client-id-to-open-id-connect-provider' "$work_dir/operations"
@@ -246,5 +250,6 @@ run_case smoke_timeout failure
 run_case oidc_failure failure
 run_case ssm_failure failure
 run_case ses_sandbox success
+run_case ses_sandbox_default success
 run_case ses_unverified failure
 run_case ses_request_pending failure

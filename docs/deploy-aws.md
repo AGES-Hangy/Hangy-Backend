@@ -126,7 +126,7 @@ Variáveis opcionais, também com escopo `production`:
 | `SES_REQUEST_PRODUCTION_ACCESS` | `false`; `true` solicita acesso de produção automaticamente após o apply, se ainda não houver pedido pendente/aprovado |
 | `SES_USE_CASE_DESCRIPTION` | Obrigatório ao solicitar produção: descrição verdadeira do uso, consentimento e tratamento de bounces/reclamações (até 5000 caracteres) |
 | `SES_WEBSITE_URL` | URL pública HTTP(S) apresentada à AWS; usa `FRONTEND_BASE_URL` se omitida |
-| `SES_REQUIRE_PRODUCTION_ACCESS` | `true` no deploy; `false` permite teste controlado em sandbox com destinatário verificado |
+| `SES_REQUIRE_PRODUCTION_ACCESS` | `false`; no sandbox o deploy segue com aviso (só destinatários verificados recebem o código). `true` interrompe o deploy até a AWS liberar produção |
 
 O caminho do projeto é obtido automaticamente do GitLab. Senha do PostgreSQL,
 chave JWT, `LOCATION_OBFUSCATION_SECRET`, `PRODUCTION_ADMIN_PASSWORD` e `DATABASE_URL` são gerados pelo Terraform e guardados no Secrets
@@ -153,15 +153,19 @@ O preparo é executado automaticamente por `scripts/setup-ses.sh` depois do appl
 e antes de publicar/substituir o contêiner. O script verifica o remetente,
 `SendingEnabled` e o acesso de produção **na mesma região**. No deploy, a região
 é sempre `AWS_REGION`, alinhada ao Terraform. A leitura de status não envia
-e-mail nem solicita acesso de produção. Se o remetente não estiver verificado,
-a conta estiver impedida de enviar ou faltar acesso de produção obrigatório,
-o deploy para antes de substituir o contêiner e explica o próximo passo. O apply
-já ocorreu: os recursos e o segredo permanecem preparados para a próxima execução.
+e-mail nem solicita acesso de produção. Se o remetente não estiver verificado
+ou a conta estiver impedida de enviar, o deploy para antes de substituir o
+contêiner e explica o próximo passo. O apply já ocorreu: os recursos e o segredo
+permanecem preparados para a próxima execução. Enquanto a conta estiver no
+sandbox, o deploy continua com um aviso no log, para que a espera pela aprovação
+da AWS não bloqueie outras publicações; nesse período só destinatários
+verificados recebem o código. Use `SES_REQUIRE_PRODUCTION_ACCESS=true` para
+exigir produção e interromper o deploy enquanto ela não for liberada.
 
 Para um primeiro teste real sem aguardar a saída do sandbox:
 
 1. Cadastre `EMAIL_FROM` e `SES_TEST_RECIPIENT` com caixas que você controla;
-   configure `SES_REQUIRE_PRODUCTION_ACCESS=false` nas variáveis de produção.
+   mantenha `SES_REQUIRE_PRODUCTION_ACCESS` ausente ou `false`.
 2. Execute o deploy pelo fluxo normal da `main`. Terraform cria as identidades
    e a AWS envia as mensagens de verificação. Se os endereços forem iguais,
    apenas uma identidade é criada. Identidades já existentes devem ser importadas
@@ -175,12 +179,12 @@ Para um primeiro teste real sem aguardar a saída do sandbox:
 
 Para automatizar o pedido de acesso de produção, configure
 `SES_REQUEST_PRODUCTION_ACCESS=true`, `SES_USE_CASE_DESCRIPTION` com o uso real
-e `SES_WEBSITE_URL` com o site do projeto. Restaure
-`SES_REQUIRE_PRODUCTION_ACCESS=true`. O pipeline chama `sesv2 put-account-details`
+e `SES_WEBSITE_URL` com o site do projeto. O pipeline chama `sesv2 put-account-details`
 com o tipo `TRANSACTIONAL`; não reenvia pedidos `PENDING`/`GRANTED`, e pede
 acompanhamento do caso existente se houver recusa. Um pedido `FAILED` pode ser
-reenviado. O pedido não garante aprovação: enquanto a AWS não liberar, o deploy
-permanece interrompido. Após a aprovação, basta executar novamente o pipeline.
+reenviado. O pedido não garante aprovação: enquanto a AWS não liberar, o deploy segue em
+sandbox com aviso (ou para, se `SES_REQUIRE_PRODUCTION_ACCESS=true`). Após a
+aprovação, a próxima execução confirma o acesso de produção.
 
 Também é possível consultar/solicitar sem fazer deploy, com AWS CLI, `jq` e
 credenciais autorizadas no ambiente (nenhum apply é feito por esses comandos):

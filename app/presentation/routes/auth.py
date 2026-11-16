@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -101,12 +101,14 @@ def get_register_service(db: Annotated[Session, Depends(get_db)]) -> RegisterSer
 def get_password_reset_service(
     db: Annotated[Session, Depends(get_db)],
     email_sender: Annotated[EmailSender, Depends(get_email_sender)],
+    background_tasks: BackgroundTasks,
 ) -> PasswordResetService:
     return PasswordResetService(
         repository=SqlAlchemyPasswordResetTokenRepository(db),
         jwt_secret_key=settings.jwt_secret_key,
         jwt_algorithm=settings.jwt_algorithm,
         email_sender=email_sender,
+        run_in_background=background_tasks.add_task,
     )
 
 

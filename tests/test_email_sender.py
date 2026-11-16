@@ -13,6 +13,7 @@ from app.config import Settings, settings
 from app.infrastructure.email import (
     ConsoleEmailSender,
     SesEmailSender,
+    _ses_email_sender,
     get_email_sender,
 )
 
@@ -31,7 +32,9 @@ def email_settings(monkeypatch):
         "app.infrastructure.email.console_email_sender",
     ):
         monkeypatch.setattr(f"{module}.settings", configured)
-    return configured
+    _ses_email_sender.cache_clear()
+    yield configured
+    _ses_email_sender.cache_clear()
 
 
 def test_console_prints_email_to_stdout_without_logging(email_settings, capsys, caplog):
@@ -57,7 +60,9 @@ def test_factory_ses_and_construction_are_lazy(email_settings, monkeypatch):
     monkeypatch.setattr(
         "app.infrastructure.email.ses_email_sender.boto3.client", create_client
     )
-    assert isinstance(get_email_sender(), SesEmailSender)
+    sender = get_email_sender()
+    assert isinstance(sender, SesEmailSender)
+    assert get_email_sender() is sender
     create_client.assert_not_called()
 
 
