@@ -54,7 +54,9 @@ class EventModerationRepository(Protocol):
 
 
 class EventModerationReportRepository(Protocol):
-    def get_by_id(self, report_id: UUID) -> Report | None: ...
+    def get_by_id(
+        self, report_id: UUID, *, for_update: bool = False
+    ) -> Report | None: ...
 
     def resolve_open_for_event(
         self,
@@ -153,7 +155,7 @@ class AdminEventModerationService:
         )
 
     def _check_report_resolvable(self, report_id: UUID, event_id: UUID) -> None:
-        report = self.report_repository.get_by_id(report_id)
+        report = self.report_repository.get_by_id(report_id, for_update=True)
         if report is None:
             raise ReportNotFoundError
         if report.reported_event_id != event_id:

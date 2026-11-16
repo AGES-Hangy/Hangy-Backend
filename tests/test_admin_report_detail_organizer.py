@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.config import settings
 from app.domain.enums import (
+    EventModerationStatusEnum,
     EventPrivacyEnum,
     EventStatusEnum,
     ReportStatusEnum,
@@ -160,7 +161,8 @@ def test_event_report_detail_includes_the_organizer_block(
         "photo_url": PHOTO_URL,
         "moderation_status": "ACTIVE",
         "events_count": 2,
-        "reports_count": 1,
+        # The report is against the event, not the organizer's profile.
+        "reports_count": 0,
     }
 
 
@@ -176,13 +178,14 @@ def test_organizer_counts_follow_the_user_list_rules(
         other_event_id = add_event(db, organizer_id)
         add_event(db, organizer_id, deleted_at=NOW)
         report_id = add_report(db, reporter_id, reported_event_id=event_id)
-        # Another event and a profile report count; archived ones do not.
+        # Only reports against the profile count, archived ones excluded:
+        # reports against the organizer's events belong to the event file.
         add_report(db, reporter_id, reported_event_id=other_event_id)
         add_report(db, reporter_id, reported_user_id=organizer_id)
         add_report(
             db,
             add_user(db),
-            reported_event_id=event_id,
+            reported_user_id=organizer_id,
             status=ReportStatusEnum.REJECTED,
         )
         # Somebody else's report never counts.
@@ -191,7 +194,7 @@ def test_organizer_counts_follow_the_user_list_rules(
     organizer = get_detail(client, admin_id, report_id)["organizer"]
 
     assert organizer["events_count"] == 2
-    assert organizer["reports_count"] == 3
+    assert organizer["reports_count"] == 1
 
 
 def test_organizer_reports_the_moderation_status_and_missing_photo(
@@ -234,3 +237,44 @@ def test_organizer_is_present_only_for_event_targets(
         "BUSINESS" if user_type.value == "BUSINESS" else "USER"
     )
     assert "organizer" not in body
+    assert "event" not in body
+
+
+def test_event_report_detail_includes_the_reported_event(
+    detail_client: DetailClient,
+) -> None:
+    client, session_factory = detail_client
+    with session_factory() as db:
+        admin_id = add_user(db, role=UserRoleEnum.ADMIN, name="Admin")
+        organizer_id = add_user(db, name="Rafael Costa")
+        event_id = add_event(db, organizer_id)
+        report_id = add_report(db, add_user(db), reported_event_id=event_id)
+
+    body = get_detail(client, admin_id, report_id)
+
+    assert body["event"] == {
+        "id": str(event_id),
+        "title": "Evento",
+        "moderation_status": "ACTIVE",
+    }
+
+
+def test_removed_event_keeps_the_event_block_with_its_status(
+    detail_client: DetailClient,
+) -> None:
+    client, session_factory = detail_client
+    with session_factory() as db:
+        admin_id = add_user(db, role=UserRoleEnum.ADMIN, name="Admin")
+        organizer_id = add_user(db, name="Rafael Costa")
+        event_id = add_event(db, organizer_id, deleted_at=NOW)
+        event = db.get(EventModel, event_id)
+        assert event is not None
+        event.moderation_status = EventModerationStatusEnum.REMOVED
+        event.removed_at = NOW
+        db.commit()
+        report_id = add_report(db, add_user(db), reported_event_id=event_id)
+
+    event_block = get_detail(client, admin_id, report_id)["event"]
+
+    assert event_block["id"] == str(event_id)
+    assert event_block["moderation_status"] == "REMOVED"

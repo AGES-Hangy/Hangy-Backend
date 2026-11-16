@@ -25,6 +25,7 @@ from app.domain.services import (
     AccountNotModeratedError,
     AdminDashboardService,
     AdminEventModerationService,
+    AdminReportArchiveService,
     AdminReportsService,
     AdminTagNotFoundError,
     AdminTagsService,
@@ -37,6 +38,7 @@ from app.domain.services import (
     InvalidPaginationError,
     ModeratedUserNotFoundError,
     NotificationDispatcher,
+    OnlyOneTargetFilterError,
     ParentTagNotCategoryError,
     ParentTagNotFoundError,
     ReportAlreadyResolvedError,
@@ -140,6 +142,16 @@ def get_admin_user_moderation_service(
     )
 
 
+def get_admin_report_archive_service(
+    db: Annotated[Session, Depends(get_db)],
+    audit_logger: Annotated[AuditLogger, Depends(get_audit_logger)],
+) -> AdminReportArchiveService:
+    return AdminReportArchiveService(
+        report_repository=SqlAlchemyReportRepository(db),
+        audit_logger=audit_logger,
+    )
+
+
 def get_admin_event_moderation_service(
     db: Annotated[Session, Depends(get_db)],
     audit_logger: Annotated[AuditLogger, Depends(get_audit_logger)],
@@ -200,18 +212,32 @@ def read_admin_dashboard(
     description=(
         "Lista a fila administrativa agrupada por alvo: várias denúncias contra "
         "o mesmo usuário, estabelecimento ou evento viram uma linha, com o "
-        "total em `report_count`. A linha mostra a denúncia aberta mais "
+        "total em `report_count`; numa linha de evento, `organizer_name` traz "
+        "o nome de quem o organiza. A linha mostra a denúncia aberta mais "
         "recentemente para o alvo, da mais nova para a mais antiga. Sem "
         "`status`, devolve tudo menos `REJECTED`. `search` busca pelo nome do "
-        "usuário, título do evento ou número da denúncia. Exige Bearer token "
-        "de um usuário com `role = ADMIN`."
+        "usuário, título do evento ou número da denúncia. `target_user_id` e "
+        "`target_event_id` restringem a fila às denúncias contra aquela conta "
+        "ou aquele evento e não podem ser usados juntos; um alvo sem denúncias "
+        "devolve a lista vazia. Exige Bearer token de um usuário com "
+        "`role = ADMIN`."
     ),
     responses={
         status.HTTP_400_BAD_REQUEST: {
-            "description": "`cursor` malformado.",
+            "description": (
+                "`cursor` malformado, ou `target_user_id` e `target_event_id` "
+                "informados ao mesmo tempo."
+            ),
             "content": {
                 "application/json": {
-                    "example": {"detail": "Invalid pagination parameters"}
+                    "examples": {
+                        "pagination": {
+                            "value": {"detail": "Invalid pagination parameters"}
+                        },
+                        "target_filters": {
+                            "value": {"detail": "Only one target filter is allowed"}
+                        },
+                    }
                 }
             },
         },
@@ -247,6 +273,19 @@ def list_admin_reports(
             description="Nome do alvo, título do evento ou número da denúncia.",
         ),
     ] = None,
+    target_user_id: Annotated[
+        UUID | None,
+        Query(
+            description=(
+                "Só denúncias contra este usuário ou estabelecimento. Denúncias "
+                "contra eventos organizados por essa conta ficam de fora."
+            )
+        ),
+    ] = None,
+    target_event_id: Annotated[
+        UUID | None,
+        Query(description="Só denúncias contra este evento."),
+    ] = None,
     limit: Annotated[
         int,
         Query(
@@ -261,8 +300,18 @@ def list_admin_reports(
 ) -> AdminReportsOutput:
     try:
         page = reports_service.list_reports(
-            status=report_status, search=search, limit=limit, cursor=cursor
+            status=report_status,
+            search=search,
+            limit=limit,
+            cursor=cursor,
+            target_user_id=target_user_id,
+            target_event_id=target_event_id,
         )
+    except OnlyOneTargetFilterError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only one target filter is allowed",
+        ) from error
     except InvalidPaginationError as error:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -274,7 +323,7 @@ def list_admin_reports(
 @router.get(
     "/admin/reports/{report_id}",
     response_model=AdminReportDetailOutput,
-    # Keeps `organizer` out of the body unless the assembler set it.
+    # Keeps `organizer` and `event` out of the body unless the assembler set them.
     response_model_exclude_unset=True,
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(require_admin)],
@@ -283,10 +332,16 @@ def list_admin_reports(
         "Retorna o detalhe completo de uma denúncia: conta responsável pelo alvo "
         "(usuário, estabelecimento ou organizador do evento denunciado), motivo, "
         "relato de quem denunciou, histórico de denúncias anteriores fechadas "
-        "contra o mesmo alvo e, quando já resolvida, os dados da resolução. "
+        "contra o mesmo alvo (o perfil, ou o evento numa denúncia de evento), "
+        "`open_report_count` com as denúncias abertas (`PENDING`/`REVIEWED`) "
+        "contra esse alvo, esta incluída, e, quando já resolvida, os dados da "
+        "resolução. "
         "Quando `target.type` é `EVENT`, traz também o bloco `organizer` "
         "(`user_id`, `name`, `photo_url`, `moderation_status`, `events_count`, "
-        "`reports_count`); nos demais alvos o campo não vem na resposta. "
+        "`reports_count`, só as não arquivadas contra o perfil dele) e o bloco "
+        "`event` (`id`, `title`, `moderation_status`), "
+        "com o `event_id` para `PATCH /admin/events/{event_id}/moderation`; nos "
+        "demais alvos esses campos não vêm na resposta. "
         "Exige Bearer token de um usuário com `role = ADMIN`."
     ),
     responses={
@@ -323,6 +378,76 @@ def read_admin_report_detail(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Report not found",
         ) from error
+    return AdminReportAssembler.to_detail_dto(detail)
+
+
+@router.patch(
+    "/admin/reports/{report_id}/archive",
+    response_model=AdminReportDetailOutput,
+    # Keeps `organizer` and `event` out of the body unless the assembler set them.
+    response_model_exclude_unset=True,
+    status_code=status.HTTP_200_OK,
+    summary="Arquivar uma denúncia sem agir sobre a conta",
+    description=(
+        "Arquiva uma denúncia avaliada como improcedente: marca `status` como "
+        "`REJECTED`, com `resolution.action = ARCHIVED`, sem aplicar nenhuma "
+        "ação sobre a conta ou o evento denunciado. Só é permitido para "
+        "denúncias `PENDING` ou `REVIEWED`; arquivar uma denúncia já "
+        "`RESOLVED`/`REJECTED` devolve 409. Registra `REPORT_ARCHIVED` no log "
+        "de auditoria. Devolve o mesmo formato de `GET /admin/reports/"
+        "{report_id}`. Exige Bearer token de um usuário com `role = ADMIN`."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Usuário autenticado, mas `role != ADMIN`.",
+            "content": {
+                "application/json": {"example": {"detail": "Admin access required"}}
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Denúncia não encontrada.",
+            "content": {
+                "application/json": {"example": {"detail": "Report not found"}}
+            },
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "A denúncia já está `RESOLVED` ou `REJECTED`.",
+            "content": {
+                "application/json": {"example": {"detail": "Report already resolved"}}
+            },
+        },
+    },
+)
+def archive_admin_report(
+    report_id: UUID,
+    current_admin: Annotated[User, Depends(require_admin)],
+    archive_service: Annotated[
+        AdminReportArchiveService, Depends(get_admin_report_archive_service)
+    ],
+    reports_service: Annotated[AdminReportsService, Depends(get_admin_reports_service)],
+) -> AdminReportDetailOutput:
+    assert current_admin.user_id is not None
+    try:
+        archive_service.archive_report(report_id, actor_id=current_admin.user_id)
+    except ReportNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Report not found",
+        ) from error
+    except ReportAlreadyResolvedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Report already resolved",
+        ) from error
+    detail = reports_service.get_report_detail(report_id)
     return AdminReportAssembler.to_detail_dto(detail)
 
 
@@ -615,8 +740,9 @@ def get_audit_log(
         "Ponto único de escrita para toda ação de moderação sobre uma conta: "
         "`BAN` (definitivo), `SUSPEND` (até `duration_days` dias) ou `REVERT` "
         "(remove o banimento/suspensão e devolve o acesso imediatamente). "
-        "`report_id` é opcional em `BAN`/`SUSPEND` e, quando informado, marca "
-        "aquela denúncia como `RESOLVED` na mesma transação. Gera sempre uma "
+        "`report_id` é opcional em `BAN`/`SUSPEND`. A denúncia pode ser da "
+        "própria conta ou de um evento organizado por ela. A ação resolve a "
+        "denúncia informada na mesma transação e gera uma "
         "linha de auditoria. Exige Bearer token de um usuário com "
         "`role = ADMIN`."
     ),

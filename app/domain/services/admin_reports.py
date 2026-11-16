@@ -5,6 +5,7 @@ from uuid import UUID
 from app.domain.entities import (
     AdminReportDetail,
     AdminReportDetailRecord,
+    AdminReportEvent,
     AdminReportOrganizer,
     AdminReportPreviousCounts,
     AdminReportQueueItem,
@@ -29,6 +30,7 @@ __all__ = [
     "MIN_ADMIN_REPORTS_LIMIT",
     "AdminReportsRepository",
     "AdminReportsService",
+    "OnlyOneTargetFilterError",
     "ReportNotFoundError",
 ]
 
@@ -50,6 +52,10 @@ class ReportNotFoundError(Exception):
     pass
 
 
+class OnlyOneTargetFilterError(Exception):
+    """Raised when target_user_id and target_event_id are both informed."""
+
+
 class AdminReportsRepository(Protocol):
     def get_report_detail(self, report_id: UUID) -> AdminReportDetailRecord | None: ...
 
@@ -58,6 +64,8 @@ class AdminReportsRepository(Protocol):
         statuses: tuple[ReportStatusEnum, ...],
         search: str | None,
         report_number: int | None,
+        target_user_id: UUID | None,
+        target_event_id: UUID | None,
         limit: int,
         after: tuple[datetime, UUID] | None,
     ) -> list[AdminReportQueueItem]: ...
@@ -78,7 +86,11 @@ class AdminReportsService:
         search: str | None = None,
         limit: int = DEFAULT_ADMIN_REPORTS_LIMIT,
         cursor: str | None = None,
+        target_user_id: UUID | None = None,
+        target_event_id: UUID | None = None,
     ) -> AdminReportsPage:
+        if target_user_id is not None and target_event_id is not None:
+            raise OnlyOneTargetFilterError
         if not MIN_ADMIN_REPORTS_LIMIT <= limit <= MAX_ADMIN_REPORTS_LIMIT:
             raise InvalidPaginationError("Limit out of bounds")
         after = decode_cursor(cursor) if cursor else None
@@ -89,6 +101,8 @@ class AdminReportsService:
             statuses=statuses,
             search=term,
             report_number=report_number,
+            target_user_id=target_user_id,
+            target_event_id=target_event_id,
             limit=limit + 1,
             after=after,
         )
@@ -170,6 +184,22 @@ class AdminReportsService:
                 if target_type == "EVENT"
                 else None
             ),
+            event=cls._resolve_event(record),
+            open_report_count=record.open_report_count,
+        )
+
+    @staticmethod
+    def _resolve_event(record: AdminReportDetailRecord) -> AdminReportEvent | None:
+        if (
+            record.reported_event_id is None
+            or record.reported_event_title is None
+            or record.reported_event_moderation_status is None
+        ):
+            return None
+        return AdminReportEvent(
+            id=record.reported_event_id,
+            title=record.reported_event_title,
+            moderation_status=record.reported_event_moderation_status,
         )
 
     @staticmethod

@@ -29,6 +29,14 @@ class Settings:
     )
     invite_link_base_url: str = os.getenv("INVITE_LINK_BASE_URL", "hangy://invite/")
     frontend_base_url: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:8081")
+    apple_team_id: str = os.getenv("APPLE_TEAM_ID", "").strip()
+    android_sha256_fingerprints: tuple[str, ...] = tuple(
+        fingerprint.strip()
+        for fingerprint in os.getenv("ANDROID_SHA256_FINGERPRINTS", "").split(",")
+        if fingerprint.strip()
+    )
+    app_store_url: str = os.getenv("APP_STORE_URL", "").strip()
+    google_play_url: str = os.getenv("GOOGLE_PLAY_URL", "").strip()
     # Keys the HMAC that offsets each event's approximate point; rotating it
     # only affects points computed afterwards.
     location_obfuscation_secret: str = required_environment_variable(

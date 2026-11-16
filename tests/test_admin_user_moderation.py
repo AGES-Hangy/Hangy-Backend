@@ -156,6 +156,9 @@ def test_ban_sets_banned_at_revokes_access_and_resolves_the_report(
     assert report.resolution_action == "BANNED"
     assert report.resolved_at is not None
 
+    [audit] = audit_rows(session_factory)
+    assert audit.extra_metadata == {"report_id": str(report_id)}
+
 
 def test_ban_without_report_id_touches_no_report(
     moderation_client: ModerationClient,
@@ -314,6 +317,7 @@ def test_every_action_records_an_audit_row(
     [row] = audit_rows(session_factory)
     assert row.action == AuditActionEnum.USER_BANNED
     assert row.target_id == target_id
+    assert row.extra_metadata is None
 
     client.patch(
         f"/admin/users/{target_id}/moderation",

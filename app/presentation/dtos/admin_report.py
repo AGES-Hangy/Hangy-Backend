@@ -4,10 +4,16 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from app.domain.enums import ModerationStatusEnum, ReportStatusEnum, ReportTypeEnum
+from app.domain.enums import (
+    EventModerationStatusEnum,
+    ModerationStatusEnum,
+    ReportStatusEnum,
+    ReportTypeEnum,
+)
 
 __all__ = [
     "AdminReportDetailOutput",
+    "AdminReportEventOutput",
     "AdminReportItemOutput",
     "AdminReportOrganizerOutput",
     "AdminReportPreviousReportsOutput",
@@ -30,6 +36,12 @@ class AdminReportTargetOutput(BaseModel):
     member_since: date
     event_count: int
     moderation_status: ModerationStatusEnum
+
+
+class AdminReportEventOutput(BaseModel):
+    id: UUID
+    title: str
+    moderation_status: EventModerationStatusEnum
 
 
 class AdminReportOrganizerOutput(BaseModel):
@@ -64,9 +76,14 @@ class AdminReportDetailOutput(BaseModel):
     reported_by: AdminReportUserOutput
     reported_at: datetime
     previous_reports: AdminReportPreviousReportsOutput
+    # Open reports (PENDING/REVIEWED) against the same target, this one included.
+    open_report_count: int
     resolution: AdminReportResolutionOutput | None
     # Only present when target.type is EVENT; omitted for user and business.
     organizer: AdminReportOrganizerOutput | None = None
+    # The reported event (`id` for `PATCH /admin/events/{event_id}/moderation`).
+    # Same rule as `organizer`: only for EVENT targets.
+    event: AdminReportEventOutput | None = None
 
 
 class AdminReportItemOutput(BaseModel):
@@ -74,6 +91,8 @@ class AdminReportItemOutput(BaseModel):
     report_number: int
     target_type: Literal["USER", "BUSINESS", "EVENT"] | None
     target_name: str | None
+    # Only for EVENT targets: the organizer's name; `null` otherwise.
+    organizer_name: str | None
     report_count: int
     status: ReportStatusEnum
     reason: ReportTypeEnum

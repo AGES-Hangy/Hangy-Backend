@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.presentation.routes import (
+    admin_events_router,
     admin_router,
     admin_users_router,
     auth_router,
@@ -24,6 +25,7 @@ from app.presentation.routes import (
     search_router,
     tags_router,
     terms_router,
+    universal_links_router,
     uploads_router,
     users_router,
 )
@@ -76,4 +78,6 @@ app.include_router(profile_photo_router)
 app.include_router(search_router)
 app.include_router(users_router)
 app.include_router(admin_router)
+app.include_router(admin_events_router)
 app.include_router(admin_users_router)
+app.include_router(universal_links_router)

@@ -5,6 +5,7 @@ from app.domain.entities import (
     SearchEventsPage,
     SearchResult,
     SearchUserItem,
+    SearchUsersPage,
 )
 from app.presentation.dtos import (
     SearchAppliedFiltersOutput,
@@ -18,6 +19,7 @@ from app.presentation.dtos import (
     SearchOutput,
     SearchUserItemOutput,
     SearchUsersBlockOutput,
+    SearchUsersPageOutput,
 )
 
 
@@ -45,6 +47,14 @@ class SearchAssembler:
                 )
                 for item in page.items
             ],
+            next_cursor=page.next_cursor,
+            total=page.total,
+        )
+
+    @staticmethod
+    def to_users_page_dto(page: SearchUsersPage) -> SearchUsersPageOutput:
+        return SearchUsersPageOutput(
+            items=[SearchAssembler._to_user_dto(item) for item in page.items],
             next_cursor=page.next_cursor,
             total=page.total,
         )
@@ -117,6 +127,7 @@ class SearchAssembler:
             city=item.city,
             state=item.state,
             photo_url=item.photo_url,
+            connection_status=item.connection_status,
         )
 
 

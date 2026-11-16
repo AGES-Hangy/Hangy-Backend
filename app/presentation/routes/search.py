@@ -24,6 +24,7 @@ from app.presentation.dtos import (
     SearchBusinessesPageOutput,
     SearchEventsPageOutput,
     SearchOutput,
+    SearchUsersPageOutput,
 )
 from app.presentation.mappers import SearchMapper
 
@@ -301,10 +302,87 @@ def search_businesses(
     return SearchAssembler.to_businesses_page_dto(page)
 
 
+@router.get(
+    "/search/users",
+    response_model=SearchUsersPageOutput,
+    status_code=status.HTTP_200_OK,
+    summary="Listar todas as pessoas da busca",
+    description=(
+        "Mantém o termo do bloco de pessoas da busca. "
+        "Ordena por nome crescente e ID, com paginação por cursor (padrão 20, "
+        "máximo 50). Nunca devolve perfis em que haja bloqueio bilateral com o "
+        "solicitante."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "Paginação ou termo inválidos.",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "query_too_short": BAD_REQUEST_EXAMPLES["query_too_short"],
+                        "invalid_pagination": {
+                            "summary": "Limite fora do intervalo ou cursor malformado",
+                            "value": {"detail": "Invalid pagination parameters"},
+                        },
+                    }
+                }
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, expirado ou inválido.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+    },
+)
+def search_users(
+    current_user: Annotated[User, Depends(get_current_user)],
+    search_service: Annotated[SearchService, Depends(get_search_service)],
+    q: Annotated[
+        str | None,
+        Query(
+            max_length=MAX_SEARCH_QUERY_LENGTH,
+            description="Termo de busca, mínimo de 2 caracteres.",
+        ),
+    ] = None,
+    limit: Annotated[str, Query(description="Tamanho da página: 1 a 50.")] = str(
+        DEFAULT_SEARCH_LIMIT
+    ),
+    cursor: Annotated[
+        str | None,
+        Query(description="Cursor opaco de paginação retornado na página anterior."),
+    ] = None,
+) -> SearchUsersPageOutput:
+    if current_user.user_id is None:
+        raise credentials_exception
+    try:
+        criteria = SearchMapper.to_users_query(
+            current_user.user_id,
+            q=q,
+            limit=limit,
+            cursor=cursor,
+        )
+        page = search_service.search_users(criteria)
+    except InvalidPaginationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters",
+        ) from error
+    except SearchQueryTooShortError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Query is too short"
+        ) from error
+    return SearchAssembler.to_users_page_dto(page)
+
+
 __all__ = [
     "get_search_service",
     "router",
     "search",
     "search_businesses",
     "search_events",
+    "search_users",
 ]
