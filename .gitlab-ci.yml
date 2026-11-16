@@ -58,6 +58,7 @@ validate-infra:
     - bash scripts/tests/bootstrap-terraform-state.sh
     - bash scripts/tests/deploy-gitlab.sh
     - bash scripts/tests/deploy-ec2.sh
+    - bash scripts/tests/setup-ses.sh
 
 deploy:
   stage: deploy

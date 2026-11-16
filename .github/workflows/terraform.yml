@@ -42,3 +42,4 @@ jobs:
       - run: bash ../../scripts/tests/bootstrap-terraform-state.sh
       - run: bash ../../scripts/tests/deploy-gitlab.sh
       - run: bash ../../scripts/tests/deploy-ec2.sh
+      - run: bash ../../scripts/tests/setup-ses.sh
