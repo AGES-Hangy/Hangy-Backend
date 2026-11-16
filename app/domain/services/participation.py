@@ -7,6 +7,7 @@ from app.domain.enums import (
     EventPrivacyEnum,
     EventStatusEnum,
 )
+from app.domain.services.event_timing import has_event_ended
 
 
 class ParticipationRepository(Protocol):
@@ -83,7 +84,9 @@ class ParticipationService:
         if event.event_privacy is EventPrivacyEnum.INVITE_ONLY:
             raise InviteOnlyEventError
 
-        if event.event_status is not EventStatusEnum.PUBLISHED:
+        if event.event_status is not EventStatusEnum.PUBLISHED or has_event_ended(
+            event
+        ):
             raise EventAlreadyFinishedError
 
         if event.event_creator_id == user_id:

@@ -20,6 +20,7 @@ from app.domain.services import (
     NotConnectionReceiverError,
     NotificationDispatcher,
     ReceiverNotFoundError,
+    RequesterNotPersonalError,
 )
 from app.domain.services.connection import DEFAULT_CONNECTIONS_LIMIT
 from app.infrastructure.repository import get_db
@@ -114,6 +115,11 @@ def send_connection_request(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
+        ) from error
+    except RequesterNotPersonalError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only personal accounts can send connection requests",
         ) from error
     except ConnectionAlreadyExistsError as error:
         raise HTTPException(

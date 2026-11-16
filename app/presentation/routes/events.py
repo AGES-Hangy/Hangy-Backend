@@ -16,7 +16,7 @@ from app.domain.assemblers import (
 from app.domain.entities import User
 from app.domain.services import (
     DEFAULT_NEARBY_LIMIT,
-    AuthService,
+    EventAlreadyCancelledError,
     EventAlreadyFinishedError,
     EventCancelledError,
     EventDetailsNotFoundError,
@@ -33,7 +33,6 @@ from app.domain.services import (
     EventTagNotFoundError,
     FavoriteEventNotFoundError,
     ImageUploadService,
-    InvalidAccessTokenError,
     InvalidCoverPhotoUrlError,
     InvalidEventCoordinatesError,
     InvalidNearbyCoordinatesError,
@@ -89,6 +88,7 @@ from app.domain.services.participation import (
 from app.domain.services.participation import (
     EventNotFoundError as ParticipationEventNotFoundError,
 )
+from app.infrastructure.push.after_commit import AfterCommitPushSender
 from app.infrastructure.push.expo_push_sender import expo_push_sender
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.device import SqlAlchemyUserDeviceRepository
@@ -109,9 +109,6 @@ from app.infrastructure.repository.participation import (
     SqlAlchemyParticipationRepository,
 )
 from app.presentation.dependencies.auth import (
-    credentials_exception,
-    get_access_token,
-    get_auth_service,
     get_current_user,
 )
 from app.presentation.dtos import (
@@ -170,7 +167,7 @@ def get_notification_dispatcher(
     return NotificationDispatcher(
         repository=SqlAlchemyNotificationRepository(db),
         device_repository=SqlAlchemyUserDeviceRepository(db),
-        push_sender=expo_push_sender,
+        push_sender=AfterCommitPushSender(db, expo_push_sender),
     )
 
 
@@ -257,14 +254,9 @@ def get_nearby_service(
 )
 def create_event(
     payload: CreateEventInput,
-    token: Annotated[str, Depends(get_access_token)],
-    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    organizer: Annotated[User, Depends(get_current_user)],
     events_service: Annotated[EventsService, Depends(get_events_service)],
 ) -> CreateEventOutput:
-    try:
-        organizer = auth_service.get_user_from_token(token)
-    except InvalidAccessTokenError as error:
-        raise credentials_exception from error
 
     try:
         event = events_service.create(
@@ -364,16 +356,9 @@ def get_nearby_events(
         Query(description="Tags macro ou micro; basta o evento ter uma delas."),
     ] = None,
     *,
-    token: Annotated[str, Depends(get_access_token)],
-    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    viewer: Annotated[User, Depends(get_current_user)],
     nearby_service: Annotated[NearbyService, Depends(get_nearby_service)],
 ) -> NearbyEventsOutput:
-    try:
-        viewer = auth_service.get_user_from_token(token)
-    except InvalidAccessTokenError as error:
-        raise credentials_exception from error
-    if viewer.user_id is None:
-        raise credentials_exception
 
     try:
         events = nearby_service.get_nearby(
@@ -446,16 +431,9 @@ def get_nearby_events(
 )
 def get_event_details(
     event_id: UUID,
-    token: Annotated[str, Depends(get_access_token)],
-    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    viewer: Annotated[User, Depends(get_current_user)],
     details_service: Annotated[EventDetailsService, Depends(get_event_details_service)],
 ) -> EventDetailsOutput:
-    try:
-        viewer = auth_service.get_user_from_token(token)
-    except InvalidAccessTokenError as error:
-        raise credentials_exception from error
-    if viewer.user_id is None:
-        raise credentials_exception
 
     try:
         details = details_service.get_details(event_id, viewer.user_id)
@@ -491,14 +469,9 @@ def get_event_details(
 )
 def get_event_share(
     event_id: UUID,
-    token: Annotated[str, Depends(get_access_token)],
-    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    _current_user: Annotated[User, Depends(get_current_user)],
     share_service: Annotated[EventShareService, Depends(get_event_share_service)],
 ) -> EventShareOutput:
-    try:
-        auth_service.get_user_from_token(token)
-    except InvalidAccessTokenError as error:
-        raise credentials_exception from error
 
     try:
         share = share_service.get_share(event_id)
@@ -542,18 +515,11 @@ def get_event_share(
 )
 def create_invite_link(
     event_id: UUID,
-    token: Annotated[str, Depends(get_access_token)],
-    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    organizer: Annotated[User, Depends(get_current_user)],
     event_privacy_service: Annotated[
         EventPrivacyService, Depends(get_event_privacy_service)
     ],
 ) -> CreateInviteLinkOutput:
-    try:
-        organizer = auth_service.get_user_from_token(token)
-    except InvalidAccessTokenError as error:
-        raise credentials_exception from error
-    if organizer.user_id is None:
-        raise credentials_exception
 
     try:
         invite_link = event_privacy_service.create_invite_link(
@@ -655,18 +621,11 @@ def create_invite_link(
 )
 def create_event_participation(
     event_id: UUID,
-    token: Annotated[str, Depends(get_access_token)],
-    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    user: Annotated[User, Depends(get_current_user)],
     participation_service: Annotated[
         ParticipationService, Depends(get_participation_service)
     ],
 ) -> EventParticipationOutput:
-    try:
-        user = auth_service.get_user_from_token(token)
-    except InvalidAccessTokenError as error:
-        raise credentials_exception from error
-    if user.user_id is None:
-        raise credentials_exception
 
     try:
         participant = participation_service.request_or_join(event_id, user.user_id)
@@ -759,8 +718,7 @@ def create_event_participation(
 )
 def get_event_participants(
     event_id: UUID,
-    token: Annotated[str, Depends(get_access_token)],
-    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    viewer: Annotated[User, Depends(get_current_user)],
     participants_service: Annotated[
         EventParticipantsService, Depends(get_event_participants_service)
     ],
@@ -774,12 +732,6 @@ def get_event_participants(
     limit: Annotated[int, Query(ge=1, le=100)] = DEFAULT_PARTICIPANTS_LIMIT,
     cursor: Annotated[str | None, Query()] = None,
 ) -> EventParticipantsOutput:
-    try:
-        viewer = auth_service.get_user_from_token(token)
-    except InvalidAccessTokenError as error:
-        raise credentials_exception from error
-    if viewer.user_id is None:
-        raise credentials_exception
 
     try:
         page = participants_service.list_participants(
@@ -850,7 +802,10 @@ def get_event_participants(
             },
         },
         status.HTTP_409_CONFLICT: {
-            "description": "O evento atingiu o limite máximo de participantes.",
+            "description": (
+                "O evento atingiu o limite de participantes, foi cancelado "
+                "ou ja terminou."
+            ),
             "content": {"application/json": {"example": {"detail": "Event is full"}}},
         },
     },
@@ -859,14 +814,9 @@ def update_event_participant(
     event_id: UUID,
     participant_id: UUID,
     payload: UpdateEventParticipantInput,
-    token: Annotated[str, Depends(get_access_token)],
-    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    user: Annotated[User, Depends(get_current_user)],
     events_service: Annotated[EventsService, Depends(get_events_service)],
 ) -> UpdateEventParticipantOutput:
-    try:
-        user = auth_service.get_user_from_token(token)
-    except InvalidAccessTokenError as error:
-        raise credentials_exception from error
 
     try:
         participant = events_service.update_participant_status(
@@ -900,6 +850,16 @@ def update_event_participant(
             status_code=status.HTTP_409_CONFLICT,
             detail="Event is full",
         ) from error
+    except EventAlreadyCancelledError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Event is cancelled",
+        ) from error
+    except EventAlreadyFinishedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Event already finished",
+        ) from error
 
     return EventAssembler.to_participant_updated_dto(participant)
 
@@ -921,23 +881,19 @@ def update_event_participant(
             "description": "O evento nao existe ou nao esta visivel.",
         },
         status.HTTP_409_CONFLICT: {
-            "description": "Eventos encerrados nao podem ser editados.",
+            "description": (
+                "Eventos encerrados (status FINISHED ou `end_date` ja passou) "
+                "ou cancelados nao podem ser editados."
+            ),
         },
     },
 )
 def update_event(
     event_id: UUID,
     payload: UpdateEventInput,
-    token: Annotated[str, Depends(get_access_token)],
-    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    organizer: Annotated[User, Depends(get_current_user)],
     events_service: Annotated[EventsService, Depends(get_events_service)],
 ) -> UpdateEventOutput:
-    try:
-        organizer = auth_service.get_user_from_token(token)
-    except InvalidAccessTokenError as error:
-        raise credentials_exception from error
-    if organizer.user_id is None:
-        raise credentials_exception
 
     try:
         event = events_service.update(
@@ -984,6 +940,11 @@ def update_event(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only the organizer can edit this event",
         ) from error
+    except EventAlreadyCancelledError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Event is cancelled",
+        ) from error
     except EventAlreadyFinishedError as error:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -992,19 +953,30 @@ def update_event(
     return EventAssembler.to_updated_dto(event)
 
 
-@router.patch("/{event_id}/cancel", response_model=CancelEventOutput)
+@router.patch(
+    "/{event_id}/cancel",
+    response_model=CancelEventOutput,
+    description=(
+        "Cancela o evento e avisa os participantes. Cancelar um evento ja "
+        "cancelado devolve o mesmo resultado sem notificar de novo."
+    ),
+    responses={
+        status.HTTP_409_CONFLICT: {
+            "description": "O evento ja terminou.",
+            "content": {
+                "application/json": {"example": {"detail": "Event already finished"}}
+            },
+        },
+    },
+)
 def cancel_event(
     event_id: UUID,
     _: CancelEventInput,
-    token: Annotated[str, Depends(get_access_token)],
-    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    requester: Annotated[User, Depends(get_current_user)],
     events_service: Annotated[EventsService, Depends(get_events_service)],
 ) -> CancelEventOutput:
     try:
-        requester = auth_service.get_user_from_token(token)
         event = events_service.cancel(event_id, requester.user_id)
-    except InvalidAccessTokenError as error:
-        raise credentials_exception from error
     except EventNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Event not found"

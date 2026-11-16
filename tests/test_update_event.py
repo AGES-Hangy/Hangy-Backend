@@ -14,7 +14,7 @@ from app.domain.services.image_upload import ImageStorageUnavailableError
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
 from app.infrastructure.repository.models import EventModel, UserModel
 from tests import test_create_event
-from tests.test_create_event import RUNNING_ID, auth_header, payload
+from tests.test_create_event import ORGANIZER_ID, RUNNING_ID, auth_header, payload
 
 
 @pytest.fixture
@@ -53,7 +53,7 @@ def test_organizer_can_update_event_fields_and_tags(
             "end_date": (starts_at + timedelta(hours=2)).isoformat(),
             "location": {"latitude": -30.03, "longitude": -51.22},
             "location_name": "Campo 2",
-            "cover_photo_url": "https://images.hangy.test/events/covers/new-cover.png",
+            "cover_photo_url": f"https://images.hangy.test/events/covers/{ORGANIZER_ID}/new-cover.png",
             "tag_ids": [str(RUNNING_ID)],
         },
         headers=auth_header(),
@@ -76,7 +76,7 @@ def test_organizer_can_update_event_fields_and_tags(
         assert event.location_name == "Campo 2"
         assert (
             event.cover_photo_url
-            == "https://images.hangy.test/events/covers/new-cover.png"
+            == f"https://images.hangy.test/events/covers/{ORGANIZER_ID}/new-cover.png"
         )
         assert event.event_latitude == -30.03
         assert event.event_longitude == -51.22
@@ -361,11 +361,15 @@ def test_previous_cover_is_deleted_only_after_commit(
 ) -> None:
     test_client, session_factory = event_client
     event_id = create_event(test_client)
-    old_url = image_storage.upload("events/covers/cover.png", b"old", "image/png")
+    old_url = image_storage.upload(
+        f"events/covers/{ORGANIZER_ID}/cover.png", b"old", "image/png"
+    )
     new_url = (
         None
         if remove_cover
-        else image_storage.upload("events/covers/new.png", b"new", "image/png")
+        else image_storage.upload(
+            f"events/covers/{ORGANIZER_ID}/new.png", b"new", "image/png"
+        )
     )
     operations = []
     commit = Session.commit
@@ -463,7 +467,9 @@ def test_failed_save_never_deletes_previous_cover(
 ):
     test_client, session_factory = event_client
     event_id = create_event(test_client)
-    old_url = image_storage.upload("events/covers/cover.png", b"old", "image/png")
+    old_url = image_storage.upload(
+        f"events/covers/{ORGANIZER_ID}/cover.png", b"old", "image/png"
+    )
     delete = Mock(wraps=image_storage.delete)
     monkeypatch.setattr(image_storage, "delete", delete)
     monkeypatch.setattr(

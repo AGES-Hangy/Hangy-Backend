@@ -2,7 +2,7 @@ from collections.abc import Collection
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.domain.entities import Event, EventInviteLink, EventParticipant, NewEvent
@@ -273,6 +273,13 @@ class SqlAlchemyEventRepository:
         model.starts_at = event.starts_at
         model.ends_at = event.ends_at
         model.cover_photo_url = event.cover_photo_url
+        # An invite link never outlives the event start (see
+        # EventPrivacyService), so moving the start moves every link with it.
+        self.db.execute(
+            update(EventInviteLinkModel)
+            .where(EventInviteLinkModel.event_id == event.event_id)
+            .values(expires_at=event.starts_at)
+        )
         if tag_ids is not None:
             model.tags = list(
                 self.db.scalars(
@@ -303,6 +310,19 @@ class SqlAlchemyEventRepository:
                 event_id=event_id,
             )
         self.db.commit()
+
+    def is_cover_used_by_other_event(self, url: str, event_id: UUID) -> bool:
+        return (
+            self.db.scalar(
+                select(EventModel.event_id)
+                .where(
+                    EventModel.cover_photo_url == url,
+                    EventModel.event_id != event_id,
+                )
+                .limit(1)
+            )
+            is not None
+        )
 
     @staticmethod
     def to_entity(model: EventModel) -> Event:

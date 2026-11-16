@@ -1,10 +1,10 @@
-from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
 from app.domain.entities import Event, EventParticipant
-from app.domain.enums import EventParticipantStatusEnum, EventStatusEnum
+from app.domain.enums import EventParticipantStatusEnum
 from app.domain.services.event import EventAlreadyFinishedError
+from app.domain.services.event_timing import has_event_ended
 
 __all__ = [
     "CancelParticipationRepository",
@@ -53,11 +53,6 @@ class CancelParticipationService:
             EventParticipantStatusEnum.CONFIRMED,
         ):
             raise RequestAlreadyAnsweredError
-        ends_at = event.ends_at
-        if ends_at.tzinfo is None:
-            ends_at = ends_at.replace(tzinfo=UTC)
-        if event.event_status is EventStatusEnum.FINISHED or ends_at <= datetime.now(
-            UTC
-        ):
+        if has_event_ended(event):
             raise EventAlreadyFinishedError
         self.repository.cancel(event_id, user_id)

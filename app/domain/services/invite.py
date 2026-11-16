@@ -12,6 +12,8 @@ class InviteAcceptanceOutcome(StrEnum):
     EVENT_FULL = "EVENT_FULL"
     EVENT_NOT_FOUND = "EVENT_NOT_FOUND"
     PARTICIPANT_EXISTS = "PARTICIPANT_EXISTS"
+    ORGANIZER = "ORGANIZER"
+    EVENT_FINISHED = "EVENT_FINISHED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +44,14 @@ class InviteEventFullError(Exception):
     """Raised when confirming through an invite would exceed capacity."""
 
 
+class InviteOrganizerCannotJoinError(Exception):
+    """Raised when the organizer opens the invite to their own event."""
+
+
+class InviteEventFinishedError(Exception):
+    """Raised when the invited event has already ended."""
+
+
 class InviteAlreadyAcceptedError(Exception):
     """Raised when the user already participates in the invited event."""
 
@@ -62,6 +72,10 @@ class InviteService:
             raise InviteEventNotFoundError
         if result.outcome is InviteAcceptanceOutcome.EVENT_FULL:
             raise InviteEventFullError
+        if result.outcome is InviteAcceptanceOutcome.ORGANIZER:
+            raise InviteOrganizerCannotJoinError
+        if result.outcome is InviteAcceptanceOutcome.EVENT_FINISHED:
+            raise InviteEventFinishedError
         if result.outcome is InviteAcceptanceOutcome.PARTICIPANT_EXISTS:
             raise InviteAlreadyAcceptedError
         if result.participant is None:

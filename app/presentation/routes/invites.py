@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.domain.assemblers import EventAssembler, InviteAssembler
-from app.domain.services.auth import AuthService, InvalidAccessTokenError
+from app.domain.entities import User
 from app.domain.services.event_share import (
     EventShareService,
     ShareableEventNotFoundError,
@@ -14,20 +14,18 @@ from app.domain.services.event_share import (
 )
 from app.domain.services.invite import (
     InviteAlreadyAcceptedError,
+    InviteEventFinishedError,
     InviteEventFullError,
     InviteEventNotFoundError,
     InviteLinkExpiredError,
     InviteLinkNotFoundError,
+    InviteOrganizerCannotJoinError,
     InviteService,
 )
 from app.domain.services.notification_dispatcher import NotificationDispatcher
 from app.infrastructure.repository import get_db
 from app.infrastructure.repository.invite import SqlAlchemyInviteRepository
-from app.presentation.dependencies.auth import (
-    credentials_exception,
-    get_access_token,
-    get_auth_service,
-)
+from app.presentation.dependencies.auth import get_current_user
 from app.presentation.dtos import AcceptInviteOutput, EventInvitePreviewOutput
 from app.presentation.routes.events import (
     get_event_share_service,
@@ -67,14 +65,9 @@ def get_invite_service(
 )
 def accept_invite(
     token: str,
-    access_token: Annotated[str, Depends(get_access_token)],
-    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    user: Annotated[User, Depends(get_current_user)],
     invite_service: Annotated[InviteService, Depends(get_invite_service)],
 ) -> AcceptInviteOutput:
-    try:
-        user = auth_service.get_user_from_token(access_token)
-    except InvalidAccessTokenError as error:
-        raise credentials_exception from error
 
     try:
         participant = invite_service.accept(token, user.user_id)
@@ -86,6 +79,12 @@ def accept_invite(
         raise HTTPException(status_code=410, detail="Invite link expired") from error
     except InviteEventFullError as error:
         raise HTTPException(status_code=409, detail="Event is full") from error
+    except InviteOrganizerCannotJoinError as error:
+        raise HTTPException(
+            status_code=409, detail="Event creator cannot join their own event"
+        ) from error
+    except InviteEventFinishedError as error:
+        raise HTTPException(status_code=409, detail="Event already finished") from error
     except InviteAlreadyAcceptedError as error:
         raise HTTPException(
             status_code=409, detail="Invite already accepted"
