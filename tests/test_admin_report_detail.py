@@ -272,6 +272,7 @@ def test_pending_report_detail_returns_null_resolution(
             "archived": 0,
             "resolved_with_action": 0,
         },
+        "open_report_count": 1,
         "resolution": None,
     }
 
@@ -372,7 +373,8 @@ def test_previous_reports_counts_closed_reports_excluding_current(
             status=ReportStatusEnum.RESOLVED,
             opened_at=NOW - timedelta(days=4),
         )
-        # 1 resolved (RESOLVED) against an event organized by target
+        # Closed report against an event organized by target: it belongs to
+        # the event's history, not the profile's, so it is NOT counted
         add_report(
             db,
             reporter_id,
@@ -426,10 +428,13 @@ def test_previous_reports_counts_closed_reports_excluding_current(
 
     assert response.status_code == 200
     assert response.json()["previous_reports"] == {
-        "total": 3,
+        "total": 2,
         "archived": 1,
-        "resolved_with_action": 2,
+        "resolved_with_action": 1,
     }
+    # The PENDING and REVIEWED reports against the profile; the current one
+    # is RESOLVED and the event report has another target.
+    assert response.json()["open_report_count"] == 2
 
 
 def test_event_and_business_targets_resolve_to_responsible_account(
@@ -478,11 +483,14 @@ def test_event_and_business_targets_resolve_to_responsible_account(
         "event_count": 2,
         "moderation_status": "ACTIVE",
     }
+    # An event report's history is the event's: the archived report against
+    # the business profile is another target.
     assert event_resp.json()["previous_reports"] == {
-        "total": 1,
-        "archived": 1,
+        "total": 0,
+        "archived": 0,
         "resolved_with_action": 0,
     }
+    assert event_resp.json()["open_report_count"] == 1
 
     assert business_resp.status_code == 200
     assert business_resp.json()["target"] == {

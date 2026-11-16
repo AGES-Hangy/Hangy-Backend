@@ -449,3 +449,24 @@ def test_invalid_target_id_returns_422(queue_client: QueueClient) -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_event_rows_name_the_organizer(queue_client: QueueClient) -> None:
+    client, session_factory = queue_client
+    with session_factory() as db:
+        admin_id = add_user(db, "Admin", role=UserRoleEnum.ADMIN)
+        reporter_id = add_user(db, "Marina")
+        organizer_id = add_user(db, "Rafael Costa")
+        event_id = add_event(db, organizer_id, "Futebol na Orla")
+        add_report(db, reporter_id, number=1, minutes_ago=10, event_id=event_id)
+        add_report(db, reporter_id, number=2, minutes_ago=5, user_id=organizer_id)
+
+    items = {
+        item["report_number"]: item for item in get_queue(client, admin_id)["items"]
+    }
+
+    assert items[1]["target_type"] == "EVENT"
+    assert items[1]["organizer_name"] == "Rafael Costa"
+    # A profile row is its own target: no organizer.
+    assert items[2]["target_type"] == "USER"
+    assert items[2]["organizer_name"] is None

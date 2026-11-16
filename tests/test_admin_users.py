@@ -205,8 +205,8 @@ def test_admin_lists_users_with_counts_and_derived_status(
             db, name="Rep 7", created_at=NOW - timedelta(days=3), deleted_at=NOW
         )
 
-        # Against Rafael: his profile (non-archived statuses), and one of his
-        # events.
+        # Against Rafael's profile (non-archived statuses). The report against
+        # one of his events belongs to the event file and does not count.
         add_report(db, rep1, reported_user_id=rafael)
         add_report(db, rep2, reported_user_id=rafael, status=ReportStatusEnum.REVIEWED)
         add_report(db, rep3, reported_user_id=rafael, status=ReportStatusEnum.RESOLVED)
@@ -218,7 +218,7 @@ def test_admin_lists_users_with_counts_and_derived_status(
             db, rep6, reported_event_id=rafael_event, status=ReportStatusEnum.REJECTED
         )
         add_report(db, rep7, reported_user_id=rafael, deleted_at=NOW)
-        # Against the business's event, not Rafael's.
+        # Against the business's event: not the business profile either.
         add_report(db, rafael, reported_event_id=bar_event)
         # Marina's only report is archived, so her count is 0.
         add_report(
@@ -236,7 +236,7 @@ def test_admin_lists_users_with_counts_and_derived_status(
                 "moderation_status": "ACTIVE",
                 "suspended_until": None,
                 "event_count": 2,
-                "report_count": 4,
+                "report_count": 3,
             },
             {
                 "user_id": str(bar),
@@ -244,7 +244,7 @@ def test_admin_lists_users_with_counts_and_derived_status(
                 "moderation_status": "ACTIVE",
                 "suspended_until": None,
                 "event_count": 1,
-                "report_count": 1,
+                "report_count": 0,
             },
             {
                 "user_id": str(marina),

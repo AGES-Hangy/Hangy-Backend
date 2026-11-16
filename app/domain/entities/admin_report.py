@@ -109,6 +109,8 @@ class AdminReportDetailRecord:
     # Only filled for event reports, where the target is the event's organizer.
     target_photo_url: str | None = None
     target_reports_count: int = 0
+    # Open reports (PENDING/REVIEWED) against the same target, this one included.
+    open_report_count: int = 0
     reported_event_title: str | None = None
     reported_event_moderation_status: EventModerationStatusEnum | None = None
 
@@ -128,6 +130,7 @@ class AdminReportDetail:
     resolution: AdminReportResolution | None = None
     organizer: AdminReportOrganizer | None = None
     event: AdminReportEvent | None = None
+    open_report_count: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,6 +145,8 @@ class AdminReportQueueItem:
     reported_user_name: str | None
     reported_user_type: UserTypeEnum | None
     reported_event_title: str | None
+    # Only for event targets: who organizes the reported event.
+    organizer_name: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

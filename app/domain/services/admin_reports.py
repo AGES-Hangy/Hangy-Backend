@@ -185,6 +185,7 @@ class AdminReportsService:
                 else None
             ),
             event=cls._resolve_event(record),
+            open_report_count=record.open_report_count,
         )
 
     @staticmethod
