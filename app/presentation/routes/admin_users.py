@@ -49,7 +49,8 @@ def get_admin_users_service(
         "e de estabelecimento não excluídas, com o status de moderação derivado "
         "(`BANNED` se banida; `SUSPENDED` se a suspensão ainda não terminou; "
         "senão `ACTIVE`), o número de eventos criados e o de denúncias não "
-        "arquivadas contra o perfil ou contra eventos do usuário. `search` "
+        "arquivadas contra o perfil (as contra eventos dele ficam na ficha do "
+        "evento, `GET /admin/events/{event_id}`). `search` "
         "busca por trecho do nome ou do e-mail, sem diferenciar maiúsculas. "
         "Exige Bearer token de um usuário com `role = ADMIN`."
     ),
@@ -121,8 +122,9 @@ def read_admin_users(
     description=(
         "Devolve o perfil, as métricas e o histórico de moderação da conta. "
         "`moderation_status` é `BANNED` se banida, `SUSPENDED` se a suspensão "
-        "ainda não terminou, senão `ACTIVE`. `report_count` ignora denúncias "
-        "arquivadas; `report_upheld_count` conta as que resultaram em banimento "
+        "ainda não terminou, senão `ACTIVE`. `report_count` conta as denúncias "
+        "não arquivadas contra o perfil; `report_upheld_count` conta as que "
+        "resultaram em banimento "
         "ou suspensão. `moderation_history` lista, da mais recente para a mais "
         "antiga (até 50), as ações de moderação registradas na auditoria. "
         "Exige Bearer token de um usuário com `role = ADMIN`."

@@ -390,6 +390,7 @@ def test_metrics_ignore_archived_deleted_and_other_users(
             resolution_action=upheld.ARCHIVED,
         )
         add_report(db, creator_id, user_id=user_id)
+        # A report against one of the user's events belongs to the event file.
         add_report(db, creator_id, event_id=cancelled_id)
         add_report(
             db,
@@ -406,7 +407,7 @@ def test_metrics_ignore_archived_deleted_and_other_users(
     assert metrics == {
         "event_count": 3,
         "event_cancelled_count": 1,
-        "report_count": 4,
+        "report_count": 3,
         "report_upheld_count": 2,
     }
 

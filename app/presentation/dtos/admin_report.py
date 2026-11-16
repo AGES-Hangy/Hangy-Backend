@@ -76,6 +76,8 @@ class AdminReportDetailOutput(BaseModel):
     reported_by: AdminReportUserOutput
     reported_at: datetime
     previous_reports: AdminReportPreviousReportsOutput
+    # Open reports (PENDING/REVIEWED) against the same target, this one included.
+    open_report_count: int
     resolution: AdminReportResolutionOutput | None
     # Only present when target.type is EVENT; omitted for user and business.
     organizer: AdminReportOrganizerOutput | None = None
@@ -89,6 +91,8 @@ class AdminReportItemOutput(BaseModel):
     report_number: int
     target_type: Literal["USER", "BUSINESS", "EVENT"] | None
     target_name: str | None
+    # Only for EVENT targets: the organizer's name; `null` otherwise.
+    organizer_name: str | None
     report_count: int
     status: ReportStatusEnum
     reason: ReportTypeEnum

@@ -134,10 +134,10 @@ class SqlAlchemyAdminUsersRepository:
         if model is None:
             return None
         return self._to_detail_record(
-            model, self._metrics(user_id), self._history(user_id)
+            model, self.metrics_for(user_id), self._history(user_id)
         )
 
-    def _metrics(self, user_id: UUID) -> AdminUserMetrics:
+    def metrics_for(self, user_id: UUID) -> AdminUserMetrics:
         event_count, event_cancelled_count = self.db.execute(
             select(
                 func.count(),
@@ -209,20 +209,17 @@ class SqlAlchemyAdminUsersRepository:
         user_id: UUID | SQLColumnExpression[UUID],
         *columns: ColumnExpressionArgument[Any],
     ) -> Select[Any]:
-        # A report counts against the user whether it targets their profile
-        # (personal or business) or one of the events they created. Archived
-        # reports (task 246: status REJECTED) do not count.
+        # Only reports against the profile itself (personal or business) count:
+        # reports against an event the user created belong to the event file,
+        # which is also how `GET /admin/reports?target_user_id=` filters.
+        # Archived reports (task 246: status REJECTED) do not count.
         return (
             select(*columns)
             .select_from(ReportModel)
-            .outerjoin(EventModel, EventModel.event_id == ReportModel.reported_event_id)
             .where(
                 ReportModel.deleted_at.is_(None),
                 ReportModel.status != ReportStatusEnum.REJECTED,
-                or_(
-                    ReportModel.reported_user_id == user_id,
-                    EventModel.event_creator_id == user_id,
-                ),
+                ReportModel.reported_user_id == user_id,
             )
         )
 
