@@ -140,6 +140,9 @@ aws ecr get-login-password | docker login --username AWS --password-stdin "$regi
 docker buildx create --use --name hangy-builder --driver docker-container
 docker buildx build --platform linux/arm64 --load --tag "$image" .
 
+# Gate the exact ARM64 image that will be pushed: any HIGH/CRITICAL CVE stops here.
+TRIVY_REPORT="${TRIVY_REPORT:-trivy-report.json}" bash scripts/scan-image.sh "$image"
+
 # Exercise the production entrypoint before publishing the image.
 # Allow slower ARM64 emulation on local runners without changing production checks.
 docker run --platform linux/arm64 -d --name hangy-smoke \

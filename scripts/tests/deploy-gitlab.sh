@@ -34,6 +34,16 @@ case "$1 ${2:-}" in
     fi
     ;;
   'buildx build') [[ "$MOCK_CASE" != build_failure ]] ;;
+  'create aquasec/trivy:'*) echo trivy-container ;;
+  'cp trivy-container:/usr/local/bin/trivy')
+    # Stand-in scanner: records its arguments and fails the HIGH/CRITICAL gate on demand.
+    cat > "$3" <<'TRIVY'
+#!/usr/bin/env bash
+echo "trivy $*" >> "$MOCK_LOG"
+if [[ "$MOCK_CASE" == scan_failure && " $* " == *' --exit-code 1 '* ]]; then exit 1; fi
+TRIVY
+    chmod +x "$3"
+    ;;
   'login --username') cat >/dev/null ;;
 esac
 MOCK
@@ -178,6 +188,7 @@ run_case() {
       export SES_REQUEST_PRODUCTION_ACCESS=true SES_USE_CASE_DESCRIPTION='Test SES use case.'
     fi
     if [[ "$scenario" == missing_sender ]]; then unset EMAIL_FROM; fi
+    export TRIVY_REPORT="$work_dir/trivy-report.json"
     unset CORS_ORIGINS API_ALLOWED_CIDRS TF_STATE_KEY
     bash scripts/deploy-gitlab.sh
   ) > "$work_dir/output" 2>&1 || result=$?
@@ -185,6 +196,13 @@ run_case() {
     if [[ "$result" -ne 0 ]]; then cat "$work_dir/output" >&2; return 1; fi
     grep -q 'docker buildx build --platform linux/arm64 --load' "$work_dir/operations"
     grep -q 'Deployed .*@sha256:testdigest to i-test' "$work_dir/output"
+    # The pushed image is the one scanned, and unfixed HIGH/CRITICAL CVEs also block.
+    image='123456789012.dkr.ecr.us-east-2.amazonaws.com/hangy:test-commit-1-2'
+    grep -q 'docker create aquasec/trivy:0.76.1@sha256:' "$work_dir/operations"
+    grep -Fq -- "--severity HIGH,CRITICAL --exit-code 1 $image" "$work_dir/operations"
+    ! grep -q -- '--ignore-unfixed' "$work_dir/operations"
+    [[ "$(grep -n -- '--exit-code 1' "$work_dir/operations" | cut -d: -f1)" -lt \
+      "$(grep -n '^docker push' "$work_dir/operations" | cut -d: -f1)" ]]
     if [[ "$architecture" == x86_64 ]]; then
       grep -q 'docker run --privileged --rm tonistiigi/binfmt --install arm64' "$work_dir/operations"
     else
@@ -223,6 +241,11 @@ run_case() {
         fi
         ;;
       build_failure|oidc_failure) ! grep -q 'aws ssm send-command' "$work_dir/operations" ;;
+      scan_failure)
+        grep -q -- '--exit-code 1' "$work_dir/operations"
+        ! grep -q 'docker push' "$work_dir/operations"
+        ! grep -q 'aws ssm send-command' "$work_dir/operations"
+        ;;
       smoke_timeout)
         grep -q 'Smoke test did not become healthy within 300 seconds.' "$work_dir/output"
         grep -q 'docker inspect --format {{json .State.Health}} hangy-smoke' "$work_dir/operations"
@@ -245,6 +268,7 @@ run_case missing_token failure
 run_case missing_sender failure
 run_case stale failure
 run_case build_failure failure
+run_case scan_failure failure
 run_case slow_start success
 run_case smoke_timeout failure
 run_case oidc_failure failure
