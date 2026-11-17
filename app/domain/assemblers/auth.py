@@ -1,4 +1,10 @@
-from app.domain.entities import AccessToken, BusinessProfile, PersonProfile, User
+from app.domain.entities import (
+    AccessToken,
+    BusinessProfile,
+    IssuedRefreshToken,
+    PersonProfile,
+    User,
+)
 from app.domain.enums import UserTypeEnum
 from app.presentation.dtos import (
     AuthBusinessUserOutput,
@@ -45,7 +51,12 @@ class AuthAssembler:
         )
 
     @staticmethod
-    def to_auth_dto(user: User, token: AccessToken) -> AuthOutput:
+    def to_auth_dto(
+        user: User,
+        token: AccessToken,
+        refresh_token: IssuedRefreshToken,
+        expires_in: int,
+    ) -> AuthOutput:
         if user.user_id is None:
             raise ValueError("A persisted user must have an id")
 
@@ -69,5 +80,8 @@ class AuthAssembler:
         return AuthOutput(
             access_token=token.value,
             token_type=token.token_type.value,
+            expires_in=expires_in,
+            refresh_token=refresh_token.value,
+            refresh_expires_in=refresh_token.expires_in,
             user=user_dto,
         )

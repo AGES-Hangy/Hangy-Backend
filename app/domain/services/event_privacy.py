@@ -33,7 +33,12 @@ class EventPrivacyService:
         self.repository = repository
 
     def create_invite_link(self, event_id: UUID, requester_id: UUID) -> EventInviteLink:
-        """Generate an opaque, single-use invite link for an INVITE_ONLY event."""
+        """Generate an opaque invite link for an INVITE_ONLY event.
+
+        The link is reusable on purpose (it is shared with a group): anyone
+        holding it can join until it expires at the event start, except the
+        organizer and users already in the event.
+        """
         event = self.repository.get_by_id(event_id)
         if event is None:
             raise EventNotFoundError

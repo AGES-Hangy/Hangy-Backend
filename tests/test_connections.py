@@ -125,7 +125,7 @@ def test_send_connection_request_to_self_returns_400(client: TestClient) -> None
     assert response.json() == {"detail": "Cannot send a connection request to yourself"}
 
 
-def test_second_connection_request_in_either_direction_returns_409(
+def test_repeated_request_returns_409_and_crossed_request_accepts(
     client: TestClient,
 ) -> None:
     user_a_id, token_a = register_and_authenticate(client, USER_A)
@@ -143,16 +143,84 @@ def test_second_connection_request_in_either_direction_returns_409(
         json={"receiver_id": user_b_id},
         headers=auth_headers(token_a),
     )
+    assert same_direction.status_code == 409
+    assert same_direction.json() == {"detail": "Connection already exists"}
+
+    # B asking A back answers A's pending request instead of conflicting.
     opposite_direction = client.post(
         "/connections",
         json={"receiver_id": user_a_id},
         headers=auth_headers(token_b),
     )
+    assert opposite_direction.status_code == 201
+    assert opposite_direction.json()["connection_id"] == first.json()["connection_id"]
+    assert opposite_direction.json()["status"] == "CONFIRMED"
 
-    assert same_direction.status_code == 409
-    assert opposite_direction.status_code == 409
-    assert same_direction.json() == {"detail": "Connection already exists"}
-    assert opposite_direction.json() == {"detail": "Connection already exists"}
+    again = client.post(
+        "/connections",
+        json={"receiver_id": user_a_id},
+        headers=auth_headers(token_b),
+    )
+    assert again.status_code == 409
+
+
+def test_business_account_cannot_send_connection_request(
+    client: TestClient,
+) -> None:
+    user_a_id, _ = register_and_authenticate(client, USER_A)
+    business = client.post(
+        "/auth/register",
+        json={
+            "user_type": "BUSINESS",
+            "email": "bar@exemplo.com",
+            "password": "senha-forte-123",
+            "business_name": "Bar",
+            "cnpj": "11222333000181",
+            "location": {"latitude": -30.0, "longitude": -51.2},
+            "address": "Rua A, 1",
+            "accepted_terms_version": TERMS_VERSION,
+        },
+    )
+    assert business.status_code == 201
+
+    response = client.post(
+        "/connections",
+        json={"receiver_id": user_a_id},
+        headers=auth_headers(business.json()["access_token"]),
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "detail": "Only personal accounts can send connection requests"
+    }
+
+
+def test_rejected_request_frees_the_pair_for_a_new_request(
+    client: TestClient,
+) -> None:
+    user_a_id, token_a = register_and_authenticate(client, USER_A)
+    user_b_id, token_b = register_and_authenticate(client, USER_B)
+    first = client.post(
+        "/connections",
+        json={"receiver_id": user_b_id},
+        headers=auth_headers(token_a),
+    )
+    rejected = client.patch(
+        f"/connections/{first.json()['connection_id']}",
+        json={"status": "REJECTED"},
+        headers=auth_headers(token_b),
+    )
+    assert rejected.status_code == 200
+
+    by_receiver = client.post(
+        "/connections",
+        json={"receiver_id": user_a_id},
+        headers=auth_headers(token_b),
+    )
+
+    assert by_receiver.status_code == 201
+    assert by_receiver.json()["status"] == "PENDING"
+    assert by_receiver.json()["connection_id"] != first.json()["connection_id"]
 
 
 def test_send_connection_request_to_nonexistent_user_returns_404(

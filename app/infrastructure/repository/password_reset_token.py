@@ -1,11 +1,12 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.domain.entities import PasswordResetToken
 from app.infrastructure.repository.models import PasswordResetTokenModel, UserModel
+from app.infrastructure.repository.refresh_token import revoke_user_refresh_tokens
 
 __all__ = ["SqlAlchemyPasswordResetTokenRepository"]
 
@@ -17,7 +18,7 @@ class SqlAlchemyPasswordResetTokenRepository:
     def get_active_user_id_by_email(self, email: str) -> UUID | None:
         return self.db.scalar(
             select(UserModel.user_id).where(
-                UserModel.email == email,
+                func.lower(UserModel.email) == email.lower(),
                 UserModel.deleted_at.is_(None),
             )
         )
@@ -53,7 +54,10 @@ class SqlAlchemyPasswordResetTokenRepository:
         model = self.db.scalar(
             select(PasswordResetTokenModel)
             .join(UserModel, UserModel.user_id == PasswordResetTokenModel.user_id)
-            .where(UserModel.email == email, UserModel.deleted_at.is_(None))
+            .where(
+                func.lower(UserModel.email) == email.lower(),
+                UserModel.deleted_at.is_(None),
+            )
             .order_by(PasswordResetTokenModel.created_at.desc())
             .limit(1)
         )
@@ -106,6 +110,8 @@ class SqlAlchemyPasswordResetTokenRepository:
         if consumed.rowcount != 1 or updated.rowcount != 1:
             self.db.rollback()
             return False
+        # A new password ends every session, refresh tokens included.
+        revoke_user_refresh_tokens(self.db, user_id, changed_at)
         self.db.commit()
         return True
 

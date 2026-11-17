@@ -29,15 +29,19 @@ from app.domain.services import (
     InvalidCpfError,
     InvalidCredentialsError,
     InvalidDeviceTokenError,
+    InvalidRefreshTokenError,
     InvalidResetCodeError,
     InvalidResetTokenError,
     MinimumAgeError,
     NotAPersonalProfileError,
+    OutdatedTermsVersionError,
     PasswordConfirmationError,
     PasswordResetService,
+    RefreshTokenService,
     RegisterBusinessService,
     RegisterPersonalService,
     RegisterService,
+    TooManyLoginAttemptsError,
     TooManyPasswordResetRequestsError,
     TooManyResetCodeAttemptsError,
     UserProfileService,
@@ -54,6 +58,9 @@ from app.infrastructure.repository.password_reset_token import (
 from app.infrastructure.repository.person_profile import (
     SqlAlchemyPersonRegistrationRepository,
 )
+from app.infrastructure.repository.refresh_token import (
+    SqlAlchemyRefreshTokenRepository,
+)
 from app.infrastructure.repository.user import SqlAlchemyUserRepository
 from app.infrastructure.repository.user_profile import SqlAlchemyUserProfileRepository
 from app.infrastructure.repository.user_tags import SqlAlchemyUserTagsRepository
@@ -68,6 +75,7 @@ from app.presentation.dtos import (
     LoginRequest,
     PasswordResetConfirmInput,
     PasswordResetRequestInput,
+    RefreshTokenInput,
     RegisterDeviceInput,
     RegisterDeviceOutput,
     RegisterRequest,
@@ -95,6 +103,31 @@ def get_register_service(db: Annotated[Session, Depends(get_db)]) -> RegisterSer
         business_service=RegisterBusinessService(
             SqlAlchemyBusinessRegistrationRepository(db)
         ),
+        current_terms_version=settings.terms_version,
+    )
+
+
+def get_refresh_token_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> RefreshTokenService:
+    return RefreshTokenService(
+        repository=SqlAlchemyRefreshTokenRepository(db),
+        expire_days=settings.refresh_token_expire_days,
+    )
+
+
+def _session_for(
+    user: User,
+    auth_service: AuthService,
+    refresh_service: RefreshTokenService,
+) -> AuthOutput:
+    if user.user_id is None:
+        raise ValueError("A persisted user must have an id")
+    return AuthAssembler.to_auth_dto(
+        user,
+        auth_service.create_access_token(user),
+        refresh_service.issue(user.user_id),
+        expires_in=settings.access_token_expire_minutes * 60,
     )
 
 
@@ -131,6 +164,7 @@ def register(
     payload: RegisterRequest,
     register_service: Annotated[RegisterService, Depends(get_register_service)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    refresh_service: Annotated[RefreshTokenService, Depends(get_refresh_token_service)],
 ) -> AuthOutput:
     registration = UserMapper.to_registration(payload)
     try:
@@ -170,20 +204,42 @@ def register(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Minimum age is 18 years",
         ) from error
+    except OutdatedTermsVersionError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Terms version is outdated",
+        ) from error
 
-    token = auth_service.create_access_token(user)
-    return AuthAssembler.to_auth_dto(user, token)
+    return _session_for(user, auth_service, refresh_service)
 
 
-@router.post("/auth/login", response_model=AuthOutput)
+@router.post(
+    "/auth/login",
+    response_model=AuthOutput,
+    responses={
+        status.HTTP_429_TOO_MANY_REQUESTS: {
+            "description": (
+                "Muitas tentativas erradas para este e-mail. O header "
+                "`Retry-After` traz os segundos de espera."
+            ),
+        },
+    },
+)
 def login(
     payload: LoginRequest,
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    refresh_service: Annotated[RefreshTokenService, Depends(get_refresh_token_service)],
 ) -> AuthOutput:
     try:
         user = auth_service.authenticate(
             payload.email, payload.password.get_secret_value()
         )
+    except TooManyLoginAttemptsError as error:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts",
+            headers={"Retry-After": str(error.retry_after_seconds)},
+        ) from error
     except InvalidCredentialsError as error:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -200,8 +256,84 @@ def login(
             detail="Account is banned or suspended",
         ) from error
 
-    token = auth_service.create_access_token(user)
-    return AuthAssembler.to_auth_dto(user, token)
+    return _session_for(user, auth_service, refresh_service)
+
+
+@router.post(
+    "/auth/refresh",
+    response_model=AuthOutput,
+    summary="Renovar a sessao",
+    description=(
+        "Troca um refresh_token por um novo access_token e um novo "
+        "refresh_token. O token enviado deixa de valer; reenviar um token ja "
+        "usado encerra todas as sessoes daquela cadeia."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": (
+                "Refresh token desconhecido, expirado, ja usado ou anterior a "
+                "ultima troca de senha."
+            ),
+            "content": {
+                "application/json": {"example": {"detail": "Invalid refresh token"}}
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "A conta foi excluida, banida ou esta suspensa.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Account is banned or suspended"}
+                }
+            },
+        },
+    },
+)
+def refresh_session(
+    payload: RefreshTokenInput,
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    refresh_service: Annotated[RefreshTokenService, Depends(get_refresh_token_service)],
+) -> AuthOutput:
+    try:
+        user, refresh_token = refresh_service.rotate(payload.refresh_token)
+    except InvalidRefreshTokenError as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+        ) from error
+    except AccountDeletedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account has been deleted",
+        ) from error
+    except AccountModeratedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is banned or suspended",
+        ) from error
+    return AuthAssembler.to_auth_dto(
+        user,
+        auth_service.create_access_token(user),
+        refresh_token,
+        expires_in=settings.access_token_expire_minutes * 60,
+    )
+
+
+@router.post(
+    "/auth/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    summary="Encerrar a sessao deste aparelho",
+    description=(
+        "Revoga o refresh_token enviado (e a cadeia dele). Um token "
+        "desconhecido tambem responde 204."
+    ),
+)
+def logout(
+    payload: RefreshTokenInput,
+    refresh_service: Annotated[RefreshTokenService, Depends(get_refresh_token_service)],
+) -> Response:
+    refresh_service.revoke(payload.refresh_token)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post(
@@ -221,9 +353,15 @@ def request_password_reset(
     try:
         password_reset_service.request_password_reset(request)
     except TooManyPasswordResetRequestsError as error:
+        headers = (
+            {"Retry-After": str(error.retry_after_seconds)}
+            if error.retry_after_seconds is not None
+            else None
+        )
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail="Too many reset requests",
+            headers=headers,
         ) from error
     return Response(status_code=status.HTTP_202_ACCEPTED)
 

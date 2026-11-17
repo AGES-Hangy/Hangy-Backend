@@ -1,5 +1,5 @@
 import logging
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
@@ -21,6 +21,7 @@ from app.domain.enums import (
     EventPrivacyEnum,
     EventStatusEnum,
 )
+from app.domain.services.event_timing import has_event_ended
 from app.domain.services.image_upload import ImageUploadService
 from app.domain.services.pagination import (
     InvalidPaginationError,
@@ -64,6 +65,7 @@ class ExperienceRepository(Protocol):
         self,
         event_id: UUID,
         *,
+        viewer_id: UUID | None = None,
         limit: int,
         cursor_created_at: datetime | None,
         cursor_photo_id: UUID | None,
@@ -153,13 +155,7 @@ class ExperienceService:
         ):
             raise ExperienceParticipantNotConfirmedError
 
-        ends_at = event.ends_at
-        if ends_at.tzinfo is None:
-            ends_at = ends_at.replace(tzinfo=UTC)
-        if (
-            event.event_status is not EventStatusEnum.FINISHED
-            and ends_at > datetime.now(UTC)
-        ):
+        if not has_event_ended(event):
             raise ExperienceEventNotFinishedError
 
         created = self.repository.add(participant.participant_id, experience)
@@ -207,14 +203,16 @@ class ExperienceService:
             cursor_created_at, cursor_photo_id = decode_cursor(cursor)
         # Product decision: the gallery of a PUBLIC event is open to any
         # authenticated user who can see the event (not only participants).
-        # INVITE_ONLY events stay hidden from non-confirmed users, and so do
-        # events the organizer blocked the viewer from (see _is_visible).
+        # PRIVATE and INVITE_ONLY galleries are only for the organizer and
+        # CONFIRMED participants, like the event's full details; events the
+        # organizer blocked the viewer from stay hidden too (see _is_visible).
         access = self.repository.get_access(event_id, viewer_id)
         if access is None or not self._is_visible(access, viewer_id):
             raise ExperienceEventNotFoundError
         # Ask for one extra item to detect whether another page exists.
         photos = self.repository.list_event_photos(
             event_id,
+            viewer_id=viewer_id,
             limit=limit + 1,
             cursor_created_at=cursor_created_at,
             cursor_photo_id=cursor_photo_id,
@@ -296,7 +294,8 @@ class ExperienceService:
         ):
             return False
         return not (
-            event.event_privacy is EventPrivacyEnum.INVITE_ONLY
+            event.event_privacy
+            in (EventPrivacyEnum.INVITE_ONLY, EventPrivacyEnum.PRIVATE)
             and user_id != event.event_creator_id
             and not ExperienceService._is_confirmed(access)
         )

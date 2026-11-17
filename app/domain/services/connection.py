@@ -88,6 +88,10 @@ class ReceiverNotFoundError(Exception):
     """
 
 
+class RequesterNotPersonalError(Exception):
+    """Raised when a business account tries to send a connection request."""
+
+
 class ConnectionAlreadyExistsError(Exception):
     """Raised when a non-deleted connection already exists between the pair."""
 
@@ -102,6 +106,11 @@ class ConnectionService:
     def send_request(self, requester_id: UUID, receiver_id: UUID) -> UserConnection:
         if requester_id == receiver_id:
             raise CannotConnectToSelfError
+        # Connections are between personal accounts on both ends; a business
+        # interacts through followers instead.
+        requester = self.repository.get_active_user(requester_id)
+        if requester is None or requester.user_type is not UserTypeEnum.PERSONAL:
+            raise RequesterNotPersonalError
         receiver = self.repository.get_active_user(receiver_id)
         # A business receiver is folded into the same "not found" error as a
         # missing or blocking one: connections are personal-only (US8.3 adds
@@ -111,8 +120,30 @@ class ConnectionService:
             raise ReceiverNotFoundError
         if self.block_checker.is_blocked_between(requester_id, receiver_id):
             raise ReceiverNotFoundError
-        if self.repository.find_active_between(requester_id, receiver_id) is not None:
-            raise ConnectionAlreadyExistsError
+        existing = self.repository.find_active_between(requester_id, receiver_id)
+        if existing is not None:
+            # The other side already asked: asking back means "yes", so the
+            # pending request is accepted instead of answering 409.
+            if (
+                existing.status is UserConnectionStatusEnum.PENDING
+                and existing.requester_id == receiver_id
+                and existing.connection_id is not None
+            ):
+                locked = self.repository.get_by_id_for_update(existing.connection_id)
+                if (
+                    locked is not None
+                    and locked.status is UserConnectionStatusEnum.PENDING
+                ):
+                    return self.repository.accept(existing.connection_id)
+            # A rejection doesn't lock the pair forever: it is set aside so
+            # either side can send a new request.
+            if (
+                existing.status is UserConnectionStatusEnum.REJECTED
+                and existing.connection_id is not None
+            ):
+                self.repository.soft_delete(existing.connection_id)
+            else:
+                raise ConnectionAlreadyExistsError
         # create() catches the unique-index violation itself and raises the
         # same ConnectionAlreadyExistsError if a concurrent request won the
         # race between the check above and this insert.

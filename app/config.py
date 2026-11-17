@@ -21,11 +21,18 @@ class Settings:
     access_token_expire_minutes: int = int(
         os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30")
     )
+    # How long the app can renew its session without a new login; every
+    # POST /auth/refresh rotates the token and restarts this lifetime.
+    refresh_token_expire_days: int = int(os.getenv("REFRESH_TOKEN_EXPIRE_DAYS", "30"))
     password_reset_token_expire_minutes: int = int(
         os.getenv("PASSWORD_RESET_TOKEN_EXPIRE_MINUTES", "10")
     )
+    # "a, b" must allow "b", not " b"; empty entries ("a,,b" or a trailing
+    # comma) are dropped instead of becoming an origin that never matches.
     cors_origins: tuple[str, ...] = tuple(
-        os.getenv("CORS_ORIGINS", "http://localhost:8081").split(",")
+        origin.strip()
+        for origin in os.getenv("CORS_ORIGINS", "http://localhost:8081").split(",")
+        if origin.strip()
     )
     invite_link_base_url: str = os.getenv("INVITE_LINK_BASE_URL", "hangy://invite/")
     frontend_base_url: str = os.getenv("FRONTEND_BASE_URL", "http://localhost:8081")

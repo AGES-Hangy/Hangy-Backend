@@ -8,6 +8,7 @@ RevertUserModerationAction in app.domain.entities.
 __all__ = [
     "AccountAlreadyBannedError",
     "AccountNotModeratedError",
+    "AdminTargetModerationError",
     "AdminUserModerationService",
     "ModeratedUserNotFoundError",
     "ReportAlreadyResolvedError",
@@ -34,6 +35,7 @@ from app.domain.enums import (
     ModerationStatusEnum,
     ReportResolutionActionEnum,
     ReportStatusEnum,
+    UserRoleEnum,
 )
 from app.domain.services.admin_reports import ReportNotFoundError
 from app.domain.services.admin_users import derive_moderation_status
@@ -96,6 +98,10 @@ class SelfModerationError(Exception):
     """Raised when an admin tries to moderate their own account."""
 
 
+class AdminTargetModerationError(Exception):
+    """Raised when an admin tries to ban, suspend or revert another admin."""
+
+
 def _is_moderated(
     banned_at: datetime | None, suspended_until: datetime | None, now: datetime
 ) -> bool:
@@ -129,6 +135,10 @@ class AdminUserModerationService:
         current = self.user_repository.get_for_moderation(user_id)
         if current is None:
             raise ModeratedUserNotFoundError
+        # Admins are managed through the admin seed, not through moderation:
+        # one admin must not be able to lock the others out.
+        if current.role is UserRoleEnum.ADMIN:
+            raise AdminTargetModerationError
 
         report_id = getattr(action, "report_id", None)
         if report_id is not None:

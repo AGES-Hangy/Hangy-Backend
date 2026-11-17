@@ -29,6 +29,7 @@ from app.domain.services import (
     AdminReportsService,
     AdminTagNotFoundError,
     AdminTagsService,
+    AdminTargetModerationError,
     AdminUserModerationService,
     AuditLogger,
     AuditLogService,
@@ -831,6 +832,11 @@ def patch_admin_user_moderation(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Admins cannot moderate their own account",
+        ) from error
+    except AdminTargetModerationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Admins cannot moderate other admins",
         ) from error
     return AdminUserModerationAssembler.to_dto(updated, now=now)
 

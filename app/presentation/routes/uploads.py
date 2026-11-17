@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from starlette.concurrency import run_in_threadpool
 
+from app.domain.entities import User
 from app.domain.services import (
     ImageStorage,
     ImageStorageUnavailableError,
@@ -10,6 +11,7 @@ from app.domain.services import (
     ImageUploadService,
     UnsupportedImageTypeError,
 )
+from app.domain.services.event import EVENT_COVERS_FOLDER
 from app.infrastructure.storage import get_image_storage
 from app.presentation.dependencies.auth import get_current_user
 from app.presentation.dtos import EventCoverUploadOutput
@@ -30,7 +32,6 @@ def get_image_upload_service(
     "/event-covers",
     response_model=EventCoverUploadOutput,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(get_current_user)],
     summary="Enviar a capa de um evento",
     description=(
         "Recebe um JPG ou PNG de ate 5 MB. Use a cover_photo_url retornada "
@@ -64,6 +65,7 @@ def get_image_upload_service(
     },
 )
 async def upload_event_cover(
+    current_user: Annotated[User, Depends(get_current_user)],
     image_upload_service: Annotated[
         ImageUploadService, Depends(get_image_upload_service)
     ],
@@ -73,7 +75,7 @@ async def upload_event_cover(
         content = await read_image_upload(file, image_upload_service.max_size_bytes)
         url = await run_in_threadpool(
             image_upload_service.upload,
-            folder="events/covers",
+            folder=f"{EVENT_COVERS_FOLDER}/{current_user.user_id}",
             content=content,
             content_type=file.content_type or "",
         )

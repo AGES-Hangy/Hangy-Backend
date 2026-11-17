@@ -10,9 +10,11 @@ from app.domain.enums import (
     EventStatusEnum,
     NotificationTypeEnum,
 )
+from app.domain.services.event_timing import has_event_ended
 from app.domain.services.invite import InviteAcceptance, InviteAcceptanceOutcome
 from app.domain.services.notification_dispatcher import NotificationDispatcher
 from app.infrastructure.repository.block_access import is_blocked_for_write
+from app.infrastructure.repository.event import SqlAlchemyEventRepository
 from app.infrastructure.repository.models import (
     EventInviteLinkModel,
     EventModel,
@@ -46,6 +48,12 @@ class SqlAlchemyInviteRepository:
         ):
             self.db.rollback()
             return InviteAcceptance(InviteAcceptanceOutcome.EVENT_NOT_FOUND)
+        if event.event_creator_id == user_id:
+            self.db.rollback()
+            return InviteAcceptance(InviteAcceptanceOutcome.ORGANIZER)
+        if has_event_ended(SqlAlchemyEventRepository.to_entity(event)):
+            self.db.rollback()
+            return InviteAcceptance(InviteAcceptanceOutcome.EVENT_FINISHED)
 
         existing = self.db.scalar(
             select(EventParticipantModel).where(

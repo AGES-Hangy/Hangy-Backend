@@ -4,7 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
-from app.domain.services.auth import AuthService, InvalidAccessTokenError
+from app.domain.entities import User
 from app.domain.services.cancel_participation import (
     CancelParticipationService,
     ParticipationNotFoundError,
@@ -15,11 +15,7 @@ from app.infrastructure.repository import get_db
 from app.infrastructure.repository.cancel_participation import (
     SqlAlchemyCancelParticipationRepository,
 )
-from app.presentation.dependencies.auth import (
-    credentials_exception,
-    get_access_token,
-    get_auth_service,
-)
+from app.presentation.dependencies.auth import get_current_user
 
 router = APIRouter(prefix="/events", tags=["Events"])
 
@@ -64,18 +60,11 @@ def get_cancel_participation_service(
 )
 def cancel_participation(
     event_id: UUID,
-    token: Annotated[str, Depends(get_access_token)],
-    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+    user: Annotated[User, Depends(get_current_user)],
     service: Annotated[
         CancelParticipationService, Depends(get_cancel_participation_service)
     ],
 ) -> Response:
-    try:
-        user = auth_service.get_user_from_token(token)
-    except InvalidAccessTokenError as error:
-        raise credentials_exception from error
-    if user.user_id is None:
-        raise credentials_exception
     try:
         service.cancel(event_id, user.user_id)
     except ParticipationNotFoundError as error:
