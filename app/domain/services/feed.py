@@ -4,8 +4,10 @@ from typing import Protocol
 from uuid import UUID
 
 from app.domain.entities import Feed, FeedEvent, FeedItem, FeedSection, Tag
-from app.domain.enums import EventPrivacyEnum
-from app.domain.services.event_location import resolve_location
+from app.domain.services.event_visibility import (
+    is_event_visible_to_viewer,
+    resolve_event_visibility,
+)
 
 DEFAULT_FEED_LIMIT = 10
 MIN_FEED_LIMIT = 1
@@ -50,12 +52,21 @@ class FeedService:
         sections: list[FeedSection] = []
         for macro_tag, micro_tag_ids in self._group_by_macro_tag(interest_tags):
             # One extra row tells the section whether it has a next page.
-            events = self.repository.list_events_for_tags(
-                viewer_id=user_id,
-                tag_ids=micro_tag_ids,
-                reference_time=reference_time,
-                limit=limit + 1,
-            )
+            events = [
+                event
+                for event in self.repository.list_events_for_tags(
+                    viewer_id=user_id,
+                    tag_ids=micro_tag_ids,
+                    reference_time=reference_time,
+                    limit=limit + 1,
+                )
+                if is_event_visible_to_viewer(
+                    event.event,
+                    user_id,
+                    event.viewer_participation_status,
+                    reference_time=reference_time,
+                )
+            ]
             if not events:
                 continue
             sections.append(
@@ -80,18 +91,19 @@ class FeedService:
         event = feed_event.event
         if event.event_id is None:
             raise ValueError("A persisted event must have an id")
-        is_private = event.event_privacy is EventPrivacyEnum.PRIVATE
+        visibility = resolve_event_visibility(
+            event,
+            viewer_id=viewer_id,
+            participation_status=feed_event.viewer_participation_status,
+            participants_count=feed_event.participants_count,
+        )
         return FeedItem(
             event_id=event.event_id,
             title=event.event_title,
-            event_date=None if is_private else event.starts_at,
+            event_date=None if visibility.is_preview else event.starts_at,
             privacy=event.event_privacy,
             participants_count=feed_event.participants_count,
-            location=resolve_location(
-                event,
-                is_organizer=event.event_creator_id == viewer_id,
-                participation_status=feed_event.viewer_participation_status,
-            ),
+            location=visibility.location,
             cover_photo_url=event.cover_photo_url,
             is_favorited=feed_event.viewer_favorited,
             tags=feed_event.tags,

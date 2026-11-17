@@ -1,0 +1,164 @@
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BeforeValidator
+from sqlalchemy.orm import Session
+
+from app.domain.assemblers import AdminUsersAssembler
+from app.domain.enums import ModerationStatusEnum
+from app.domain.services import (
+    DEFAULT_ADMIN_USERS_LIMIT,
+    MAX_ADMIN_USERS_SEARCH_LENGTH,
+    AdminUserNotFoundError,
+    AdminUsersService,
+    InvalidPaginationError,
+)
+from app.infrastructure.repository import get_db
+from app.infrastructure.repository.admin_users import SqlAlchemyAdminUsersRepository
+from app.presentation.dependencies.admin import require_admin
+from app.presentation.dtos import AdminUserDetailOutput, AdminUsersOutput
+
+router = APIRouter(tags=["Admin"])
+
+
+def _parse_limit(value: str | int) -> int:
+    try:
+        return int(value)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters",
+        ) from error
+
+
+def get_admin_users_service(
+    db: Annotated[Session, Depends(get_db)],
+) -> AdminUsersService:
+    return AdminUsersService(repository=SqlAlchemyAdminUsersRepository(db))
+
+
+@router.get(
+    "/admin/users",
+    response_model=AdminUsersOutput,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_admin)],
+    summary="Listar usuários para a gestão de moderação",
+    description=(
+        "Lista, do cadastro mais recente para o mais antigo, as contas pessoais "
+        "e de estabelecimento não excluídas, com o status de moderação derivado "
+        "(`BANNED` se banida; `SUSPENDED` se a suspensão ainda não terminou; "
+        "senão `ACTIVE`), o número de eventos criados e o de denúncias não "
+        "arquivadas contra o perfil (as contra eventos dele ficam na ficha do "
+        "evento, `GET /admin/events/{event_id}`). `search` "
+        "busca por trecho do nome ou do e-mail, sem diferenciar maiúsculas. "
+        "Exige Bearer token de um usuário com `role = ADMIN`."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: {
+            "description": "`limit` ou `cursor` inválido.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Invalid pagination parameters"}
+                }
+            },
+        },
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Usuário autenticado, mas `role != ADMIN`.",
+            "content": {
+                "application/json": {"example": {"detail": "Admin access required"}}
+            },
+        },
+    },
+)
+def read_admin_users(
+    admin_users_service: Annotated[AdminUsersService, Depends(get_admin_users_service)],
+    moderation_status: Annotated[
+        ModerationStatusEnum | None,
+        Query(alias="status", description="Filtra pelo status de moderação."),
+    ] = None,
+    search: Annotated[
+        str | None,
+        Query(
+            max_length=MAX_ADMIN_USERS_SEARCH_LENGTH,
+            description="Trecho do nome ou do e-mail.",
+        ),
+    ] = None,
+    limit: Annotated[
+        int,
+        BeforeValidator(_parse_limit),
+        Query(description="Tamanho da página (1–100)."),
+    ] = DEFAULT_ADMIN_USERS_LIMIT,
+    cursor: Annotated[
+        str | None, Query(description="Cursor opaco de paginação.")
+    ] = None,
+) -> AdminUsersOutput:
+    try:
+        page = admin_users_service.get_users(
+            status=moderation_status, search=search, limit=limit, cursor=cursor
+        )
+    except InvalidPaginationError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid pagination parameters",
+        ) from error
+    return AdminUsersAssembler.to_dto(page)
+
+
+@router.get(
+    "/admin/users/{user_id}",
+    response_model=AdminUserDetailOutput,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_admin)],
+    summary="Ficha de moderação de um usuário",
+    description=(
+        "Devolve o perfil, as métricas e o histórico de moderação da conta. "
+        "`moderation_status` é `BANNED` se banida, `SUSPENDED` se a suspensão "
+        "ainda não terminou, senão `ACTIVE`. `report_count` conta as denúncias "
+        "não arquivadas contra o perfil; `report_upheld_count` conta as que "
+        "resultaram em banimento "
+        "ou suspensão. `moderation_history` lista, da mais recente para a mais "
+        "antiga (até 50), as ações de moderação registradas na auditoria. "
+        "Exige Bearer token de um usuário com `role = ADMIN`."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Token ausente, inválido ou expirado.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Could not validate credentials"}
+                }
+            },
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Usuário autenticado, mas `role != ADMIN`.",
+            "content": {
+                "application/json": {"example": {"detail": "Admin access required"}}
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "O `user_id` não existe ou a conta foi excluída.",
+            "content": {"application/json": {"example": {"detail": "User not found"}}},
+        },
+    },
+)
+def read_admin_user_detail(
+    user_id: UUID,
+    admin_users_service: Annotated[AdminUsersService, Depends(get_admin_users_service)],
+) -> AdminUserDetailOutput:
+    try:
+        detail = admin_users_service.get_user_detail(user_id)
+    except AdminUserNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        ) from error
+    return AdminUsersAssembler.to_detail_dto(detail)

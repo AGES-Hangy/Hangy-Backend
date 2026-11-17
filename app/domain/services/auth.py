@@ -6,6 +6,8 @@ import jwt
 from pwdlib import PasswordHash
 
 from app.domain.entities import AccessToken, PasswordResetToken, ResetToken, User
+from app.domain.enums import ModerationStatusEnum
+from app.domain.services.admin_users import derive_moderation_status
 
 password_hash = PasswordHash.recommended()
 PASSWORD_RESET_SCOPE = "password_reset"
@@ -33,6 +35,16 @@ class AccountDeletedError(Exception):
     """Raised when the credentials are correct but the account was deleted."""
 
 
+class AccountModeratedError(Exception):
+    """Raised when the account is banned or still suspended.
+
+    No active-session revocation happens on BAN/SUSPEND (see task 249): the
+    JWT keeps decoding fine, but every request past this point (and every new
+    login) is rejected until the moderation is lifted or the suspension
+    elapses.
+    """
+
+
 class AuthService:
     def __init__(
         self,
@@ -48,7 +60,9 @@ class AuthService:
         self.access_token_expire_minutes = access_token_expire_minutes
         self.password_reset_token_expire_minutes = password_reset_token_expire_minutes
 
-    def authenticate(self, email: str, password: str) -> User:
+    def authenticate(
+        self, email: str, password: str, now: datetime | None = None
+    ) -> User:
         user = self.repository.get_by_email(email)
         # Same error for "no such email" and "wrong password" so a caller
         # can't use it to probe which emails have an account.
@@ -56,6 +70,8 @@ class AuthService:
             raise InvalidCredentialsError
         if user.deleted_at is not None:
             raise AccountDeletedError
+        if _is_moderated(user, now or datetime.now(UTC)):
+            raise AccountModeratedError
         return user
 
     def create_access_token(self, user: User) -> AccessToken:
@@ -91,7 +107,8 @@ class AuthService:
             expires_in=int(expires_in.total_seconds()),
         )
 
-    def get_user_from_token(self, token: str) -> User:
+    def get_user_from_token(self, token: str, now: datetime | None = None) -> User:
+        now = now or datetime.now(UTC)
         try:
             payload = jwt.decode(
                 token,
@@ -113,6 +130,8 @@ class AuthService:
             raise InvalidAccessTokenError
         if user.deleted_at is not None:
             raise AccountDeletedError
+        if _is_moderated(user, now):
+            raise AccountModeratedError
         # A token with no "iat" carries no freshness info to check, so it is
         # left alone here (e.g. tokens minted before this claim existed).
         if (
@@ -122,6 +141,13 @@ class AuthService:
         ):
             raise InvalidAccessTokenError
         return user
+
+
+def _is_moderated(user: User, now: datetime) -> bool:
+    return (
+        derive_moderation_status(user.banned_at, user.suspended_until, now)
+        != ModerationStatusEnum.ACTIVE
+    )
 
 
 def _as_utc(value: datetime) -> datetime:

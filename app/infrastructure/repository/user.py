@@ -67,6 +67,39 @@ class SqlAlchemyUserRepository:
             raise
         return True, previous
 
+    def get_for_moderation(self, user_id: UUID) -> User | None:
+        """Lock the row so two moderation actions on the same user can't race."""
+        model = self.db.scalar(
+            select(UserModel)
+            .where(UserModel.user_id == user_id, UserModel.deleted_at.is_(None))
+            .with_for_update()
+        )
+        return self._to_entity(model) if model is not None else None
+
+    def set_moderation(
+        self,
+        user_id: UUID,
+        *,
+        banned_at: datetime | None,
+        suspended_until: datetime | None,
+    ) -> User:
+        """Apply the new banned_at/suspended_until pair.
+
+        Flush only: the caller (AdminUserModerationService.apply_action) commits
+        after recording the audit row (and resolving the report, when there is
+        one), so all of it lands in one transaction.
+        """
+        model = self.db.scalar(select(UserModel).where(UserModel.user_id == user_id))
+        if model is None:
+            raise ValueError("A moderated user must already exist")
+        model.banned_at = banned_at
+        model.suspended_until = suspended_until
+        self.db.flush()
+        return self._to_entity(model)
+
+    def commit(self) -> None:
+        self.db.commit()
+
     def soft_delete(self, user_id: UUID, deleted_at: datetime) -> None:
         model = self.db.scalar(select(UserModel).where(UserModel.user_id == user_id))
         if model is None:
@@ -153,4 +186,6 @@ class SqlAlchemyUserRepository:
             accepted_terms_version=model.accepted_terms_version,
             password_changed_at=model.password_changed_at,
             deleted_at=model.deleted_at,
+            banned_at=model.banned_at,
+            suspended_until=model.suspended_until,
         )

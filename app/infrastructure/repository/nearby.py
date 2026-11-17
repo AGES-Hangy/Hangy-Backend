@@ -1,3 +1,4 @@
+from collections.abc import Collection
 from datetime import UTC, datetime
 from math import cos, radians
 from uuid import UUID
@@ -6,14 +7,15 @@ from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.domain.entities import NearbyEventCandidate
-from app.domain.enums import (
-    EventParticipantStatusEnum,
-    EventPrivacyEnum,
-    EventStatusEnum,
-)
-from app.infrastructure.repository.block import block_exists_between
+from app.domain.enums import EventParticipantStatusEnum
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
-from app.infrastructure.repository.models import EventModel, EventParticipantModel
+from app.infrastructure.repository.models import (
+    EventModel,
+    EventParticipantModel,
+    TagModel,
+)
+from app.infrastructure.repository.models.event_model import event_tag
+from app.infrastructure.repository.search import visible_events_filter
 
 METERS_PER_DEGREE = 111_320
 
@@ -28,6 +30,9 @@ class SqlAlchemyNearbyRepository:
         latitude: float,
         longitude: float,
         radius_m: int,
+        starts_from: datetime | None = None,
+        starts_until: datetime | None = None,
+        tag_ids: Collection[UUID] | None = None,
     ) -> list[NearbyEventCandidate]:
         latitude_delta = radius_m / METERS_PER_DEGREE
         min_latitude = max(-90.0, latitude - latitude_delta)
@@ -76,12 +81,7 @@ class SqlAlchemyNearbyRepository:
                 ),
             )
             .where(
-                EventModel.deleted_at.is_(None),
-                EventModel.event_status == EventStatusEnum.PUBLISHED,
-                EventModel.starts_at > datetime.now(UTC),
-                EventModel.event_privacy.in_(
-                    (EventPrivacyEnum.PUBLIC, EventPrivacyEnum.PRIVATE)
-                ),
+                *visible_events_filter(viewer_id, datetime.now(UTC)),
                 or_(
                     coordinate_filter(
                         EventModel.event_latitude, EventModel.event_longitude
@@ -90,9 +90,18 @@ class SqlAlchemyNearbyRepository:
                         EventModel.approx_latitude, EventModel.approx_longitude
                     ),
                 ),
-                ~block_exists_between(EventModel.event_creator_id, viewer_id),
             )
         )
+        if starts_from is not None:
+            statement = statement.where(EventModel.starts_at >= starts_from)
+        if starts_until is not None:
+            statement = statement.where(EventModel.starts_at <= starts_until)
+        if tag_ids is not None:
+            statement = statement.where(
+                EventModel.event_id.in_(
+                    select(event_tag.c.event_id).where(event_tag.c.tag_id.in_(tag_ids))
+                )
+            )
         rows = self.db.execute(statement).all()
         return [
             NearbyEventCandidate(
@@ -102,3 +111,21 @@ class SqlAlchemyNearbyRepository:
             )
             for event, count, participation_status in rows
         ]
+
+    def expand_tag_ids(self, tag_ids: Collection[UUID]) -> set[UUID]:
+        found = set(
+            self.db.scalars(
+                select(TagModel.tag_id).where(TagModel.tag_id.in_(tag_ids))
+            ).all()
+        )
+        # The tree is shallow (macro -> micro), so one query per level is enough.
+        frontier = found
+        while frontier:
+            children = set(
+                self.db.scalars(
+                    select(TagModel.tag_id).where(TagModel.tag_parent_id.in_(frontier))
+                ).all()
+            )
+            frontier = children - found
+            found |= frontier
+        return found

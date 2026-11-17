@@ -40,6 +40,10 @@ class NotificationRepository(Protocol):
         self, recipient_id: UUID, event_id: UUID
     ) -> UUID | None: ...
 
+    def notify_event_removed(
+        self, recipient_id: UUID, event_id: UUID
+    ) -> UUID | None: ...
+
     def get_push_context(
         self,
         type: NotificationTypeEnum,
@@ -106,6 +110,10 @@ PUSH_COPY: dict[NotificationTypeEnum, tuple[str, str]] = {
     NotificationTypeEnum.EVENT_CANCELLED: (
         "Evento cancelado",
         "Um evento que você participa foi cancelado",
+    ),
+    NotificationTypeEnum.EVENT_REMOVED: (
+        "Evento removido",
+        "Um evento foi removido pela moderação",
     ),
     NotificationTypeEnum.EVENT_STARTING_SOON: (
         "Evento começando",
@@ -196,6 +204,18 @@ class NotificationDispatcher:
                         "event_id required for event_updated notifications"
                     )
                 notification_id = self.repository.notify_event_updated(
+                    recipient_id, event_id
+                )
+                if notification_id is None:
+                    return
+                self._send_push(recipient_id, type, notification_id, event_id=event_id)
+
+            elif type is NotificationTypeEnum.EVENT_REMOVED:
+                if event_id is None:
+                    raise ValueError(
+                        "event_id required for event_removed notifications"
+                    )
+                notification_id = self.repository.notify_event_removed(
                     recipient_id, event_id
                 )
                 if notification_id is None:

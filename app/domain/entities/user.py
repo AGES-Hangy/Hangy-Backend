@@ -35,3 +35,5 @@ class User:
     accepted_terms_version: str | None = None
     password_changed_at: datetime | None = None
     deleted_at: datetime | None = None
+    banned_at: datetime | None = None
+    suspended_until: datetime | None = None
