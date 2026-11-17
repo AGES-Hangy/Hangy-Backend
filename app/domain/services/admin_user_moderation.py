@@ -23,7 +23,6 @@ from uuid import UUID
 
 from app.domain.entities import (
     BanUserAction,
-    Report,
     RevertUserModerationAction,
     SuspendUserAction,
     User,
@@ -59,7 +58,9 @@ class UserModerationRepository(Protocol):
 
 
 class ReportRepository(Protocol):
-    def get_by_id(self, report_id: UUID) -> Report | None: ...
+    def get_target_for_account_moderation(
+        self, report_id: UUID
+    ) -> tuple[UUID | None, ReportStatusEnum] | None: ...
 
     def resolve(
         self,
@@ -161,6 +162,7 @@ class AdminUserModerationService:
             audit_action = AuditActionEnum.USER_REVERTED
             resolution_action = None
 
+        resolved_report_id: UUID | None = None
         if report_id is not None and resolution_action is not None:
             self.report_repository.resolve(
                 report_id,
@@ -168,12 +170,20 @@ class AdminUserModerationService:
                 resolved_at=now,
                 resolution_action=resolution_action,
             )
+            resolved_report_id = report_id
 
+        # The resolved report goes in the audit metadata so the user's moderation
+        # history (GET /admin/users/{user_id}) can link the action to it.
         self.audit_logger.record(
             actor_id=actor_id,
             action=audit_action,
             target_type=AuditTargetTypeEnum.USER,
             target_id=user_id,
+            metadata=(
+                {"report_id": str(resolved_report_id)}
+                if resolved_report_id is not None
+                else None
+            ),
         )
         # The audit write is a savepoint (see AuditLogger): it never fails this
         # commit even when it was itself rolled back.
@@ -181,10 +191,11 @@ class AdminUserModerationService:
         return updated
 
     def _check_report_resolvable(self, report_id: UUID, user_id: UUID) -> None:
-        report = self.report_repository.get_by_id(report_id)
-        if report is None:
+        target = self.report_repository.get_target_for_account_moderation(report_id)
+        if target is None:
             raise ReportNotFoundError
-        if report.reported_user_id != user_id:
+        target_user_id, status = target
+        if target_user_id != user_id:
             raise ReportNotAboutUserError
-        if report.status not in _RESOLVABLE_REPORT_STATUSES:
+        if status not in _RESOLVABLE_REPORT_STATUSES:
             raise ReportAlreadyResolvedError

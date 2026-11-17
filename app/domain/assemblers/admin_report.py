@@ -68,6 +68,7 @@ class AdminReportAssembler:
                 archived=previous.archived,
                 resolved_with_action=previous.resolved_with_action,
             ),
+            open_report_count=detail.open_report_count,
             resolution=AdminReportAssembler._to_resolution_dto(detail.resolution),
             **extra,
         )
@@ -105,6 +106,7 @@ class AdminReportAssembler:
             report_number=item.report_number,
             target_type=target_type,
             target_name=target_name,
+            organizer_name=item.organizer_name if target_type == "EVENT" else None,
             report_count=item.report_count,
             status=item.status,
             reason=item.report_type,

@@ -26,7 +26,9 @@ _RESOLVABLE_REPORT_STATUSES = (ReportStatusEnum.PENDING, ReportStatusEnum.REVIEW
 
 
 class ReportArchiveRepository(Protocol):
-    def get_by_id(self, report_id: UUID) -> Report | None: ...
+    def get_by_id(
+        self, report_id: UUID, *, for_update: bool = False
+    ) -> Report | None: ...
 
     def archive(
         self,
@@ -55,7 +57,7 @@ class AdminReportArchiveService:
         now: datetime | None = None,
     ) -> None:
         now = now or datetime.now(UTC)
-        report = self.report_repository.get_by_id(report_id)
+        report = self.report_repository.get_by_id(report_id, for_update=True)
         if report is None:
             raise ReportNotFoundError
         if report.status not in _RESOLVABLE_REPORT_STATUSES:

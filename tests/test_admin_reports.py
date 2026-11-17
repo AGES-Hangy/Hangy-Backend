@@ -334,3 +334,139 @@ def test_status_change_keeps_opened_at_and_queue_order(
 
     assert numbers(after) == numbers(before) == [2, 1]
     assert after["items"][1]["opened_at"] == before["items"][1]["opened_at"]
+
+
+def build_target_queue(db: Session) -> tuple[UUID, UUID, UUID]:
+    admin_id = add_user(db, "Admin", role=UserRoleEnum.ADMIN)
+    creator_id = add_user(db, "Denunciante")
+    lucas_id = add_user(db, "Lucas Ferreira")
+    ana_id = add_user(db, "Ana Souza")
+    event_id = add_event(db, lucas_id, "Pelada no Parcão")
+    add_report(db, creator_id, number=1, minutes_ago=10, user_id=lucas_id)
+    add_report(
+        db,
+        creator_id,
+        number=2,
+        minutes_ago=5,
+        status=ReportStatusEnum.REVIEWED,
+        user_id=lucas_id,
+    )
+    add_report(db, creator_id, number=3, minutes_ago=1, user_id=ana_id)
+    add_report(db, creator_id, number=4, minutes_ago=20, event_id=event_id)
+    return admin_id, lucas_id, event_id
+
+
+def test_filters_by_target_user(queue_client: QueueClient) -> None:
+    client, session_factory = queue_client
+    with session_factory() as db:
+        admin_id, lucas_id, _ = build_target_queue(db)
+
+    payload = get_queue(client, admin_id, target_user_id=str(lucas_id))
+
+    assert numbers(payload) == [2]
+    assert payload["items"][0]["target_name"] == "Lucas Ferreira"
+    assert payload["items"][0]["report_count"] == 2
+
+
+def test_filters_by_target_event(queue_client: QueueClient) -> None:
+    client, session_factory = queue_client
+    with session_factory() as db:
+        admin_id, _, event_id = build_target_queue(db)
+
+    payload = get_queue(client, admin_id, target_event_id=str(event_id))
+
+    assert numbers(payload) == [4]
+    assert payload["items"][0]["target_type"] == "EVENT"
+    assert payload["items"][0]["report_count"] == 1
+
+
+def test_target_filter_combines_with_status(queue_client: QueueClient) -> None:
+    client, session_factory = queue_client
+    with session_factory() as db:
+        admin_id, lucas_id, _ = build_target_queue(db)
+
+    payload = get_queue(
+        client, admin_id, target_user_id=str(lucas_id), status="PENDING"
+    )
+
+    assert numbers(payload) == [1]
+    assert payload["items"][0]["report_count"] == 1
+
+
+@pytest.mark.parametrize(
+    ("term", "expected"),
+    [("Lucas", [2]), ("Ana", []), ("Pelada", [])],
+)
+def test_target_filter_combines_with_search(
+    queue_client: QueueClient, term: str, expected: list[int]
+) -> None:
+    client, session_factory = queue_client
+    with session_factory() as db:
+        admin_id, lucas_id, _ = build_target_queue(db)
+
+    payload = get_queue(client, admin_id, target_user_id=str(lucas_id), search=term)
+
+    assert numbers(payload) == expected
+
+
+def test_both_target_filters_return_400(queue_client: QueueClient) -> None:
+    client, session_factory = queue_client
+    with session_factory() as db:
+        admin_id, lucas_id, event_id = build_target_queue(db)
+
+    response = client.get(
+        "/admin/reports",
+        params={"target_user_id": str(lucas_id), "target_event_id": str(event_id)},
+        headers=header_for(admin_id),
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Only one target filter is allowed"}
+
+
+@pytest.mark.parametrize("param", ["target_user_id", "target_event_id"])
+def test_unknown_target_returns_an_empty_list(
+    queue_client: QueueClient, param: str
+) -> None:
+    client, session_factory = queue_client
+    with session_factory() as db:
+        admin_id, _, _ = build_target_queue(db)
+
+    payload = get_queue(client, admin_id, **{param: str(uuid4())})
+
+    assert payload == {"items": [], "next_cursor": None}
+
+
+def test_invalid_target_id_returns_422(queue_client: QueueClient) -> None:
+    client, session_factory = queue_client
+    with session_factory() as db:
+        admin_id, _, _ = build_target_queue(db)
+
+    response = client.get(
+        "/admin/reports",
+        params={"target_user_id": "abc"},
+        headers=header_for(admin_id),
+    )
+
+    assert response.status_code == 422
+
+
+def test_event_rows_name_the_organizer(queue_client: QueueClient) -> None:
+    client, session_factory = queue_client
+    with session_factory() as db:
+        admin_id = add_user(db, "Admin", role=UserRoleEnum.ADMIN)
+        reporter_id = add_user(db, "Marina")
+        organizer_id = add_user(db, "Rafael Costa")
+        event_id = add_event(db, organizer_id, "Futebol na Orla")
+        add_report(db, reporter_id, number=1, minutes_ago=10, event_id=event_id)
+        add_report(db, reporter_id, number=2, minutes_ago=5, user_id=organizer_id)
+
+    items = {
+        item["report_number"]: item for item in get_queue(client, admin_id)["items"]
+    }
+
+    assert items[1]["target_type"] == "EVENT"
+    assert items[1]["organizer_name"] == "Rafael Costa"
+    # A profile row is its own target: no organizer.
+    assert items[2]["target_type"] == "USER"
+    assert items[2]["organizer_name"] is None

@@ -1,8 +1,15 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
-from app.domain.entities import AdminUserItem, AdminUserRecord, AdminUsersPage
+from app.domain.entities import (
+    AdminUserDetail,
+    AdminUserDetailRecord,
+    AdminUserItem,
+    AdminUserRecord,
+    AdminUsersPage,
+)
 from app.domain.enums import ModerationStatusEnum
 from app.domain.services.pagination import (
     InvalidPaginationError,
@@ -25,6 +32,12 @@ class AdminUsersRepository(Protocol):
         limit: int,
         after: tuple[datetime, UUID] | None,
     ) -> list[AdminUserRecord]: ...
+
+    def get_detail(self, user_id: UUID) -> AdminUserDetailRecord | None: ...
+
+
+class AdminUserNotFoundError(Exception):
+    """Raised when user_id matches no active account."""
 
 
 def derive_moderation_status(
@@ -76,6 +89,34 @@ class AdminUsersService:
             next_cursor=next_cursor,
         )
 
+    def get_user_detail(
+        self, user_id: UUID, now: datetime | None = None
+    ) -> AdminUserDetail:
+        now = now or datetime.now(UTC)
+        record = self.repository.get_detail(user_id)
+        if record is None:
+            raise AdminUserNotFoundError
+
+        status = derive_moderation_status(record.banned_at, record.suspended_until, now)
+        return AdminUserDetail(
+            user_id=record.user_id,
+            name=record.name,
+            email=record.email,
+            member_since=_as_utc(record.created_at).date(),
+            moderation_status=status,
+            banned_at=_as_utc(record.banned_at) if record.banned_at else None,
+            suspended_until=(
+                _as_utc(record.suspended_until)
+                if status == ModerationStatusEnum.SUSPENDED and record.suspended_until
+                else None
+            ),
+            metrics=record.metrics,
+            moderation_history=tuple(
+                replace(entry, occurred_at=_as_utc(entry.occurred_at))
+                for entry in record.history
+            ),
+        )
+
     @staticmethod
     def _to_item(row: AdminUserRecord, now: datetime) -> AdminUserItem:
         status = derive_moderation_status(row.banned_at, row.suspended_until, now)
@@ -99,6 +140,7 @@ __all__ = [
     "MAX_ADMIN_USERS_LIMIT",
     "MAX_ADMIN_USERS_SEARCH_LENGTH",
     "MIN_ADMIN_USERS_LIMIT",
+    "AdminUserNotFoundError",
     "AdminUsersRepository",
     "AdminUsersService",
     "derive_moderation_status",

@@ -69,6 +69,19 @@ resource "aws_iam_role_policy" "ec2" {
           "${aws_s3_bucket.app.arn}/profile-photos/*",
         ]
       },
+      {
+        Sid    = "SendPasswordResetEmails"
+        Effect = "Allow"
+        Action = ["ses:SendEmail"]
+        # In the SES sandbox, SendEmail is also authorized against the recipient identity.
+        Resource = concat(
+          [aws_sesv2_email_identity.password_reset.arn],
+          aws_sesv2_email_identity.test_recipient[*].arn,
+        )
+        Condition = {
+          StringEquals = { "ses:FromAddress" = var.email_from }
+        }
+      },
     ]
   })
 }

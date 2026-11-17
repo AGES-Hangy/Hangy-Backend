@@ -41,6 +41,8 @@ class SqlAlchemyAdminReportsRepository:
         statuses: tuple[ReportStatusEnum, ...],
         search: str | None,
         report_number: int | None,
+        target_user_id: UUID | None,
+        target_event_id: UUID | None,
         limit: int,
         after: tuple[datetime, UUID] | None,
     ) -> list[AdminReportQueueItem]:
@@ -48,6 +50,10 @@ class SqlAlchemyAdminReportsRepository:
             ReportModel.deleted_at.is_(None),
             ReportModel.status.in_(statuses),
         ]
+        if target_user_id is not None:
+            conditions.append(ReportModel.reported_user_id == target_user_id)
+        if target_event_id is not None:
+            conditions.append(ReportModel.reported_event_id == target_event_id)
         if search is not None:
             matching = self._matching_targets(statuses, search, report_number)
             conditions.append(_target_key(ReportModel).in_(matching))
@@ -78,16 +84,19 @@ class SqlAlchemyAdminReportsRepository:
             .subquery()
         )
 
+        organizer = aliased(UserModel)
         query = (
             select(
                 ranked,
                 UserModel.name,
                 UserModel.user_type,
                 EventModel.event_title,
+                organizer.name.label("organizer_name"),
             )
             .select_from(ranked)
             .outerjoin(UserModel, UserModel.user_id == ranked.c.reported_user_id)
             .outerjoin(EventModel, EventModel.event_id == ranked.c.reported_event_id)
+            .outerjoin(organizer, organizer.user_id == EventModel.event_creator_id)
             .where(ranked.c.position == 1)
             .order_by(ranked.c.created_at.desc(), ranked.c.report_id.desc())
             .limit(limit)
@@ -144,6 +153,7 @@ class SqlAlchemyAdminReportsRepository:
             reported_user_name=row.name,
             reported_user_type=row.user_type,
             reported_event_title=row.event_title,
+            organizer_name=row.organizer_name,
         )
 
     def get_report_detail(self, report_id: UUID) -> AdminReportDetailRecord | None:
@@ -185,10 +195,8 @@ class SqlAlchemyAdminReportsRepository:
             if model.reported_event_id is not None
             else 0
         )
-        previous_archived, previous_resolved = self._count_previous_reports(
-            report_id=model.report_id,
-            target_user_id=target.user_id,
-        )
+        previous_archived, previous_resolved = self._count_previous_reports(model)
+        open_report_count = self._count_open_reports(model)
 
         resolved_by_name: str | None = None
         if model.resolved_by_id is not None:
@@ -206,6 +214,7 @@ class SqlAlchemyAdminReportsRepository:
             resolved_by_name=resolved_by_name,
             target_reports_count=target_reports_count,
             event=event,
+            open_report_count=open_report_count,
         )
 
     def _count_target_events(self, target_user_id: UUID) -> int:
@@ -221,31 +230,32 @@ class SqlAlchemyAdminReportsRepository:
         )
 
     def _count_target_reports(self, target_user_id: UUID) -> int:
-        """Reports against the user or their events, archived ones excluded.
+        """Reports against the user's own profile, archived ones excluded.
 
-        Same rule as the `report_count` of the admin user list.
+        Same rule as the `report_count` of the admin user file: reports against
+        the user's events belong to the event file.
         """
         return int(
             self.db.execute(
                 select(func.count())
                 .select_from(ReportModel)
-                .outerjoin(
-                    EventModel, EventModel.event_id == ReportModel.reported_event_id
-                )
                 .where(
                     ReportModel.deleted_at.is_(None),
                     ReportModel.status != ReportStatusEnum.REJECTED,
-                    or_(
-                        ReportModel.reported_user_id == target_user_id,
-                        EventModel.event_creator_id == target_user_id,
-                    ),
+                    ReportModel.reported_user_id == target_user_id,
                 )
             ).scalar_one()
         )
 
-    def _count_previous_reports(
-        self, report_id: UUID, target_user_id: UUID
-    ) -> tuple[int, int]:
+    @staticmethod
+    def _same_target(model: ReportModel):
+        # The reported event for an event report, the profile otherwise —
+        # the same grouping as the queue.
+        if model.reported_event_id is not None:
+            return ReportModel.reported_event_id == model.reported_event_id
+        return ReportModel.reported_user_id == model.reported_user_id
+
+    def _count_previous_reports(self, model: ReportModel) -> tuple[int, int]:
         is_archived = ReportModel.status == ReportStatusEnum.REJECTED
         is_resolved = ReportModel.status == ReportStatusEnum.RESOLVED
 
@@ -255,17 +265,28 @@ class SqlAlchemyAdminReportsRepository:
                 func.count().filter(is_resolved),
             )
             .select_from(ReportModel)
-            .outerjoin(EventModel, EventModel.event_id == ReportModel.reported_event_id)
             .where(
                 ReportModel.deleted_at.is_(None),
-                ReportModel.report_id != report_id,
-                or_(
-                    ReportModel.reported_user_id == target_user_id,
-                    EventModel.event_creator_id == target_user_id,
-                ),
+                ReportModel.report_id != model.report_id,
+                self._same_target(model),
             )
         ).one()
         return int(archived_count), int(resolved_count)
+
+    def _count_open_reports(self, model: ReportModel) -> int:
+        return int(
+            self.db.execute(
+                select(func.count())
+                .select_from(ReportModel)
+                .where(
+                    ReportModel.deleted_at.is_(None),
+                    ReportModel.status.in_(
+                        (ReportStatusEnum.PENDING, ReportStatusEnum.REVIEWED)
+                    ),
+                    self._same_target(model),
+                )
+            ).scalar_one()
+        )
 
     @staticmethod
     def _to_entity(
@@ -278,6 +299,7 @@ class SqlAlchemyAdminReportsRepository:
         resolved_by_name: str | None,
         target_reports_count: int,
         event: EventModel | None = None,
+        open_report_count: int = 0,
     ) -> AdminReportDetailRecord:
         opened_at = _as_utc(model.created_at)
         # ReportModel has no separate reported_at column, so opened_at and
@@ -328,4 +350,5 @@ class SqlAlchemyAdminReportsRepository:
             reported_event_moderation_status=(
                 event.moderation_status if event is not None else None
             ),
+            open_report_count=open_report_count,
         )

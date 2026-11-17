@@ -38,6 +38,7 @@ from app.domain.services import (
     InvalidPaginationError,
     ModeratedUserNotFoundError,
     NotificationDispatcher,
+    OnlyOneTargetFilterError,
     ParentTagNotCategoryError,
     ParentTagNotFoundError,
     ReportAlreadyResolvedError,
@@ -211,18 +212,32 @@ def read_admin_dashboard(
     description=(
         "Lista a fila administrativa agrupada por alvo: várias denúncias contra "
         "o mesmo usuário, estabelecimento ou evento viram uma linha, com o "
-        "total em `report_count`. A linha mostra a denúncia aberta mais "
+        "total em `report_count`; numa linha de evento, `organizer_name` traz "
+        "o nome de quem o organiza. A linha mostra a denúncia aberta mais "
         "recentemente para o alvo, da mais nova para a mais antiga. Sem "
         "`status`, devolve tudo menos `REJECTED`. `search` busca pelo nome do "
-        "usuário, título do evento ou número da denúncia. Exige Bearer token "
-        "de um usuário com `role = ADMIN`."
+        "usuário, título do evento ou número da denúncia. `target_user_id` e "
+        "`target_event_id` restringem a fila às denúncias contra aquela conta "
+        "ou aquele evento e não podem ser usados juntos; um alvo sem denúncias "
+        "devolve a lista vazia. Exige Bearer token de um usuário com "
+        "`role = ADMIN`."
     ),
     responses={
         status.HTTP_400_BAD_REQUEST: {
-            "description": "`cursor` malformado.",
+            "description": (
+                "`cursor` malformado, ou `target_user_id` e `target_event_id` "
+                "informados ao mesmo tempo."
+            ),
             "content": {
                 "application/json": {
-                    "example": {"detail": "Invalid pagination parameters"}
+                    "examples": {
+                        "pagination": {
+                            "value": {"detail": "Invalid pagination parameters"}
+                        },
+                        "target_filters": {
+                            "value": {"detail": "Only one target filter is allowed"}
+                        },
+                    }
                 }
             },
         },
@@ -258,6 +273,19 @@ def list_admin_reports(
             description="Nome do alvo, título do evento ou número da denúncia.",
         ),
     ] = None,
+    target_user_id: Annotated[
+        UUID | None,
+        Query(
+            description=(
+                "Só denúncias contra este usuário ou estabelecimento. Denúncias "
+                "contra eventos organizados por essa conta ficam de fora."
+            )
+        ),
+    ] = None,
+    target_event_id: Annotated[
+        UUID | None,
+        Query(description="Só denúncias contra este evento."),
+    ] = None,
     limit: Annotated[
         int,
         Query(
@@ -272,8 +300,18 @@ def list_admin_reports(
 ) -> AdminReportsOutput:
     try:
         page = reports_service.list_reports(
-            status=report_status, search=search, limit=limit, cursor=cursor
+            status=report_status,
+            search=search,
+            limit=limit,
+            cursor=cursor,
+            target_user_id=target_user_id,
+            target_event_id=target_event_id,
         )
+    except OnlyOneTargetFilterError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only one target filter is allowed",
+        ) from error
     except InvalidPaginationError as error:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -294,10 +332,14 @@ def list_admin_reports(
         "Retorna o detalhe completo de uma denúncia: conta responsável pelo alvo "
         "(usuário, estabelecimento ou organizador do evento denunciado), motivo, "
         "relato de quem denunciou, histórico de denúncias anteriores fechadas "
-        "contra o mesmo alvo e, quando já resolvida, os dados da resolução. "
+        "contra o mesmo alvo (o perfil, ou o evento numa denúncia de evento), "
+        "`open_report_count` com as denúncias abertas (`PENDING`/`REVIEWED`) "
+        "contra esse alvo, esta incluída, e, quando já resolvida, os dados da "
+        "resolução. "
         "Quando `target.type` é `EVENT`, traz também o bloco `organizer` "
         "(`user_id`, `name`, `photo_url`, `moderation_status`, `events_count`, "
-        "`reports_count`) e o bloco `event` (`id`, `title`, `moderation_status`), "
+        "`reports_count`, só as não arquivadas contra o perfil dele) e o bloco "
+        "`event` (`id`, `title`, `moderation_status`), "
         "com o `event_id` para `PATCH /admin/events/{event_id}/moderation`; nos "
         "demais alvos esses campos não vêm na resposta. "
         "Exige Bearer token de um usuário com `role = ADMIN`."
@@ -698,8 +740,9 @@ def get_audit_log(
         "Ponto único de escrita para toda ação de moderação sobre uma conta: "
         "`BAN` (definitivo), `SUSPEND` (até `duration_days` dias) ou `REVERT` "
         "(remove o banimento/suspensão e devolve o acesso imediatamente). "
-        "`report_id` é opcional em `BAN`/`SUSPEND` e, quando informado, marca "
-        "aquela denúncia como `RESOLVED` na mesma transação. Gera sempre uma "
+        "`report_id` é opcional em `BAN`/`SUSPEND`. A denúncia pode ser da "
+        "própria conta ou de um evento organizado por ela. A ação resolve a "
+        "denúncia informada na mesma transação e gera uma "
         "linha de auditoria. Exige Bearer token de um usuário com "
         "`role = ADMIN`."
     ),
