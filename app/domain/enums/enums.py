@@ -91,6 +91,8 @@ class ReportResolutionActionEnum(StrEnum):
     SUSPENDED = "SUSPENDED"
     ARCHIVED = "ARCHIVED"
     EVENT_REMOVED = "EVENT_REMOVED"
+    # Closed as RESOLVED after review, with nothing applied to the target.
+    NO_ACTION = "NO_ACTION"
 
 
 class AuditActionEnum(StrEnum):
@@ -98,6 +100,8 @@ class AuditActionEnum(StrEnum):
     USER_SUSPENDED = "USER_SUSPENDED"
     USER_REVERTED = "USER_REVERTED"
     REPORT_ARCHIVED = "REPORT_ARCHIVED"
+    REPORT_REVIEWED = "REPORT_REVIEWED"
+    REPORT_RESOLVED = "REPORT_RESOLVED"
     EVENT_REMOVED = "EVENT_REMOVED"
     TAG_CREATED = "TAG_CREATED"
     TAG_UPDATED = "TAG_UPDATED"

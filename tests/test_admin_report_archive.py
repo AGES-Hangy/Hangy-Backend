@@ -233,3 +233,146 @@ def test_non_admin_gets_403(archive_client: ArchiveClient) -> None:
     )
 
     assert response.status_code == 403
+
+
+# --- PATCH /admin/reports/{id}/review -------------------------------------
+
+
+def test_reviewing_a_pending_report_marks_it_reviewed(
+    archive_client: ArchiveClient,
+) -> None:
+    client, session_factory = archive_client
+    admin_header = admin_headers(session_factory)
+    with session_factory() as db:
+        target_id = add_user(db)
+        report_id = add_report(db, target_id, target_id)
+
+    response = client.patch(f"/admin/reports/{report_id}/review", headers=admin_header)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "REVIEWED"
+    assert body["resolution"] is None
+    [row] = audit_rows(session_factory)
+    assert row.action == AuditActionEnum.REPORT_REVIEWED
+    assert row.target_id == report_id
+
+
+def test_reviewing_a_report_already_in_review_returns_409(
+    archive_client: ArchiveClient,
+) -> None:
+    client, session_factory = archive_client
+    admin_header = admin_headers(session_factory)
+    with session_factory() as db:
+        target_id = add_user(db)
+        report_id = add_report(
+            db, target_id, target_id, status=ReportStatusEnum.REVIEWED
+        )
+
+    response = client.patch(f"/admin/reports/{report_id}/review", headers=admin_header)
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Report already in review"}
+
+
+@pytest.mark.parametrize(
+    "status", [ReportStatusEnum.RESOLVED, ReportStatusEnum.REJECTED]
+)
+def test_reviewing_a_closed_report_returns_409(
+    archive_client: ArchiveClient, status: ReportStatusEnum
+) -> None:
+    client, session_factory = archive_client
+    admin_header = admin_headers(session_factory)
+    with session_factory() as db:
+        target_id = add_user(db)
+        report_id = add_report(db, target_id, target_id, status=status)
+
+    response = client.patch(f"/admin/reports/{report_id}/review", headers=admin_header)
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Report already resolved"}
+
+
+# --- PATCH /admin/reports/{id}/resolve ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "status", [ReportStatusEnum.PENDING, ReportStatusEnum.REVIEWED]
+)
+def test_resolving_an_open_report_closes_it_without_action(
+    archive_client: ArchiveClient, status: ReportStatusEnum
+) -> None:
+    client, session_factory = archive_client
+    admin_header = admin_headers(session_factory)
+    with session_factory() as db:
+        target_id = add_user(db)
+        report_id = add_report(db, target_id, target_id, status=status)
+
+    response = client.patch(f"/admin/reports/{report_id}/resolve", headers=admin_header)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "RESOLVED"
+    assert body["resolution"]["action"] == "NO_ACTION"
+    target = user_row(session_factory, target_id)
+    assert target.banned_at is None
+    assert target.suspended_until is None
+    [row] = audit_rows(session_factory)
+    assert row.action == AuditActionEnum.REPORT_RESOLVED
+
+
+@pytest.mark.parametrize(
+    "status", [ReportStatusEnum.RESOLVED, ReportStatusEnum.REJECTED]
+)
+def test_resolving_a_closed_report_returns_409(
+    archive_client: ArchiveClient, status: ReportStatusEnum
+) -> None:
+    client, session_factory = archive_client
+    admin_header = admin_headers(session_factory)
+    with session_factory() as db:
+        target_id = add_user(db)
+        report_id = add_report(db, target_id, target_id, status=status)
+
+    response = client.patch(f"/admin/reports/{report_id}/resolve", headers=admin_header)
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "Report already resolved"}
+
+
+def test_a_report_resolved_without_action_counts_as_no_action_history(
+    archive_client: ArchiveClient,
+) -> None:
+    client, session_factory = archive_client
+    admin_header = admin_headers(session_factory)
+    with session_factory() as db:
+        target_id = add_user(db)
+        first_id = add_report(db, target_id, target_id)
+    client.patch(f"/admin/reports/{first_id}/resolve", headers=admin_header)
+    with session_factory() as db:
+        creator_id = add_user(db)
+        second_id = add_report(db, creator_id, target_id)
+
+    body = client.get(f"/admin/reports/{second_id}", headers=admin_header).json()
+
+    assert body["previous_reports"] == {
+        "total": 1,
+        "archived": 1,
+        "resolved_with_action": 0,
+    }
+
+
+@pytest.mark.parametrize("action", ["review", "resolve"])
+def test_non_admin_cannot_review_or_resolve(
+    archive_client: ArchiveClient, action: str
+) -> None:
+    client, session_factory = archive_client
+    with session_factory() as db:
+        requester_id = add_user(db)
+        target_id = add_user(db)
+        report_id = add_report(db, target_id, target_id)
+
+    response = client.patch(
+        f"/admin/reports/{report_id}/{action}", headers=header_for(requester_id)
+    )
+
+    assert response.status_code == 403
