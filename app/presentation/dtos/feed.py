@@ -4,7 +4,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.domain.enums import EventPrivacyEnum, LocationPrecisionEnum
-from app.domain.services import DEFAULT_FEED_LIMIT
+from app.domain.services import DEFAULT_FEED_LIMIT, DEFAULT_FEED_RADIUS_KM
 
 
 class FeedQuery(BaseModel):
@@ -13,6 +13,24 @@ class FeedQuery(BaseModel):
     limit: int = Field(
         default=DEFAULT_FEED_LIMIT,
         description="Maximum number of events returned per section.",
+    )
+    latitude: float | None = Field(
+        default=None,
+        description=(
+            "Latitude do aparelho. Junto com `longitude`, limita o feed aos "
+            "eventos a ate `radius_km` dali."
+        ),
+    )
+    longitude: float | None = Field(
+        default=None,
+        description="Longitude do aparelho; obrigatoria junto com `latitude`.",
+    )
+    radius_km: int = Field(
+        default=DEFAULT_FEED_RADIUS_KM,
+        description=(
+            "Raio em km ao redor de `latitude`/`longitude` (1 a 500). Ignorado "
+            "sem coordenadas."
+        ),
     )
 
 

@@ -3,10 +3,23 @@ from datetime import UTC, datetime
 from typing import Protocol
 from uuid import UUID
 
-from app.domain.entities import Feed, FeedEvent, FeedItem, FeedSection, Tag
+from app.domain.entities import (
+    Feed,
+    FeedArea,
+    FeedEvent,
+    FeedItem,
+    FeedSection,
+    Tag,
+)
 from app.domain.services.event_visibility import (
     is_event_visible_to_viewer,
     resolve_event_visibility,
+)
+from app.domain.services.nearby import (
+    MAX_LATITUDE,
+    MAX_LONGITUDE,
+    MIN_LATITUDE,
+    MIN_LONGITUDE,
 )
 
 DEFAULT_FEED_LIMIT = 10
@@ -14,6 +27,11 @@ MIN_FEED_LIMIT = 1
 MAX_FEED_LIMIT = 50
 # Guards the climb from a micro tag to its macro tag against a broken taxonomy.
 MAX_TAG_DEPTH = 10
+# With the viewer's position, the feed keeps nearby cities (Canoas, Gravataí
+# from Porto Alegre) and drops far ones (São Paulo is ~850 km away).
+DEFAULT_FEED_RADIUS_KM = 100
+MIN_FEED_RADIUS_KM = 1
+MAX_FEED_RADIUS_KM = 500
 
 
 class FeedRepository(Protocol):
@@ -27,6 +45,7 @@ class FeedRepository(Protocol):
         tag_ids: Collection[UUID],
         reference_time: datetime,
         limit: int,
+        area: FeedArea | None = None,
     ) -> list[FeedEvent]: ...
 
 
@@ -34,13 +53,29 @@ class InvalidFeedPaginationError(Exception):
     """Raised when the requested feed page size is outside the accepted range."""
 
 
+class InvalidFeedLocationError(Exception):
+    """Raised for coordinates out of range or only one of latitude/longitude."""
+
+
+class InvalidFeedRadiusError(Exception):
+    """Raised when the feed radius is outside the accepted range."""
+
+
 class FeedService:
     def __init__(self, repository: FeedRepository) -> None:
         self.repository = repository
 
-    def get_feed(self, user_id: UUID, limit: int = DEFAULT_FEED_LIMIT) -> Feed:
+    def get_feed(
+        self,
+        user_id: UUID,
+        limit: int = DEFAULT_FEED_LIMIT,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        radius_km: int = DEFAULT_FEED_RADIUS_KM,
+    ) -> Feed:
         if not MIN_FEED_LIMIT <= limit <= MAX_FEED_LIMIT:
             raise InvalidFeedPaginationError
+        area = self._resolve_area(latitude, longitude, radius_km)
 
         interest_tags = self.repository.list_interest_tags(user_id)
         if not interest_tags:
@@ -59,6 +94,7 @@ class FeedService:
                     tag_ids=micro_tag_ids,
                     reference_time=reference_time,
                     limit=limit + 1,
+                    area=area,
                 )
                 if is_event_visible_to_viewer(
                     event.event,
@@ -79,6 +115,30 @@ class FeedService:
                 )
             )
         return Feed(sections=tuple(sections))
+
+    @staticmethod
+    def _resolve_area(
+        latitude: float | None, longitude: float | None, radius_km: int
+    ) -> FeedArea | None:
+        """Without a position the feed is not bounded by distance, as before.
+
+        The profile only stores the city as free text, so the position comes
+        from the device on every request instead of from the user record.
+        """
+        if not MIN_FEED_RADIUS_KM <= radius_km <= MAX_FEED_RADIUS_KM:
+            raise InvalidFeedRadiusError
+        if latitude is None and longitude is None:
+            return None
+        if (
+            latitude is None
+            or longitude is None
+            or not MIN_LATITUDE <= latitude <= MAX_LATITUDE
+            or not MIN_LONGITUDE <= longitude <= MAX_LONGITUDE
+        ):
+            raise InvalidFeedLocationError
+        return FeedArea(
+            latitude=latitude, longitude=longitude, radius_m=radius_km * 1000
+        )
 
     @staticmethod
     def _to_item(feed_event: FeedEvent, viewer_id: UUID) -> FeedItem:

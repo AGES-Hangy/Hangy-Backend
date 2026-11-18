@@ -8,6 +8,15 @@ from app.domain.enums import EventParticipantStatusEnum, EventPrivacyEnum
 
 
 @dataclass(frozen=True, slots=True)
+class FeedArea:
+    """Circle around the viewer that bounds where feed events may happen."""
+
+    latitude: float
+    longitude: float
+    radius_m: int
+
+
+@dataclass(frozen=True, slots=True)
 class FeedEvent:
     """Persistence facts of a feed card, before the viewer's rules apply."""
 
