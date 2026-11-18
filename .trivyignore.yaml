@@ -1,9 +1,48 @@
 # Vulnerabilities accepted by scripts/scan-image.sh (PR check and GitLab deploy).
 # Prefer upgrading the dependency or base image. Add an entry only when no fix
-# is usable yet, always with a reason and an expiry so it gets re-reviewed:
+# is usable yet, always with a reason and an expiry so it gets re-reviewed.
 #
-# vulnerabilities:
-#   - id: CVE-2026-00000
-#     statement: "No upstream fix; the vulnerable code path is not used by the API"
-#     expired_at: 2027-01-31
-vulnerabilities: []
+# The entries below come from Debian 13 packages in python:3.14-slim that have
+# no fixed version yet (Trivy status affected/fix_deferred on 2026-11-18;
+# the Dockerfile already runs apt-get upgrade). When an entry expires the scan
+# blocks again: remove it if Debian shipped the fix, or re-review and extend.
+vulnerabilities:
+  # util-linux (bsdutils, mount, login, libblkid1, libmount1, libuuid1, ...):
+  # mount/nsenter flaws that need a local user running privileged mount tools.
+  # The container only runs uvicorn as its entrypoint and never calls them.
+  - id: CVE-2026-76642
+    statement: "util-linux mount helper post-hooks; no fix in Debian 13; the API never runs mount tools"
+    expired_at: 2027-01-31
+  - id: CVE-2026-78408
+    statement: "util-linux nsenter cgroup migration; no fix in Debian 13; the API never runs nsenter"
+    expired_at: 2027-01-31
+  - id: CVE-2026-78409
+    statement: "util-linux X-mount.subdir symlink escape; no fix in Debian 13; the API never runs mount"
+    expired_at: 2027-01-31
+  - id: CVE-2026-78410
+    statement: "util-linux restricted bind mounts; no fix in Debian 13; the API never runs mount"
+    expired_at: 2027-01-31
+  - id: CVE-2026-54369
+    statement: "libacl1 symlink traversal needs a privileged process applying ACLs to attacker paths; no fix in Debian 13; the API does not manage ACLs"
+    expired_at: 2027-01-31
+  - id: CVE-2025-69720
+    statement: "ncurses buffer overflow via terminal data; no fix in Debian 13; the API has no interactive terminal"
+    expired_at: 2027-01-31
+  # libsqlite3-0 is loaded by Python's sqlite3 module; production uses
+  # PostgreSQL (SQLite only for the image smoke test) and never uses FTS5 or
+  # session changesets, which these CVEs require.
+  - id: CVE-2026-119373
+    statement: "SQLite FTS5 heap overflow; no fix in Debian 13; production uses PostgreSQL and no FTS5"
+    expired_at: 2027-01-31
+  - id: CVE-2026-119374
+    statement: "SQLite corrupted FTS5 index; no fix in Debian 13; production uses PostgreSQL and no FTS5"
+    expired_at: 2027-01-31
+  - id: CVE-2026-119379
+    statement: "SQLite crafted session changesets; no fix in Debian 13; production uses PostgreSQL and no session extension"
+    expired_at: 2027-01-31
+  - id: CVE-2026-16742
+    statement: "systemd-homed privilege escalation (libsystemd0/libudev1 shipped as libraries); no fix in Debian 13; no systemd or homed runs in the container"
+    expired_at: 2027-01-31
+  - id: CVE-2026-9538
+    statement: "perl Archive::Tar DoS on crafted tar (perl-base); fix deferred by Debian; the API never runs Perl or reads tar files"
+    expired_at: 2027-01-31
