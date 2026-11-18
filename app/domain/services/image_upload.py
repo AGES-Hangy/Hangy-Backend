@@ -33,6 +33,8 @@ class ImageStorage(Protocol):
 
     def owns(self, url: str) -> bool: ...
 
+    def key_of(self, url: str) -> str | None: ...
+
 
 class ImageUploadService:
     def __init__(
@@ -59,3 +61,6 @@ class ImageUploadService:
 
     def owns(self, url: str) -> bool:
         return self.storage.owns(url)
+
+    def key_of(self, url: str) -> str | None:
+        return self.storage.key_of(url)

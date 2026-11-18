@@ -5,7 +5,7 @@ from uuid import UUID
 from sqlalchemy import and_, exists, func, select
 from sqlalchemy.orm import Session, aliased, selectinload
 
-from app.domain.entities import FeedEvent, Tag
+from app.domain.entities import FeedArea, FeedEvent, Tag
 from app.domain.enums import (
     EventParticipantStatusEnum,
     EventPrivacyEnum,
@@ -20,6 +20,7 @@ from app.infrastructure.repository.models import (
     event_tag,
     user_tag,
 )
+from app.infrastructure.repository.nearby import within_radius_filter
 from app.infrastructure.repository.search import (
     viewer_confirmed_in_event,
     visible_events_filter,
@@ -63,6 +64,7 @@ class SqlAlchemyFeedRepository:
         tag_ids: Collection[UUID],
         reference_time: datetime,
         limit: int,
+        area: FeedArea | None = None,
     ) -> list[FeedEvent]:
         if not tag_ids or limit <= 0:
             return []
@@ -90,6 +92,22 @@ class SqlAlchemyFeedRepository:
         tagged_events = select(event_tag.c.event_id).where(
             event_tag.c.tag_id.in_(tag_ids)
         )
+        # The approximate point for everyone: it is what a PRIVATE event shows
+        # to strangers, so the radius cannot be used to probe its address, and
+        # its few hundred meters of offset do not matter at this scale.
+        area_filter = (
+            ()
+            if area is None
+            else (
+                within_radius_filter(
+                    EventModel.approx_latitude,
+                    EventModel.approx_longitude,
+                    area.latitude,
+                    area.longitude,
+                    area.radius_m,
+                ),
+            )
+        )
         rows = self.db.execute(
             select(
                 EventModel,
@@ -114,6 +132,7 @@ class SqlAlchemyFeedRepository:
                 # ones they already confirmed live on their profile instead.
                 EventModel.event_creator_id != viewer_id,
                 ~viewer_confirmed,
+                *area_filter,
             )
             .order_by(EventModel.starts_at, EventModel.event_id)
             .limit(limit)

@@ -43,6 +43,13 @@ case "$(docker info --format '{{.Architecture}}')" in
   *) echo 'The Docker runner must be Linux AMD64 or ARM64.' >&2; exit 1 ;;
 esac
 
+# Build and scan the production ARM64 image before touching AWS: a HIGH/CRITICAL
+# CVE stops the deploy with the infrastructure unchanged and no credentials issued.
+local_image="hangy-backend:${CI_COMMIT_SHA}-${CI_PIPELINE_ID}-${CI_JOB_ID}"
+docker buildx create --use --name hangy-builder --driver docker-container
+docker buildx build --platform linux/arm64 --load --tag "$local_image" .
+bash scripts/scan-image.sh "$local_image"
+
 export CI_ENV_FILE="$work_dir/state.env"
 bash scripts/bootstrap-terraform-state.sh
 while IFS='=' read -r name value; do
@@ -86,6 +93,36 @@ if ! grep -Fxq 'aws_iam_openid_connect_provider.gitlab[0]' <<< "$state"; then
         --open-id-connect-provider-arn "$oidc_arn" --client-id "$CI_SERVER_URL"
     fi
   fi
+fi
+
+# An identity verified in the console may already exist outside this state.
+import_ses_identity() {
+  local address=$1 email=$2 existing_address
+  if grep -Fxq -- "$address" <<< "$state"; then
+    return 0
+  fi
+  if ! aws sesv2 get-email-identity --region "$AWS_REGION" --email-identity "$email" \
+    > /dev/null 2> "$work_dir/ses-identity-error"; then
+    if grep -Fq '(NotFoundException)' "$work_dir/ses-identity-error"; then
+      return 0
+    fi
+    cat "$work_dir/ses-identity-error" >&2
+    return 1
+  fi
+  if [[ -n "$state" ]]; then
+    existing_address=$(terraform -chdir=infra/terraform state list -id="$email")
+    if [[ -n "$existing_address" ]]; then
+      echo "SES identity for $address is already managed at $existing_address. Reconcile the state before deploying." >&2
+      return 1
+    fi
+  fi
+  echo "Importing existing SES identity at $address."
+  terraform -chdir=infra/terraform import -input=false -lock-timeout=5m "$address" "$email"
+}
+
+import_ses_identity aws_sesv2_email_identity.password_reset "$EMAIL_FROM"
+if [[ -n "${SES_TEST_RECIPIENT:-}" && "$SES_TEST_RECIPIENT" != "$EMAIL_FROM" ]]; then
+  import_ses_identity 'aws_sesv2_email_identity.test_recipient[0]' "$SES_TEST_RECIPIENT"
 fi
 terraform -chdir=infra/terraform plan -input=false -lock-timeout=5m -out="$work_dir/hangy.tfplan"
 terraform -chdir=infra/terraform apply -input=false -lock-timeout=5m "$work_dir/hangy.tfplan"
@@ -137,8 +174,8 @@ registry="${repository_uri%%/*}"
 tag="${CI_COMMIT_SHA}-${CI_PIPELINE_ID}-${CI_JOB_ID}"
 image="$repository_uri:$tag"
 aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
-docker buildx create --use --name hangy-builder --driver docker-container
-docker buildx build --platform linux/arm64 --load --tag "$image" .
+# Publish the image that was scanned above, without rebuilding it.
+docker tag "$local_image" "$image"
 
 # Exercise the production entrypoint before publishing the image.
 # Allow slower ARM64 emulation on local runners without changing production checks.

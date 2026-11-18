@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.domain.entities import Event, EventInviteLink, NewEventInviteLink
 from app.domain.services.notification_dispatcher import NotificationDispatcher
+from app.infrastructure.push.after_commit import AfterCommitPushSender
 from app.infrastructure.push.expo_push_sender import expo_push_sender
 from app.infrastructure.repository.device import SqlAlchemyUserDeviceRepository
 from app.infrastructure.repository.event import SqlAlchemyEventRepository
@@ -17,7 +18,7 @@ class SqlAlchemyEventInviteLinkRepository:
         dispatcher = NotificationDispatcher(
             repository=SqlAlchemyNotificationRepository(db),
             device_repository=SqlAlchemyUserDeviceRepository(db),
-            push_sender=expo_push_sender,
+            push_sender=AfterCommitPushSender(db, expo_push_sender),
         )
         self.event_repository = SqlAlchemyEventRepository(db, dispatcher)
 

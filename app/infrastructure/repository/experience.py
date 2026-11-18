@@ -81,6 +81,7 @@ class SqlAlchemyExperienceRepository:
         self,
         event_id: UUID,
         *,
+        viewer_id: UUID | None = None,
         limit: int,
         cursor_created_at: datetime | None,
         cursor_photo_id: UUID | None,
@@ -109,6 +110,13 @@ class SqlAlchemyExperienceRepository:
                 ExperienceImagesModel.photo_id.desc(),
             )
         )
+        if viewer_id is not None:
+            # Imported here: block.py imports repository modules at load time.
+            from app.infrastructure.repository.block import block_exists_between
+
+            # Photos by someone on either side of a block with the viewer are
+            # hidden, like that person's profile and events.
+            stmt = stmt.where(~block_exists_between(UserModel.user_id, viewer_id))
         if cursor_created_at is not None and cursor_photo_id is not None:
             stmt = stmt.where(
                 or_(

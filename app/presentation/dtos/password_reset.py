@@ -1,5 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
+from app.presentation.dtos.auth import EmailInput
+
 __all__ = [
     "PasswordResetConfirmInput",
     "PasswordResetRequestInput",
@@ -18,19 +20,13 @@ class PasswordResetConfirmInput(BaseModel):
 class PasswordResetRequestInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    email: str = Field(
-        max_length=254,
-        pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
-    )
+    email: EmailInput
 
 
 class VerifyResetCodeRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    email: str = Field(
-        max_length=254,
-        pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
-    )
+    email: EmailInput
     code: str = Field(pattern=r"^\d{6}$")
 
 

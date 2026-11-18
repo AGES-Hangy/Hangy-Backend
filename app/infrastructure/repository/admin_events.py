@@ -94,7 +94,8 @@ class SqlAlchemyAdminEventsRepository:
                 ),
             ).where(EventParticipantModel.event_id == event_id)
         ).one()
-        # Same rule as the user file: archived reports (REJECTED) do not count,
+        # Same rule as the user file: reports closed without action (REJECTED,
+        # or RESOLVED with NO_ACTION) do not count,
         # and a report is upheld when it ended with the event removed.
         report_count, report_upheld_count = self.db.execute(
             select(
@@ -107,6 +108,9 @@ class SqlAlchemyAdminEventsRepository:
                 ReportModel.reported_event_id == event_id,
                 ReportModel.deleted_at.is_(None),
                 ReportModel.status != ReportStatusEnum.REJECTED,
+                ReportModel.resolution_action.is_distinct_from(
+                    ReportResolutionActionEnum.NO_ACTION
+                ),
             )
         ).one()
         return AdminEventMetrics(

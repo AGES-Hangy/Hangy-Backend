@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -35,7 +35,7 @@ class SqlAlchemyBusinessRegistrationRepository:
     def get_by_email(self, email: str) -> User | None:
         model = self.db.scalar(
             select(UserModel).where(
-                UserModel.email == email,
+                func.lower(UserModel.email) == email.lower(),
                 UserModel.deleted_at.is_(None),
             )
         )

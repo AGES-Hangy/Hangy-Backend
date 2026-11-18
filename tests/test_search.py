@@ -1564,6 +1564,26 @@ def test_search_businesses_excludes_deleted_accounts(context):
     assert [item["business_name"] for item in body["items"]] == ["Bar Ativo"]
 
 
+def test_search_excludes_admin_accounts_from_businesses_and_people(context):
+    admin_business = create_business(context.db, "Bar da Moderação")
+    create_business(context.db, "Bar Aberto")
+    admin_person = create_person(context.db, "Moderadora Ana")
+    create_person(context.db, "Ana Souza")
+    for user_id in (admin_business, admin_person):
+        context.db.get(UserModel, user_id).role = UserRoleEnum.ADMIN
+    context.db.commit()
+
+    businesses = context.client.get(
+        "/search/businesses", params={"q": "bar"}, headers=context.auth_headers
+    ).json()
+    people = context.client.get(
+        "/search/users", params={"q": "ana"}, headers=context.auth_headers
+    ).json()
+
+    assert [item["business_name"] for item in businesses["items"]] == ["Bar Aberto"]
+    assert [item["name"] for item in people["items"]] == ["Ana Souza"]
+
+
 def test_search_businesses_is_accent_and_case_insensitive(context):
     create_business(context.db, "Café Açaí")
 

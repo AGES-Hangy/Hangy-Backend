@@ -22,3 +22,6 @@ infra
 **/*.tfstate*
 **/*.tfvars*
 **/*.tfplan
+.trivyignore.yaml
+.trivycache
+trivy-report.json

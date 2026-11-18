@@ -2,11 +2,21 @@ from datetime import date
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, SecretStr
 
 from app.domain.enums import UserRoleEnum, UserTypeEnum
 
 EMAIL_PATTERN = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+# Emails are stored and compared lower-cased: mobile keyboards capitalize the
+# first letter, and "Ana@x.com" and "ana@x.com" are the same mailbox.
+EmailInput = Annotated[
+    str,
+    Field(max_length=254, pattern=EMAIL_PATTERN),
+    AfterValidator(str.lower),
+]
+# Upper bound for any password the API hashes or verifies, so a huge body can't
+# make a single request spend seconds in the hasher.
+PASSWORD_MAX_LENGTH = 128
 CPF_PATTERN = r"^\d{11}$"
 CNPJ_PATTERN = r"^\d{14}$"
 # Brazilian numbers only: optional +55/55 country code, a 2-digit DDD (plain
@@ -28,7 +38,7 @@ class RegisterPersonalRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     user_type: Literal[UserTypeEnum.PERSONAL] = UserTypeEnum.PERSONAL
-    email: str = Field(max_length=254, pattern=EMAIL_PATTERN)
+    email: EmailInput
     password: SecretStr = Field(min_length=8, max_length=128)
     name: str = Field(min_length=1, max_length=120)
     cpf: str = Field(pattern=CPF_PATTERN)
@@ -43,7 +53,7 @@ class RegisterBusinessRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     user_type: Literal[UserTypeEnum.BUSINESS] = UserTypeEnum.BUSINESS
-    email: str = Field(max_length=254, pattern=EMAIL_PATTERN)
+    email: EmailInput
     password: SecretStr = Field(min_length=8, max_length=128)
     business_name: str = Field(min_length=1, max_length=120)
     cnpj: str = Field(pattern=CNPJ_PATTERN)
@@ -63,8 +73,8 @@ RegisterRequest = Annotated[
 class LoginRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    email: str = Field(max_length=254, pattern=EMAIL_PATTERN)
-    password: SecretStr
+    email: EmailInput
+    password: SecretStr = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)
 
 
 class AuthPersonalUserOutput(BaseModel):
@@ -86,7 +96,21 @@ class AuthBusinessUserOutput(BaseModel):
 class AuthOutput(BaseModel):
     access_token: str
     token_type: Literal["bearer"]
+    expires_in: int = Field(description="Segundos ate o access_token expirar.")
+    refresh_token: str = Field(
+        description=(
+            "Token opaco para POST /auth/refresh. Vale uma unica vez: cada "
+            "refresh devolve um novo."
+        )
+    )
+    refresh_expires_in: int = Field(description="Segundos ate o refresh_token expirar.")
     user: AuthPersonalUserOutput | AuthBusinessUserOutput
+
+
+class RefreshTokenInput(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    refresh_token: str = Field(min_length=1, max_length=256)
 
 
 class PersonalProfileOutput(BaseModel):
@@ -116,4 +140,4 @@ class CurrentUserOutput(BaseModel):
 class DeleteAccountInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    password: SecretStr
+    password: SecretStr = Field(min_length=1, max_length=PASSWORD_MAX_LENGTH)

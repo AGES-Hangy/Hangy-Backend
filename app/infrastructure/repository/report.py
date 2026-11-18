@@ -146,6 +146,16 @@ class SqlAlchemyReportRepository:
         model.resolution_action = ReportResolutionActionEnum.ARCHIVED
         self.db.flush()
 
+    def mark_reviewed(self, report_id: UUID) -> None:
+        """Mark the report REVIEWED ("Em análise"). Flush only: the caller commits."""
+        model = self.db.scalar(
+            select(ReportModel).where(ReportModel.report_id == report_id)
+        )
+        if model is None:
+            raise ValueError("A reviewed report must already exist")
+        model.status = ReportStatusEnum.REVIEWED
+        self.db.flush()
+
     def commit(self) -> None:
         self.db.commit()
 

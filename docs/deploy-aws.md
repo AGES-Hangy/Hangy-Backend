@@ -122,7 +122,7 @@ Variáveis opcionais, também com escopo `production`:
 | `CORS_ORIGINS` | Lista JSON de origens autorizadas, por exemplo `["https://hangy.example", "http://localhost:8081"]`. Se omitida ou vazia, usa `FRONTEND_BASE_URL` sem a barra final |
 | `API_ALLOWED_CIDRS` | `["0.0.0.0/0"]`; lista JSON de origens IPv4 autorizadas na porta 8000 |
 | `TF_STATE_KEY` | `<CI_PROJECT_PATH>/production.tfstate`; informe a chave anterior se a infraestrutura já foi criada pelo GitHub |
-| `SES_TEST_RECIPIENT` | Opcional: endereço real para testar no sandbox; Terraform cria a identidade e a AWS envia a mensagem de verificação |
+| `SES_TEST_RECIPIENT` | Opcional: endereço real para testar no sandbox; o pipeline reutiliza a identidade existente ou cria uma para a AWS enviar a mensagem de verificação |
 | `SES_REQUEST_PRODUCTION_ACCESS` | `false`; `true` solicita acesso de produção automaticamente após o apply, se ainda não houver pedido pendente/aprovado |
 | `SES_USE_CASE_DESCRIPTION` | Obrigatório ao solicitar produção: descrição verdadeira do uso, consentimento e tratamento de bounces/reclamações (até 5000 caracteres) |
 | `SES_WEBSITE_URL` | URL pública HTTP(S) apresentada à AWS; usa `FRONTEND_BASE_URL` se omitida |
@@ -146,8 +146,11 @@ na região `AWS_REGION` (padrão `us-east-2`, onde o SES está disponível), lim
 `ses:SendEmail` da EC2 a essa identidade e grava `EMAIL_BACKEND=ses`,
 `EMAIL_FROM` e `SES_REGION` no segredo da aplicação. O deploy exige `EMAIL_FROM`
 antes de provisionar recursos. Não altere o segredo manualmente: o próximo apply
-restaura os valores gerenciados. Uma identidade já existente deve ser importada
-nesse endereço Terraform antes do apply, preservando o state existente.
+restaura os valores gerenciados. Antes do plano, o pipeline consulta o SES para
+cada endereço configurado que ainda não está no state. Se a identidade já
+existe, ele a importa no state já usado pelo deploy, preservando sua verificação.
+Use endereços dedicados a esta instalação, pois as identidades importadas
+passam a ser gerenciadas pelo Terraform.
 
 O preparo é executado automaticamente por `scripts/setup-ses.sh` depois do apply
 e antes de publicar/substituir o contêiner. O script verifica o remetente,
@@ -166,16 +169,12 @@ Para um primeiro teste real sem aguardar a saída do sandbox:
 
 1. Cadastre `EMAIL_FROM` e `SES_TEST_RECIPIENT` com caixas que você controla;
    mantenha `SES_REQUIRE_PRODUCTION_ACCESS` ausente ou `false`.
-2. Execute o deploy pelo fluxo normal da `main`. Terraform cria as identidades
-   e a AWS envia as mensagens de verificação. Se os endereços forem iguais,
-   apenas uma identidade é criada. Identidades já existentes devem ser importadas
-   no state antes do apply (`terraform import aws_sesv2_email_identity.password_reset
-   'remetente@dominio.com'`; para o destinatário distinto, use
-   `'aws_sesv2_email_identity.test_recipient[0]'` com o endereço correspondente).
-   Use o backend e as variáveis da instalação existente, sem criar outro state.
-3. Abra os links de verificação do remetente e do destinatário e execute novamente
-   o pipeline. O script confirma a configuração de sandbox; isso ainda não comprova
-   entrega. Cadastre o destinatário no Hangy e teste o fluxo de redefinição pela API.
+2. Execute o deploy pelo fluxo normal da `main`. O pipeline importa identidades
+   existentes e o Terraform cria as que faltam. Se os endereços forem iguais,
+   o Terraform gerencia uma única identidade.
+3. Se algum endereço ainda estiver pendente, abra o link de verificação enviado
+   pela AWS e execute o pipeline novamente. Cadastre o destinatário no Hangy e
+   teste a entrega pelo fluxo de redefinição da API.
 
 Para automatizar o pedido de acesso de produção, configure
 `SES_REQUEST_PRODUCTION_ACCESS=true`, `SES_USE_CASE_DESCRIPTION` com o uso real
@@ -266,11 +265,16 @@ use **Retry** no job `deploy` do pipeline da `main`. O pipeline executa:
 
 1. Lint, formatação, testes da API e migrações em um PostgreSQL de teste.
 2. Validação e testes do Terraform e do bootstrap, sem acesso à AWS.
-3. Criação ou reutilização do bucket S3 dedicado ao estado do Terraform.
-4. `terraform plan` e `terraform apply` para criar ou atualizar a infraestrutura.
-5. Leitura dos IDs dos recursos criados e autenticação OIDC com a role de deploy.
-6. Build e smoke test da imagem `linux/arm64`, publicação no ECR e deploy na EC2.
-7. Migrações no RDS, seed de produção e health check da aplicação.
+3. Build da imagem `linux/arm64` e scan com o Trivy (`scripts/scan-image.sh`).
+   Qualquer CVE HIGH/CRITICAL, com ou sem correção, para o deploy aqui, antes de
+   qualquer mudança na AWS. Para aceitar um risco, registre a CVE no
+   `.trivyignore.yaml` com `statement` e `expired_at`. O relatório completo fica
+   no artifact `trivy-report.json` do job.
+4. Criação ou reutilização do bucket S3 dedicado ao estado do Terraform.
+5. `terraform plan` e `terraform apply` para criar ou atualizar a infraestrutura.
+6. Leitura dos IDs dos recursos criados e autenticação OIDC com a role de deploy.
+7. Smoke test da imagem escaneada, publicação no ECR e deploy na EC2.
+8. Migrações no RDS, seed de produção e health check da aplicação.
 
 **O apply é automático nos pushes da `main`**, sem etapa manual de aprovação.
 Isso inclui mudanças feitas nos arquivos Terraform. O primeiro deploy leva mais
@@ -282,7 +286,9 @@ A URL da API aparece no log do job `deploy`. O endpoint inicial
 é HTTP na porta 8000; domínio e HTTPS não são configurados neste módulo.
 
 Os jobs `test` e `validate-infra` verificam merge requests sem provisionar recursos
-e precisam passar antes do deploy. No GitHub, as verificações de PR continuam.
+e precisam passar antes do deploy. No GitHub, as verificações de PR continuam;
+entre elas, o workflow `Container Scan` faz o mesmo build `linux/arm64` e o mesmo
+scan do deploy, para que um PR que traga CVE HIGH/CRITICAL falhe antes do merge.
 O job de deploy usa `resource_group: aws-production` para serializar todo o fluxo
 e rejeita um commit que já não seja o mais recente da `main` ao iniciar.
 

@@ -44,7 +44,9 @@ class EventDetailsService:
     def __init__(self, repository: EventDetailsRepository) -> None:
         self.repository = repository
 
-    def get_details(self, event_id: UUID, viewer_id: UUID) -> EventDetails:
+    def get_details(
+        self, event_id: UUID, viewer_id: UUID, viewer_is_admin: bool = False
+    ) -> EventDetails:
         data = self.repository.get_details(event_id, viewer_id)
         if data is None or data.organizer_blocked_viewer:
             raise EventDetailsNotFoundError
@@ -57,9 +59,12 @@ class EventDetailsService:
         # use the same 404 as a missing event to avoid revealing their existence.
         if event.event_status is EventStatusEnum.DRAFT and not is_organizer:
             raise EventDetailsNotFoundError
+        # Admins reach invite-only events from the moderation panel; they still
+        # see them like an outsider (no exact address, no participants).
         if (
             event.event_privacy is EventPrivacyEnum.INVITE_ONLY
             and not is_organizer
+            and not viewer_is_admin
             and participation_status is not EventParticipantStatusEnum.CONFIRMED
         ):
             raise EventInviteOnlyError

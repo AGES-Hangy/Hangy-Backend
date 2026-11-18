@@ -28,6 +28,7 @@ class AdminUsersAssembler:
                 AdminUserOutput(
                     user_id=item.user_id,
                     name=item.name,
+                    user_type=item.user_type,
                     moderation_status=item.moderation_status,
                     suspended_until=item.suspended_until,
                     event_count=item.event_count,

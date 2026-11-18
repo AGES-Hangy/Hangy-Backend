@@ -12,10 +12,14 @@ from app.domain.enums import (
     NotificationTypeEnum,
 )
 from app.domain.services.event_location import approximate_point
+from app.domain.services.event_timing import has_event_ended
 
 logger = getLogger(__name__)
 
 MAX_EVENT_TAGS = 5
+# Uploads from POST /uploads/event-covers land under this prefix plus the
+# uploader's id; only those can become (and later be deleted as) a cover.
+EVENT_COVERS_FOLDER = "events/covers"
 MIN_LATITUDE, MAX_LATITUDE = -90.0, 90.0
 MIN_LONGITUDE, MAX_LONGITUDE = -180.0, 180.0
 
@@ -34,6 +38,11 @@ NOTIFICATION_TYPE_BY_STATUS: dict[EventParticipantStatusEnum, NotificationTypeEn
     EventParticipantStatusEnum.REJECTED: NotificationTypeEnum.EVENT_REQUEST_REJECTED,
     EventParticipantStatusEnum.REMOVED: NotificationTypeEnum.EVENT_PARTICIPANT_REMOVED,
 }
+
+
+def _as_utc(value: datetime) -> datetime:
+    """SQLite drops tzinfo on read; treat naive datetimes as UTC."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
 class EventRepository(Protocol):
@@ -57,6 +66,8 @@ class EventRepository(Protocol):
 
     def cancel(self, event_id: UUID) -> Event: ...
 
+    def finish(self, event_id: UUID, ends_at: datetime) -> Event: ...
+
     def get(self, event_id: UUID) -> Event | None: ...
 
     def update(self, event: Event, tag_ids: Collection[UUID] | None) -> Event: ...
@@ -67,9 +78,13 @@ class EventRepository(Protocol):
         self, event_id: UUID, participant_ids: list[UUID]
     ) -> None: ...
 
+    def is_cover_used_by_other_event(self, url: str, event_id: UUID) -> bool: ...
+
 
 class ImageUploadServiceProtocol(Protocol):
     def owns(self, url: str) -> bool: ...
+
+    def key_of(self, url: str) -> str | None: ...
 
     def delete(self, url: str) -> None: ...
 
@@ -122,6 +137,14 @@ class EventAlreadyFinishedError(Exception):
     """Raised when an event that has already finished is changed."""
 
 
+class EventNotStartedError(Exception):
+    """Raised when an event is finished before its start time."""
+
+
+class EventAlreadyCancelledError(Exception):
+    """Raised when a cancelled event is edited or has its participants changed."""
+
+
 class EventsService:
     def __init__(
         self,
@@ -145,7 +168,7 @@ class EventsService:
         if len(event.tag_ids) > MAX_EVENT_TAGS:
             raise TooManyEventTagsError
 
-        self._validate_cover_photo_url(event.cover_photo_url)
+        self._validate_cover_photo_url(event.cover_photo_url, event.event_creator_id)
 
         if event.tag_ids:
             existing = self.repository.find_existing_tag_ids(event.tag_ids)
@@ -183,6 +206,10 @@ class EventsService:
 
         if event.event_creator_id != requester_id:
             raise NotEventOrganizerError
+        if event.event_status is EventStatusEnum.CANCELLED:
+            raise EventAlreadyCancelledError
+        if has_event_ended(event):
+            raise EventAlreadyFinishedError
 
         participant = self.repository.get_participant_for_update(
             event_id, participant_id
@@ -211,9 +238,33 @@ class EventsService:
             raise EventNotFoundError
         if event.event_creator_id != requester_id:
             raise NotEventOrganizerError
-        if event.event_status is EventStatusEnum.FINISHED:
+        # Cancelling twice is a no-op: it must not notify every participant again.
+        if event.event_status is EventStatusEnum.CANCELLED:
+            return event
+        if has_event_ended(event):
             raise EventAlreadyFinishedError
         return self.repository.cancel(event_id)
+
+    def finish(self, event_id: UUID, requester_id: UUID) -> Event:
+        """Close an event that is happening; its end moves up to now.
+
+        Finishing twice, or one whose end time already passed, only records
+        FINISHED: the original end is kept, nothing moves it forward.
+        """
+        # Locked so a concurrent cancel and finish cannot both go through.
+        event = self.repository.get_by_id_for_update(event_id)
+        if event is None:
+            raise EventNotFoundError
+        if event.event_creator_id != requester_id:
+            raise NotEventOrganizerError
+        if event.event_status is EventStatusEnum.CANCELLED:
+            raise EventAlreadyCancelledError
+        if event.event_status is EventStatusEnum.FINISHED:
+            return event
+        now = datetime.now(UTC)
+        if _as_utc(event.starts_at) > now:
+            raise EventNotStartedError
+        return self.repository.finish(event_id, min(_as_utc(event.ends_at), now))
 
     def update(self, event_id: UUID, organizer_id: UUID, changes: EventUpdate) -> Event:
         """Apply a partial update after enforcing the event editing rules."""
@@ -222,7 +273,9 @@ class EventsService:
             raise EventNotFoundError
         if event.event_creator_id != organizer_id:
             raise NotEventOrganizerError
-        if event.event_status is EventStatusEnum.FINISHED:
+        if event.event_status is EventStatusEnum.CANCELLED:
+            raise EventAlreadyCancelledError
+        if has_event_ended(event):
             raise EventAlreadyFinishedError
 
         starts_at = (
@@ -248,7 +301,7 @@ class EventsService:
             and changes.cover_photo_url != event.cover_photo_url
         )
         if cover_changed:
-            self._validate_cover_photo_url(changes.cover_photo_url)
+            self._validate_cover_photo_url(changes.cover_photo_url, organizer_id)
 
         tag_ids: Collection[UUID] | None = None
         if "tag_ids" in changes.fields_to_update:
@@ -328,10 +381,16 @@ class EventsService:
         updated_event = self.repository.update(updated_event, tag_ids)
 
         # The repository commits the new cover before the old object is deleted.
+        # Only an uploaded cover no other event still shows is deleted: a URL
+        # pointing at anything else in the bucket (a profile or experience
+        # photo, another event's cover) must never be removed from here.
         if (
             cover_changed
             and event.cover_photo_url is not None
-            and self.image_upload_service.owns(event.cover_photo_url)
+            and self._is_event_cover(event.cover_photo_url)
+            and not self.repository.is_cover_used_by_other_event(
+                event.cover_photo_url, event_id
+            )
         ):
             try:
                 self.image_upload_service.delete(event.cover_photo_url)
@@ -340,13 +399,32 @@ class EventsService:
                     "Failed to delete previous cover for event %s", event_id
                 )
 
-        if {"event_date", "location"} & changes.fields_to_update:
+        schedule_or_place_changed = (
+            _as_utc(updated_event.starts_at) != _as_utc(event.starts_at)
+            or _as_utc(updated_event.ends_at) != _as_utc(event.ends_at)
+            or updated_event.event_latitude != event.event_latitude
+            or updated_event.event_longitude != event.event_longitude
+        )
+        # Re-sending the same date or location is not a change worth a push.
+        if schedule_or_place_changed:
             participant_ids = self.repository.get_confirmed_participant_ids(event_id)
             if participant_ids:
                 self.repository.notify_event_updated(event_id, participant_ids)
 
         return updated_event
 
-    def _validate_cover_photo_url(self, url: str | None) -> None:
-        if url is not None and not self.image_upload_service.owns(url):
+    def _validate_cover_photo_url(self, url: str | None, organizer_id: UUID) -> None:
+        """A new cover must be an event cover this organizer uploaded."""
+        if url is None:
+            return
+        key = self.image_upload_service.key_of(url)
+        if key is None or not key.startswith(f"{EVENT_COVERS_FOLDER}/{organizer_id}/"):
             raise InvalidCoverPhotoUrlError
+
+    def _is_event_cover(self, url: str) -> bool:
+        key = self.image_upload_service.key_of(url)
+        return key is not None and key.startswith(f"{EVENT_COVERS_FOLDER}/")
+
+
+def _as_utc(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)

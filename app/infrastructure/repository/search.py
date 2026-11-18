@@ -26,6 +26,7 @@ from app.domain.enums import (
     EventPrivacyEnum,
     EventStatusEnum,
     UserConnectionStatusEnum,
+    UserRoleEnum,
     UserTypeEnum,
 )
 from app.infrastructure.repository.block import block_exists_between
@@ -77,6 +78,31 @@ def viewer_confirmed_in_event(viewer_id: UUID) -> ColumnElement[bool]:
     )
 
 
+def user_is_active_account(
+    user_id: ColumnElement[UUID], now: datetime | None = None
+) -> ColumnElement[bool]:
+    """SQL predicate: the account exists, isn't deleted, banned or suspended.
+
+    Moderated accounts (task 249) and their events leave every discovery
+    surface (search, feed, nearby) while the moderation lasts.
+    """
+    effective_time = now if now is not None else datetime.now(UTC)
+    moderated_user = aliased(UserModel)
+    return (
+        exists()
+        .where(
+            moderated_user.user_id == user_id,
+            moderated_user.deleted_at.is_(None),
+            moderated_user.banned_at.is_(None),
+            or_(
+                moderated_user.suspended_until.is_(None),
+                moderated_user.suspended_until <= effective_time,
+            ),
+        )
+        .correlate_except(moderated_user)
+    )
+
+
 def visible_events_filter(
     viewer_id: UUID,
     reference_time: datetime | None = None,
@@ -95,6 +121,7 @@ def visible_events_filter(
         EventModel.event_status == EventStatusEnum.PUBLISHED,
         EventModel.starts_at > effective_time,
         ~block_exists_between(EventModel.event_creator_id, viewer_id),
+        user_is_active_account(EventModel.event_creator_id, effective_time),
         or_(
             EventModel.event_privacy.in_(
                 (EventPrivacyEnum.PUBLIC, EventPrivacyEnum.PRIVATE)
@@ -336,7 +363,10 @@ class SqlAlchemySearchRepository:
         conditions = [
             UserModel.deleted_at.is_(None),
             UserModel.user_type == UserTypeEnum.BUSINESS,
+            # Admin accounts are staff, not profiles to discover.
+            UserModel.role != UserRoleEnum.ADMIN,
             ~block_exists_between(UserModel.user_id, viewer_id),
+            user_is_active_account(UserModel.user_id),
             self._text_match_condition(UserModel, UserModel.name, query),
         ]
         total = (
@@ -401,7 +431,10 @@ class SqlAlchemySearchRepository:
         conditions: list[ColumnElement[bool]] = [
             UserModel.deleted_at.is_(None),
             UserModel.user_type == UserTypeEnum.PERSONAL,
+            # Admin accounts are staff, not profiles to discover.
+            UserModel.role != UserRoleEnum.ADMIN,
             ~block_exists_between(UserModel.user_id, viewer_id),
+            user_is_active_account(UserModel.user_id),
             self._text_match_condition(UserModel, UserModel.name, query),
         ]
         total = (
@@ -533,6 +566,7 @@ __all__ = [
     "SqlAlchemySearchRepository",
     "build_visible_events_query",
     "viewer_confirmed_in_event",
+    "user_is_active_account",
     "visible_events_filter",
     "visible_events_query",
 ]

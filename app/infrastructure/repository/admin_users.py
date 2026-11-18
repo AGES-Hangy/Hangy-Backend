@@ -31,6 +31,7 @@ from app.domain.enums import (
     ModerationStatusEnum,
     ReportResolutionActionEnum,
     ReportStatusEnum,
+    UserRoleEnum,
 )
 from app.infrastructure.repository.models import AuditLogModel, UserModel
 from app.infrastructure.repository.models.event_model import EventModel
@@ -89,7 +90,8 @@ class SqlAlchemyAdminUsersRepository:
                 event_count,
                 report_count,
             )
-            .where(UserModel.deleted_at.is_(None))
+            # Admin accounts are staff, not users moderated from the panel.
+            .where(UserModel.deleted_at.is_(None), UserModel.role != UserRoleEnum.ADMIN)
             .order_by(UserModel.created_at.desc(), UserModel.user_id.desc())
             .limit(limit)
         )
@@ -212,13 +214,17 @@ class SqlAlchemyAdminUsersRepository:
         # Only reports against the profile itself (personal or business) count:
         # reports against an event the user created belong to the event file,
         # which is also how `GET /admin/reports?target_user_id=` filters.
-        # Archived reports (task 246: status REJECTED) do not count.
+        # Reports closed without action do not count: archived (task 246:
+        # status REJECTED) or resolved with resolution_action NO_ACTION.
         return (
             select(*columns)
             .select_from(ReportModel)
             .where(
                 ReportModel.deleted_at.is_(None),
                 ReportModel.status != ReportStatusEnum.REJECTED,
+                ReportModel.resolution_action.is_distinct_from(
+                    ReportResolutionActionEnum.NO_ACTION
+                ),
                 ReportModel.reported_user_id == user_id,
             )
         )
@@ -253,6 +259,7 @@ class SqlAlchemyAdminUsersRepository:
         return AdminUserRecord(
             user_id=model.user_id,
             name=model.name,
+            user_type=model.user_type,
             created_at=model.created_at,
             banned_at=banned_at,
             suspended_until=suspended_until,
