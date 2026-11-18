@@ -2,7 +2,7 @@ import secrets
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.domain.entities import User
@@ -35,7 +35,9 @@ class SqlAlchemyUserRepository:
         return self._to_entity(model) if model is not None else None
 
     def get_by_email(self, email: str) -> User | None:
-        model = self.db.scalar(select(UserModel).where(UserModel.email == email))
+        model = self.db.scalar(
+            select(UserModel).where(func.lower(UserModel.email) == email.lower())
+        )
         return self._to_entity(model) if model is not None else None
 
     def has_future_events_as_organizer(self, user_id: UUID, now: datetime) -> bool:
@@ -112,6 +114,13 @@ class SqlAlchemyUserRepository:
         model.user_phone = None
         model.profile_photo_url = None
         model.deleted_at = deleted_at
+        # A deleted account must not be able to mint new access tokens.
+        # Imported here: refresh_token.py imports this module.
+        from app.infrastructure.repository.refresh_token import (
+            revoke_user_refresh_tokens,
+        )
+
+        revoke_user_refresh_tokens(self.db, user_id, deleted_at)
 
         uid_str = str(user_id).replace("-", "")
 

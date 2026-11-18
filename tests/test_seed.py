@@ -9,16 +9,23 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.domain.enums import (
+    AuditActionEnum,
+    AuditTargetTypeEnum,
+    EventModerationStatusEnum,
     EventParticipantStatusEnum,
     EventPrivacyEnum,
     EventStatusEnum,
     NotificationTypeEnum,
+    ReportResolutionActionEnum,
+    ReportStatusEnum,
     UserConnectionStatusEnum,
     UserRoleEnum,
+    UserTypeEnum,
 )
 from app.domain.services.event_location import approximate_point
 from app.infrastructure.repository import Base, get_db
 from app.infrastructure.repository.models import (
+    AuditLogModel,
     ConnectionNotificationModel,
     EventCancelledNotificationModel,
     EventExperienceModel,
@@ -28,6 +35,7 @@ from app.infrastructure.repository.models import (
     EventParticipantNotificationModel,
     ExperienceImagesModel,
     NotificationModel,
+    ReportModel,
     TagModel,
     UserBlockModel,
     UserConnectionModel,
@@ -44,13 +52,17 @@ from app.seed import (
     SEED_FOLLOWS,
     SEED_INTERESTS,
     SEED_NOTIFICATIONS,
+    SEED_REPORTS,
     SEED_TAGS,
     SEED_USERS,
+    SeedReport,
     seed_event_id,
     seed_events,
     seed_experiences,
+    seed_moderation,
     seed_notification_id,
     seed_notifications,
+    seed_report_id,
     seed_social,
     seed_tags,
     seed_user_interests,
@@ -82,6 +94,7 @@ def seed_everything(db: Session) -> None:
     seed_notifications(db)
     seed_social(db)
     seed_experiences(db)
+    seed_moderation(db)
 
 
 def count(db: Session, entity: object) -> int:
@@ -132,13 +145,17 @@ def test_seed_creates_the_sample_data_only_once(
         assert count(db, user_tag) == sum(
             len(tag_names) for tag_names in SEED_INTERESTS.values()
         )
-        assert count(db, EventParticipantModel) == 23
+        assert count(db, EventParticipantModel) == 24
         assert count(db, NotificationModel) == len(SEED_NOTIFICATIONS)
         assert count(db, UserFollowModel) == sum(map(len, SEED_FOLLOWS.values()))
         assert count(db, UserBlockModel) == len(SEED_BLOCKS)
         assert count(db, EventExperienceModel) == len(SEED_EXPERIENCES)
         assert count(db, ExperienceImagesModel) == sum(
             len(experience.photo_urls) for experience in SEED_EXPERIENCES
+        )
+        assert count(db, ReportModel) == len(SEED_REPORTS)
+        assert count(db, AuditLogModel) == sum(
+            report.resolution is not None for report in SEED_REPORTS
         )
 
 
@@ -590,7 +607,7 @@ def test_seeded_business_user_has_an_empty_feed(
             },
         ),
         # A business agenda seen by a visitor: PUBLIC only, so the PRIVATE,
-        # INVITE_ONLY, DRAFT and CANCELLED events stay out.
+        # INVITE_ONLY, DRAFT, CANCELLED and removed events stay out.
         (
             "estabelecimento@hangy.com",
             {
@@ -601,7 +618,6 @@ def test_seeded_business_user_has_an_empty_feed(
                 "created": [
                     "Fut society no fim de tarde",
                     "Pelada no Parcão",
-                    "Show de rock no Opinião",
                     "Corrida noturna na Orla",
                 ],
                 "interests": None,
@@ -765,8 +781,11 @@ def test_seed_gives_user_every_notification_type_with_its_payload(
 
     assert response.status_code == 200
     items = response.json()["items"]
+    # Every type but EVENT_PARTICIPANT_CANCELLED, which the app never sends.
     assert {item["type"] for item in items} == {
-        notification_type.value for notification_type in NotificationTypeEnum
+        notification_type.value
+        for notification_type in NotificationTypeEnum
+        if notification_type is not NotificationTypeEnum.EVENT_PARTICIPANT_CANCELLED
     }
     assert response.json()["unread_count"] == 10
     assert all(item["payload"] for item in items)
@@ -793,7 +812,7 @@ def test_seed_gives_user_every_notification_type_with_its_payload(
     assert payloads["EVENT_REQUEST_APPROVED"]["sender"]["name"] == "Maria Silva"
     assert payloads["EVENT_UPDATED"]["event_title"] == "Pelada no Parcão"
     assert payloads["EVENT_CANCELLED"]["event_title"] == "Pelada"
-    assert payloads["EVENT_REMOVED"]["event_title"] == "Fut society no fim de tarde"
+    assert payloads["EVENT_REMOVED"]["event_title"] == "Festa open bar no Parcão"
 
 
 def test_seeded_notifications_match_the_state_they_describe(
@@ -813,9 +832,6 @@ def test_seeded_notifications_match_the_state_they_describe(
         NotificationTypeEnum.EVENT_REQUEST_REJECTED: (
             EventParticipantStatusEnum.REJECTED
         ),
-        NotificationTypeEnum.EVENT_PARTICIPANT_CANCELLED: (
-            EventParticipantStatusEnum.CANCELLED
-        ),
         NotificationTypeEnum.EVENT_PARTICIPANT_REMOVED: (
             EventParticipantStatusEnum.REMOVED
         ),
@@ -824,7 +840,6 @@ def test_seeded_notifications_match_the_state_they_describe(
     recipient_is_creator = {
         NotificationTypeEnum.EVENT_PARTICIPATION_REQUEST,
         NotificationTypeEnum.EVENT_PARTICIPANT_JOINED,
-        NotificationTypeEnum.EVENT_PARTICIPANT_CANCELLED,
     }
 
     with session_factory() as db:
@@ -900,7 +915,7 @@ def test_seed_restores_participants_changed_while_testing(
         assert (
             participants[maria.user_id].status == EventParticipantStatusEnum.CONFIRMED
         )
-        assert count(db, EventParticipantModel) == 23
+        assert count(db, EventParticipantModel) == 24
 
 
 def test_seed_recomputes_notification_dates_from_the_current_time(
@@ -1063,10 +1078,6 @@ PARTICIPANT_NOTIFICATION_RULES = {
         EventParticipantStatusEnum.CONFIRMED,
         True,
     ),
-    NotificationTypeEnum.EVENT_PARTICIPANT_CANCELLED: (
-        EventParticipantStatusEnum.CANCELLED,
-        True,
-    ),
     NotificationTypeEnum.EVENT_REQUEST_APPROVED: (
         EventParticipantStatusEnum.CONFIRMED,
         False,
@@ -1127,6 +1138,13 @@ def test_every_seeded_notification_has_the_state_it_describes(
                 if kind == NotificationTypeEnum.EVENT_PARTICIPANT_JOINED:
                     # Only a PUBLIC event confirms someone without approval.
                     assert event.event_privacy == EventPrivacyEnum.PUBLIC
+                if kind in (
+                    NotificationTypeEnum.EVENT_PARTICIPATION_REQUEST,
+                    NotificationTypeEnum.EVENT_REQUEST_APPROVED,
+                    NotificationTypeEnum.EVENT_REQUEST_REJECTED,
+                ):
+                    # Requests only exist for PRIVATE events.
+                    assert event.event_privacy == EventPrivacyEnum.PRIVATE, kind
                 if kind == NotificationTypeEnum.EVENT_STARTING_SOON:
                     sent_at = notification.created_at.replace(tzinfo=UTC)
                     starts_at = event.starts_at.replace(tzinfo=UTC)
@@ -1137,16 +1155,30 @@ def test_every_seeded_notification_has_the_state_it_describes(
                 )
                 assert detail is not None, kind
                 event = db.get(EventModel, detail.event_id)
-                if kind == NotificationTypeEnum.EVENT_CANCELLED:
-                    assert event.event_status == EventStatusEnum.CANCELLED
-                else:
-                    assert event.event_status == EventStatusEnum.PUBLISHED
                 participant = db.scalar(
                     select(EventParticipantModel).where(
                         EventParticipantModel.event_id == event.event_id,
                         EventParticipantModel.user_id == notification.user_id,
                     )
                 )
+                if kind == NotificationTypeEnum.EVENT_REMOVED:
+                    # A takedown tells the organizer and cancels everyone
+                    # else's participation, at the moment it is notified.
+                    assert event.moderation_status == EventModerationStatusEnum.REMOVED
+                    assert event.deleted_at is not None
+                    assert event.removed_at.replace(tzinfo=UTC) == (
+                        notification.created_at.replace(tzinfo=UTC)
+                    )
+                    if notification.user_id != event.event_creator_id:
+                        assert participant.status == (
+                            EventParticipantStatusEnum.CANCELLED
+                        )
+                    continue
+                assert event.moderation_status == EventModerationStatusEnum.ACTIVE
+                if kind == NotificationTypeEnum.EVENT_CANCELLED:
+                    assert event.event_status == EventStatusEnum.CANCELLED
+                else:
+                    assert event.event_status == EventStatusEnum.PUBLISHED
                 assert participant is not None, kind
                 assert participant.status == EventParticipantStatusEnum.CONFIRMED
 
@@ -1295,3 +1327,273 @@ def test_seeded_photos_show_up_for_user_hangy(
     assert len(photos.json()["items"]) == 2
     assert blocked.status_code == 200
     assert blocked.json()
+
+
+def test_every_seeded_event_and_connection_predates_what_refers_to_it(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+
+        def as_utc(value: datetime) -> datetime:
+            return value.replace(tzinfo=UTC)
+
+        oldest_notification = min(
+            as_utc(n.created_at) for n in db.scalars(select(NotificationModel))
+        )
+        oldest_report = min(
+            as_utc(r.created_at) for r in db.scalars(select(ReportModel))
+        )
+        for event in db.scalars(select(EventModel)):
+            assert as_utc(event.created_at) < oldest_notification
+            assert as_utc(event.created_at) < oldest_report
+        for connection in db.scalars(select(UserConnectionModel)):
+            assert as_utc(connection.created_at) < oldest_notification
+
+
+def test_seed_retires_the_participant_cancelled_notification(
+    session_factory: sessionmaker[Session],
+) -> None:
+    retired_id = seed_notification_id("user@hangy.com", "participant-cancelled")
+    with session_factory() as db:
+        seed_everything(db)
+        # What an older seed left behind.
+        user = db.scalar(select(UserModel).where(UserModel.email == "user@hangy.com"))
+        db.add(
+            NotificationModel(
+                notification_id=retired_id,
+                user_id=user.user_id,
+                type=NotificationTypeEnum.EVENT_PARTICIPANT_CANCELLED,
+            )
+        )
+        ana_participation = db.scalar(
+            select(EventParticipantModel.participant_id).where(
+                EventParticipantModel.event_id
+                == seed_event_id("user@hangy.com", "Corrida da Redenção"),
+                EventParticipantModel.status == EventParticipantStatusEnum.CANCELLED,
+            )
+        )
+        db.add(
+            EventParticipantNotificationModel(
+                notification_id=retired_id, participant_id=ana_participation
+            )
+        )
+        db.commit()
+
+        seed_everything(db)
+
+        assert db.get(NotificationModel, retired_id) is None
+        assert db.get(EventParticipantNotificationModel, retired_id) is None
+        assert count(db, NotificationModel) == len(SEED_NOTIFICATIONS)
+
+
+def test_seed_moderation_matches_the_reports_behind_it(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        seed_everything(db)
+        now = datetime.now(UTC)
+        users = {user.email: user for user in db.scalars(select(UserModel))}
+        admin = users["admin@hangy.com"]
+
+        bruno, camila = users["bruno@hangy.com"], users["camila@hangy.com"]
+        assert bruno.banned_at is not None
+        assert bruno.suspended_until is None
+        assert camila.banned_at is None
+        assert camila.suspended_until.replace(tzinfo=UTC) > now
+        # Nobody else is moderated.
+        assert {
+            email
+            for email, user in users.items()
+            if user.banned_at is not None or user.suspended_until is not None
+        } == {"bruno@hangy.com", "camila@hangy.com"}
+
+        for seed in SEED_REPORTS:
+            report = db.get(ReportModel, seed_report_id(seed.key))
+            if seed.resolution is None:
+                assert report.status == ReportStatusEnum.PENDING
+                assert report.resolved_at is None
+                assert (
+                    db.scalar(
+                        select(AuditLogModel).where(
+                            AuditLogModel.target_id
+                            == (report.reported_user_id or report.reported_event_id)
+                        )
+                    )
+                    is None
+                )
+                continue
+            assert report.status == ReportStatusEnum.RESOLVED
+            assert report.resolved_by_id == admin.user_id
+            resolved_at = report.resolved_at.replace(tzinfo=UTC)
+            assert report.created_at.replace(tzinfo=UTC) < resolved_at
+            audit = db.scalar(
+                select(AuditLogModel).where(
+                    AuditLogModel.target_id
+                    == (report.reported_user_id or report.reported_event_id)
+                )
+            )
+            assert audit.actor_id == admin.user_id
+            assert audit.created_at.replace(tzinfo=UTC) == resolved_at
+            if seed.resolution is ReportResolutionActionEnum.BANNED:
+                assert audit.action == AuditActionEnum.USER_BANNED
+                assert bruno.banned_at.replace(tzinfo=UTC) == resolved_at
+            elif seed.resolution is ReportResolutionActionEnum.SUSPENDED:
+                assert audit.action == AuditActionEnum.USER_SUSPENDED
+                assert camila.suspended_until.replace(tzinfo=UTC) == (
+                    resolved_at + timedelta(days=seed.suspension_days)
+                )
+            else:
+                assert audit.action == AuditActionEnum.EVENT_REMOVED
+                assert audit.target_type == AuditTargetTypeEnum.EVENT
+                event = db.get(EventModel, report.reported_event_id)
+                assert event.moderation_status == EventModerationStatusEnum.REMOVED
+                assert event.removed_at.replace(tzinfo=UTC) == resolved_at
+            if audit.target_type == AuditTargetTypeEnum.USER:
+                assert audit.extra_metadata == {"report_id": str(report.report_id)}
+
+
+def test_seed_restores_moderation_and_event_state_changed_while_testing(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        users = {user.email: user for user in db.scalars(select(UserModel))}
+        users["bruno@hangy.com"].banned_at = None
+        users["camila@hangy.com"].suspended_until = None
+        cancelled = db.get(
+            EventModel, seed_event_id("estabelecimento@hangy.com", "Pelada no Parcão")
+        )
+        cancelled.event_status = EventStatusEnum.CANCELLED
+        cancelled.event_privacy = EventPrivacyEnum.PRIVATE
+        removed = db.get(
+            EventModel, seed_event_id("maria@hangy.com", "Aniversário da Maria")
+        )
+        removed.moderation_status = EventModerationStatusEnum.REMOVED
+        removed.deleted_at = datetime.now(UTC)
+        db.commit()
+
+        seed_everything(db)
+        db.expire_all()
+
+        assert users["bruno@hangy.com"].banned_at is not None
+        assert users["camila@hangy.com"].suspended_until is not None
+        assert cancelled.event_status == EventStatusEnum.PUBLISHED
+        assert cancelled.event_privacy == EventPrivacyEnum.PUBLIC
+        assert removed.moderation_status == EventModerationStatusEnum.ACTIVE
+        assert removed.deleted_at is None
+        assert removed.removed_at is None
+
+
+def test_seed_pending_reports_cover_a_person_a_business_and_an_event(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        pending = db.scalars(
+            select(ReportModel).where(ReportModel.status == ReportStatusEnum.PENDING)
+        ).all()
+
+        targets = {
+            report.reported_user.user_type
+            if report.reported_user is not None
+            else "EVENT"
+            for report in pending
+        }
+        assert targets == {UserTypeEnum.PERSONAL, UserTypeEnum.BUSINESS, "EVENT"}
+        assert all(report.resolved_at is None for report in pending)
+
+
+@pytest.mark.parametrize(
+    "seed",
+    [report for report in SEED_REPORTS if report.resolution is None],
+    ids=lambda report: report.key,
+)
+def test_seeded_pending_report_is_one_its_author_could_open(
+    session_factory: sessionmaker[Session], seed: SeedReport
+) -> None:
+    """GET /reports/reasons accepts the target and sees the open report."""
+    with session_factory() as db:
+        seed_everything(db)
+        report = db.get(ReportModel, seed_report_id(seed.key))
+        target, target_id = (
+            ("USER", report.reported_user_id)
+            if report.reported_user_id is not None
+            else ("EVENT", report.reported_event_id)
+        )
+    password = next(
+        user.password for user in SEED_USERS if user.email == seed.creator_email
+    )
+
+    def override_get_db() -> Iterator[Session]:
+        with session_factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as client:
+        login = client.post(
+            "/auth/login",
+            json={"email": seed.creator_email, "password": password},
+        )
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        reasons = client.get(
+            "/reports/reasons",
+            params={"target": target, "target_id": str(target_id)},
+            headers=headers,
+        )
+    app.dependency_overrides.clear()
+
+    assert reasons.status_code == 200
+    reason = next(r for r in reasons.json() if r["code"] == seed.report_type)
+    assert reason["available"] is False
+    assert reason["unavailable_reason"] == "ALREADY_REPORTED"
+
+
+@pytest.mark.parametrize(
+    ("email", "password"),
+    [("bruno@hangy.com", "bruno-password"), ("camila@hangy.com", "camila-password")],
+)
+def test_seeded_moderated_accounts_cannot_log_in(
+    session_factory: sessionmaker[Session], email: str, password: str
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+
+    def override_get_db() -> Iterator[Session]:
+        with session_factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as client:
+        login = client.post("/auth/login", json={"email": email, "password": password})
+    app.dependency_overrides.clear()
+
+    assert login.status_code == 403
+    assert login.json() == {"detail": "Account is banned or suspended"}
+
+
+def test_seeded_removed_event_is_hidden_from_the_feed_and_profiles(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        removed_id = seed_event_id(
+            "estabelecimento@hangy.com", "Festa open bar no Parcão"
+        )
+
+    def override_get_db() -> Iterator[Session]:
+        with session_factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as client:
+        login = client.post(
+            "/auth/login",
+            json={"email": "user@hangy.com", "password": "user-password"},
+        )
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        details = client.get(f"/events/{removed_id}", headers=headers)
+    app.dependency_overrides.clear()
+
+    assert details.status_code == 404

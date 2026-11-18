@@ -13,6 +13,7 @@ from app.presentation.dtos import (
     EventCreatorOutput,
     EventInvitePreviewOutput,
     EventShareOutput,
+    FinishEventOutput,
     UpdateEventOutput,
     UpdateEventParticipantOutput,
 )
@@ -68,6 +69,17 @@ class EventAssembler:
         return CancelEventOutput(
             event_id=event.event_id,
             status=event.event_status,
+            updated_at=event.updated_at,
+        )
+
+    @staticmethod
+    def to_finish_dto(event: Event) -> FinishEventOutput:
+        if event.event_id is None:
+            raise ValueError("A persisted event must have an id")
+        return FinishEventOutput(
+            event_id=event.event_id,
+            status=event.event_status,
+            end_date=event.ends_at,
             updated_at=event.updated_at,
         )
 

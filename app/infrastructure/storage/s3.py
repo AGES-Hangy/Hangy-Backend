@@ -71,6 +71,10 @@ class S3ImageStorage:
     def owns(self, url: str) -> bool:
         return self._key(url) is not None
 
+    def key_of(self, url: str) -> str | None:
+        """Object key of a URL from this bucket, or None for any other URL."""
+        return self._key(url)
+
     def delete(self, url: str) -> None:
         key = self._key(url)
         # Never turn an unrelated URL into a key in this bucket.

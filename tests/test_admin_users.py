@@ -233,6 +233,7 @@ def test_admin_lists_users_with_counts_and_derived_status(
             {
                 "user_id": str(rafael),
                 "name": "Rafael Antunes",
+                "user_type": "PERSONAL",
                 "moderation_status": "ACTIVE",
                 "suspended_until": None,
                 "event_count": 2,
@@ -241,6 +242,7 @@ def test_admin_lists_users_with_counts_and_derived_status(
             {
                 "user_id": str(bar),
                 "name": "Bar do Zé",
+                "user_type": "BUSINESS",
                 "moderation_status": "ACTIVE",
                 "suspended_until": None,
                 "event_count": 1,
@@ -249,14 +251,7 @@ def test_admin_lists_users_with_counts_and_derived_status(
             {
                 "user_id": str(marina),
                 "name": "Marina Schmitt",
-                "moderation_status": "ACTIVE",
-                "suspended_until": None,
-                "event_count": 0,
-                "report_count": 0,
-            },
-            {
-                "user_id": str(admin_id),
-                "name": "Admin",
+                "user_type": "PERSONAL",
                 "moderation_status": "ACTIVE",
                 "suspended_until": None,
                 "event_count": 0,
@@ -329,7 +324,6 @@ def test_status_filter_and_derivation_with_moderation_columns(
         "Suspensão vencida": "ACTIVE",
         "Suspenso": "SUSPENDED",
         "Ativo": "ACTIVE",
-        "Admin": "ACTIVE",
     }
     suspended_item = next(i for i in everyone if i["user_id"] == str(suspended))
     assert datetime.fromisoformat(suspended_item["suspended_until"]) == (
@@ -345,7 +339,6 @@ def test_status_filter_and_derivation_with_moderation_columns(
     assert names(client.get("/admin/users?status=ACTIVE", headers=headers)) == [
         "Suspensão vencida",
         "Ativo",
-        "Admin",
     ]
 
 
@@ -389,6 +382,7 @@ def record(**overrides: object) -> AdminUserRecord:
     values: dict[str, object] = {
         "user_id": uuid4(),
         "name": "Pessoa",
+        "user_type": UserTypeEnum.PERSONAL,
         "created_at": NOW - timedelta(days=1),
         "banned_at": None,
         "suspended_until": None,
@@ -464,7 +458,9 @@ def test_search_matches_name_or_email_case_insensitively(
 
     assert search("SCHMITT") == ["Marina Schmitt"]
     assert search("exemplo.com") == ["Rafael Antunes"]
-    assert search("hangy.com") == ["Ana_Paula", "Marina Schmitt", "Admin"]
+    # The admin's own e-mail is on this domain too, but admin accounts are
+    # never listed.
+    assert search("hangy.com") == ["Ana_Paula", "Marina Schmitt"]
     # LIKE wildcards in the input are matched literally.
     assert search("_") == ["Ana_Paula", "Rafael Antunes"]
     assert search("%") == []
@@ -511,8 +507,28 @@ def test_pagination_walks_every_user_once_by_newest_first(
         "/admin/users", params={"limit": 2, "cursor": cursor}, headers=headers
     )
     assert second.status_code == 200
-    assert names(second) == ["Tie A", "Admin"]
+    assert names(second) == ["Tie A"]
     assert second.json()["next_cursor"] is None
+
+
+def test_admin_accounts_are_never_listed(admin_client: AdminClient) -> None:
+    client, session_factory = admin_client
+    admin_id = add_admin(session_factory)
+    with session_factory() as db:
+        add_user(
+            db,
+            name="Outro Admin",
+            email="outro.admin@hangy.com",
+            role=UserRoleEnum.ADMIN,
+            user_type=UserTypeEnum.BUSINESS,
+            created_at=NOW - timedelta(days=1),
+        )
+        add_user(db, name="Pessoa", created_at=NOW - timedelta(days=2))
+
+    headers = header_for(admin_id)
+    assert names(client.get("/admin/users", headers=headers)) == ["Pessoa"]
+    searched = client.get("/admin/users", params={"search": "admin"}, headers=headers)
+    assert names(searched) == []
 
 
 @pytest.mark.parametrize(

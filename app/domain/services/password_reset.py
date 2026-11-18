@@ -1,12 +1,8 @@
-import hashlib
 import logging
 import secrets
-import time
-from collections import deque
 from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from threading import Lock
 from typing import Protocol
 from uuid import UUID, uuid4
 
@@ -19,6 +15,10 @@ from app.domain.entities import (
     PasswordResetToken,
     VerifyResetCode,
 )
+from app.domain.services.rate_limit import (
+    RateLimitExceededError,
+    SlidingWindowRateLimiter,
+)
 
 __all__ = [
     "EmailSender",
@@ -28,14 +28,14 @@ __all__ = [
     "PasswordResetTokenRepository",
     "TooManyPasswordResetRequestsError",
     "TooManyResetCodeAttemptsError",
+    "reset_request_limiter",
 ]
 
 logger = logging.getLogger(__name__)
 password_hash = PasswordHash.recommended()
-request_timestamps: dict[str, deque[float]] = {}
-request_timestamps_lock = Lock()
 request_limit = 3
 request_window_seconds = 15 * 60
+reset_request_limiter = SlidingWindowRateLimiter(request_limit, request_window_seconds)
 max_code_attempts = 5
 RESET_TOKEN_SCOPE = "password_reset"
 RESET_CODE_EXPIRE_MINUTES = 15
@@ -79,6 +79,10 @@ class PasswordResetTokenRepository(Protocol):
 
 class TooManyPasswordResetRequestsError(Exception):
     """Raised when an email exceeds the password reset request limit."""
+
+    def __init__(self, retry_after_seconds: int | None = None) -> None:
+        super().__init__("Too many reset requests")
+        self.retry_after_seconds = retry_after_seconds
 
 
 class InvalidResetCodeError(Exception):
@@ -200,12 +204,7 @@ def _as_utc(value: datetime) -> datetime:
 
 
 def _enforce_request_limit(email: str) -> None:
-    now = time.monotonic()
-    key = hashlib.sha256(email.casefold().encode()).hexdigest()
-    with request_timestamps_lock:
-        timestamps = request_timestamps.setdefault(key, deque())
-        while timestamps and now - timestamps[0] >= request_window_seconds:
-            timestamps.popleft()
-        if len(timestamps) >= request_limit:
-            raise TooManyPasswordResetRequestsError
-        timestamps.append(now)
+    try:
+        reset_request_limiter.hit(email)
+    except RateLimitExceededError as error:
+        raise TooManyPasswordResetRequestsError(error.retry_after_seconds) from error

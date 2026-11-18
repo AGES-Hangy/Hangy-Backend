@@ -8,9 +8,21 @@ from pwdlib import PasswordHash
 from app.domain.entities import AccessToken, PasswordResetToken, ResetToken, User
 from app.domain.enums import ModerationStatusEnum
 from app.domain.services.admin_users import derive_moderation_status
+from app.domain.services.rate_limit import (
+    RateLimitExceededError,
+    SlidingWindowRateLimiter,
+)
 
 password_hash = PasswordHash.recommended()
 PASSWORD_RESET_SCOPE = "password_reset"
+# Verified when the email has no account, so "no such email" costs the same
+# time as "wrong password" and response latency doesn't reveal accounts.
+_DUMMY_PASSWORD_HASH = password_hash.hash("hangy-dummy-password")
+LOGIN_FAILURE_LIMIT = 10
+LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
+login_failure_limiter = SlidingWindowRateLimiter(
+    LOGIN_FAILURE_LIMIT, LOGIN_FAILURE_WINDOW_SECONDS
+)
 
 
 class UserRepository(Protocol):
@@ -29,6 +41,14 @@ class InvalidAccessTokenError(Exception):
 
 class InvalidCredentialsError(Exception):
     """Raised when the email/password pair does not match any account."""
+
+
+class TooManyLoginAttemptsError(Exception):
+    """Raised when an email had too many failed logins in the current window."""
+
+    def __init__(self, retry_after_seconds: int) -> None:
+        super().__init__("Too many login attempts")
+        self.retry_after_seconds = retry_after_seconds
 
 
 class AccountDeletedError(Exception):
@@ -63,10 +83,21 @@ class AuthService:
     def authenticate(
         self, email: str, password: str, now: datetime | None = None
     ) -> User:
+        # Only failures count, per email: a correct password still works up to
+        # the limit, and the limit stops online guessing of one account.
+        try:
+            login_failure_limiter.check(email)
+        except RateLimitExceededError as error:
+            raise TooManyLoginAttemptsError(error.retry_after_seconds) from error
         user = self.repository.get_by_email(email)
-        # Same error for "no such email" and "wrong password" so a caller
-        # can't use it to probe which emails have an account.
-        if user is None or not password_hash.verify(password, user.password_hash):
+        # Same error (and the same hashing cost) for "no such email" and
+        # "wrong password" so a caller can't probe which emails have an account.
+        if user is None:
+            password_hash.verify(password, _DUMMY_PASSWORD_HASH)
+            login_failure_limiter.hit(email)
+            raise InvalidCredentialsError
+        if not password_hash.verify(password, user.password_hash):
+            login_failure_limiter.hit(email)
             raise InvalidCredentialsError
         if user.deleted_at is not None:
             raise AccountDeletedError

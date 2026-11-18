@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 
 os.environ.setdefault("DATABASE_URL", "sqlite://")
-os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key")
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-with-at-least-32-bytes")
 os.environ.setdefault("LOCATION_OBFUSCATION_SECRET", "test-location-secret")
 
 
@@ -23,6 +23,9 @@ class FakeImageStorage:
 
     def owns(self, url):
         return url.startswith(self.base_url + "/")
+
+    def key_of(self, url):
+        return url[len(self.base_url) + 1 :] if self.owns(url) else None
 
 
 @pytest.fixture
@@ -57,6 +60,11 @@ def live_s3():
     client = None
     prefix = f"tests/{uuid4().hex}/"
     buckets = set()
+
+    # Talking to real AWS is opt-in: a developer's .env with a bucket name must
+    # not turn the default test run into network calls that can fail locally.
+    if os.getenv("HANGY_LIVE_S3_TESTS") != "1":
+        pytest.skip("Set HANGY_LIVE_S3_TESTS=1 to run tests against real S3")
 
     def register(bucket):
         nonlocal client
@@ -108,3 +116,19 @@ def live_image_storage(live_s3):
     finally:
         if storage._client is not None:
             storage._client.close()
+
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiters():
+    """In-process limiters are module globals; keep tests independent."""
+    from app.domain.services.auth import login_failure_limiter
+    from app.domain.services.password_reset import reset_request_limiter
+
+    login_failure_limiter.reset()
+    reset_request_limiter.reset()
+    yield
+    login_failure_limiter.reset()
+    reset_request_limiter.reset()
+
+
+from tests.review_helpers import review_client  # noqa: E402, F401

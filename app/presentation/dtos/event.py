@@ -108,6 +108,13 @@ class CancelEventOutput(BaseModel):
     updated_at: datetime
 
 
+class FinishEventOutput(BaseModel):
+    event_id: UUID
+    status: EventStatusEnum
+    end_date: datetime
+    updated_at: datetime
+
+
 class EventShareOutput(BaseModel):
     url: str
     web_url: str

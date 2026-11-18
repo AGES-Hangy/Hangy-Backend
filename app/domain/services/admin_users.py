@@ -123,6 +123,7 @@ class AdminUsersService:
         return AdminUserItem(
             user_id=row.user_id,
             name=row.name,
+            user_type=row.user_type,
             moderation_status=status,
             # Only a running suspension has an end date worth showing.
             suspended_until=(

@@ -91,7 +91,9 @@ def payload(**overrides: object) -> dict[str, object]:
         "max_participants": 20,
         "privacy": "PUBLIC",
         "tag_ids": [str(FOOTBALL_ID)],
-        "cover_photo_url": "https://images.hangy.test/events/covers/cover.png",
+        "cover_photo_url": (
+            f"https://images.hangy.test/events/covers/{ORGANIZER_ID}/cover.png"
+        ),
     }
     body.update(overrides)
     return body

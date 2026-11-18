@@ -17,9 +17,11 @@ from app.domain.enums import (
     EventParticipantStatusEnum,
     EventPrivacyEnum,
     EventStatusEnum,
+    ModerationStatusEnum,
     UserConnectionStatusEnum,
     UserTypeEnum,
 )
+from app.domain.services.admin_users import derive_moderation_status
 from app.infrastructure.repository.models import (
     BusinessProfileModel,
     EventModel,
@@ -236,7 +238,9 @@ class SqlAlchemyUserProfileRepository:
             business_longitude=model.business_longitude,
         )
 
-    def get_profile(self, user_id: UUID, viewer_id: UUID) -> UserProfileData | None:
+    def get_profile(
+        self, user_id: UUID, viewer_id: UUID, viewer_is_admin: bool = False
+    ) -> UserProfileData | None:
         model = (
             self.db.execute(
                 select(UserModel)
@@ -251,6 +255,20 @@ class SqlAlchemyUserProfileRepository:
         )
 
         if model is None:
+            return None
+        # A banned or suspended account is out of view for everyone else for as
+        # long as the moderation lasts, like in search, feed and nearby. Admins
+        # still see it: the moderation panel links to the profile in the app.
+        if (
+            user_id != viewer_id
+            and not viewer_is_admin
+            and (
+                derive_moderation_status(
+                    model.banned_at, model.suspended_until, datetime.now(UTC)
+                )
+                is not ModerationStatusEnum.ACTIVE
+            )
+        ):
             return None
 
         connections_count = 0
