@@ -58,6 +58,48 @@ def test_an_elapsed_suspension_shows_the_profile_again(review_client) -> None:
     assert client.get(f"/users/{user}", headers=headers_for(viewer)).status_code == 200
 
 
+def test_admin_still_sees_a_moderated_profile(review_client) -> None:
+    client, session_factory = review_client
+    with session_factory() as db:
+        admin = add_user(db, role=UserRoleEnum.ADMIN)
+        viewer = add_user(db)
+        banned = add_user(db, banned_at=datetime.now(UTC))
+        suspended = add_user(db)
+        db.get(UserModel, suspended).suspended_until = datetime.now(UTC) + timedelta(
+            days=3
+        )
+        db.commit()
+
+    for user_id in (banned, suspended):
+        assert (
+            client.get(f"/users/{user_id}", headers=headers_for(viewer)).status_code
+            == 404
+        )
+        assert (
+            client.get(f"/users/{user_id}", headers=headers_for(admin)).status_code
+            == 200
+        )
+
+
+def test_admin_sees_an_invite_only_event_like_an_outsider(review_client) -> None:
+    client, session_factory = review_client
+    with session_factory() as db:
+        admin = add_user(db, role=UserRoleEnum.ADMIN)
+        viewer = add_user(db)
+        organizer = add_user(db)
+        event_id = add_event(db, organizer, privacy=EventPrivacyEnum.INVITE_ONLY)
+
+    hidden = client.get(f"/events/{event_id}", headers=headers_for(viewer))
+    shown = client.get(f"/events/{event_id}", headers=headers_for(admin))
+
+    assert hidden.status_code == 404
+    assert shown.status_code == 200
+    body = shown.json()
+    assert body["viewer"]["available_action"] == "NONE"
+    assert body["viewer"]["can_see_participants"] is False
+    assert body["participants_preview"] is None
+
+
 def test_admin_cannot_moderate_another_admin(review_client) -> None:
     client, session_factory = review_client
     with session_factory() as db:
