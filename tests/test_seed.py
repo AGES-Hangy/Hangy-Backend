@@ -20,6 +20,7 @@ from app.domain.enums import (
     ReportStatusEnum,
     UserConnectionStatusEnum,
     UserRoleEnum,
+    UserTypeEnum,
 )
 from app.domain.services.event_location import approximate_point
 from app.infrastructure.repository import Base, get_db
@@ -54,6 +55,7 @@ from app.seed import (
     SEED_REPORTS,
     SEED_TAGS,
     SEED_USERS,
+    SeedReport,
     seed_event_id,
     seed_events,
     seed_experiences,
@@ -1415,7 +1417,8 @@ def test_seed_moderation_matches_the_reports_behind_it(
                 assert (
                     db.scalar(
                         select(AuditLogModel).where(
-                            AuditLogModel.target_id == report.reported_user_id
+                            AuditLogModel.target_id
+                            == (report.reported_user_id or report.reported_event_id)
                         )
                     )
                     is None
@@ -1481,6 +1484,70 @@ def test_seed_restores_moderation_and_event_state_changed_while_testing(
         assert removed.moderation_status == EventModerationStatusEnum.ACTIVE
         assert removed.deleted_at is None
         assert removed.removed_at is None
+
+
+def test_seed_pending_reports_cover_a_person_a_business_and_an_event(
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as db:
+        seed_everything(db)
+        pending = db.scalars(
+            select(ReportModel).where(ReportModel.status == ReportStatusEnum.PENDING)
+        ).all()
+
+        targets = {
+            report.reported_user.user_type
+            if report.reported_user is not None
+            else "EVENT"
+            for report in pending
+        }
+        assert targets == {UserTypeEnum.PERSONAL, UserTypeEnum.BUSINESS, "EVENT"}
+        assert all(report.resolved_at is None for report in pending)
+
+
+@pytest.mark.parametrize(
+    "seed",
+    [report for report in SEED_REPORTS if report.resolution is None],
+    ids=lambda report: report.key,
+)
+def test_seeded_pending_report_is_one_its_author_could_open(
+    session_factory: sessionmaker[Session], seed: SeedReport
+) -> None:
+    """GET /reports/reasons accepts the target and sees the open report."""
+    with session_factory() as db:
+        seed_everything(db)
+        report = db.get(ReportModel, seed_report_id(seed.key))
+        target, target_id = (
+            ("USER", report.reported_user_id)
+            if report.reported_user_id is not None
+            else ("EVENT", report.reported_event_id)
+        )
+    password = next(
+        user.password for user in SEED_USERS if user.email == seed.creator_email
+    )
+
+    def override_get_db() -> Iterator[Session]:
+        with session_factory() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as client:
+        login = client.post(
+            "/auth/login",
+            json={"email": seed.creator_email, "password": password},
+        )
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        reasons = client.get(
+            "/reports/reasons",
+            params={"target": target, "target_id": str(target_id)},
+            headers=headers,
+        )
+    app.dependency_overrides.clear()
+
+    assert reasons.status_code == 200
+    reason = next(r for r in reasons.json() if r["code"] == seed.report_type)
+    assert reason["available"] is False
+    assert reason["unavailable_reason"] == "ALREADY_REPORTED"
 
 
 @pytest.mark.parametrize(
