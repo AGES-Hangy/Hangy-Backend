@@ -48,7 +48,7 @@ esac
 local_image="hangy-backend:${CI_COMMIT_SHA}-${CI_PIPELINE_ID}-${CI_JOB_ID}"
 docker buildx create --use --name hangy-builder --driver docker-container
 docker buildx build --platform linux/arm64 --load --tag "$local_image" .
-TRIVY_REPORT="${TRIVY_REPORT:-trivy-report.json}" bash scripts/scan-image.sh "$local_image"
+bash scripts/scan-image.sh "$local_image"
 
 export CI_ENV_FILE="$work_dir/state.env"
 bash scripts/bootstrap-terraform-state.sh

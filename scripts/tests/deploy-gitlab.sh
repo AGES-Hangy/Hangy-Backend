@@ -41,6 +41,8 @@ case "$1 ${2:-}" in
     cat > "$3" <<'TRIVY'
 #!/usr/bin/env bash
 echo "trivy $*" >> "$MOCK_LOG"
+# The real Trivy parses every TRIVY_* variable as a flag; only the cache dir is valid here.
+if env | grep '^TRIVY_' | grep -qv '^TRIVY_CACHE_DIR='; then echo 'unexpected TRIVY_* variable' >&2; exit 2; fi
 while [[ $# -gt 0 ]]; do
   if [[ "$1" == --output ]]; then
     if [[ "$MOCK_CASE" == scan_failure ]]; then
@@ -198,7 +200,7 @@ run_case() {
       export SES_REQUEST_PRODUCTION_ACCESS=true SES_USE_CASE_DESCRIPTION='Test SES use case.'
     fi
     if [[ "$scenario" == missing_sender ]]; then unset EMAIL_FROM; fi
-    export TRIVY_REPORT="$work_dir/trivy-report.json"
+    export SCAN_REPORT="$work_dir/trivy-report.json"
     unset CORS_ORIGINS API_ALLOWED_CIDRS TF_STATE_KEY
     bash scripts/deploy-gitlab.sh
   ) > "$work_dir/output" 2>&1 || result=$?

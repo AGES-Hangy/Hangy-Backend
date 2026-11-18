@@ -2,11 +2,12 @@
 # Scan a local Docker image with the pinned Trivy and fail on any HIGH/CRITICAL
 # vulnerability, fixed upstream or not (the task's acceptance criterion).
 # Accepted risks go in .trivyignore.yaml with a statement and expired_at.
-# Usage: scan-image.sh IMAGE   (TRIVY_REPORT sets the JSON report path)
+# Usage: scan-image.sh IMAGE   (SCAN_REPORT sets the JSON report path)
 # Needs docker and jq.
 set -Eeuo pipefail
 image=${1:?Usage: scan-image.sh IMAGE}
-report=${TRIVY_REPORT:-trivy-report.json}
+# Not TRIVY_*: Trivy reads every TRIVY_* variable as a flag (TRIVY_REPORT = --report).
+report=${SCAN_REPORT:-trivy-report.json}
 # Pinned by digest because Trivy itself suffered a supply chain attack. This is
 # the multi-arch index that Docker Hub served for aquasec/trivy:0.76.1 on
 # 2026-11-18. To bump, check the new one before copying it:
