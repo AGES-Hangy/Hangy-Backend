@@ -9,10 +9,16 @@ from sqlalchemy.orm import Session, aliased
 
 from app.domain.entities import BusinessRegistration, PersonRegistration
 from app.domain.enums import (
+    AuditActionEnum,
+    AuditTargetTypeEnum,
+    EventModerationStatusEnum,
     EventParticipantStatusEnum,
     EventPrivacyEnum,
     EventStatusEnum,
     NotificationTypeEnum,
+    ReportResolutionActionEnum,
+    ReportStatusEnum,
+    ReportTypeEnum,
     UserConnectionStatusEnum,
     UserRoleEnum,
 )
@@ -21,6 +27,7 @@ from app.infrastructure.repository.business_profile import (
     SqlAlchemyBusinessRegistrationRepository,
 )
 from app.infrastructure.repository.models import (
+    AuditLogModel,
     ConnectionNotificationModel,
     EventCancelledNotificationModel,
     EventExperienceModel,
@@ -31,6 +38,7 @@ from app.infrastructure.repository.models import (
     EventParticipantNotificationModel,
     ExperienceImagesModel,
     NotificationModel,
+    ReportModel,
     TagModel,
     UserBlockModel,
     UserConnectionModel,
@@ -169,6 +177,28 @@ SEED_USERS: tuple[PersonRegistration | BusinessRegistration, ...] = (
         city="Porto Alegre",
         accepted_terms_version=SEED_TERMS_VERSION,
     ),
+    # Moderated by admin@hangy.com after a report (see SEED_REPORTS): login
+    # answers 403 for both, and GET /admin/users lists one per status.
+    PersonRegistration(
+        email="bruno@hangy.com",
+        password="bruno-password",
+        name="Bruno Alves",
+        cpf="29141777638",
+        date_of_birth=date(1992, 7, 30),
+        state="RS",
+        city="Porto Alegre",
+        accepted_terms_version=SEED_TERMS_VERSION,
+    ),
+    PersonRegistration(
+        email="camila@hangy.com",
+        password="camila-password",
+        name="Camila Reis",
+        cpf="01152449303",
+        date_of_birth=date(1998, 5, 9),
+        state="RS",
+        city="Canoas",
+        accepted_terms_version=SEED_TERMS_VERSION,
+    ),
 )
 
 # Macro tag (no parent) mapped to the micro tags that hang below it: the same
@@ -218,6 +248,12 @@ SEED_INTERESTS: dict[str, tuple[TagKey, ...]] = {
 }
 
 EVENT_DURATION = timedelta(hours=3)
+# Every seeded event and connection is at least this old, so none is newer
+# than the notifications, reports and moderation that refer to it.
+SEED_HISTORY = timedelta(days=14)
+# When admin@hangy.com took down the moderated event: shared by the event, the
+# report it resolved, the audit row and the EVENT_REMOVED notifications.
+EVENT_REMOVED_AGE = timedelta(days=5)
 # Porto Alegre, roughly around Parque da Redenção.
 EVENT_LATITUDE = -30.0368
 EVENT_LONGITUDE = -51.2090
@@ -252,6 +288,10 @@ class SeedEvent:
     # Personal accounts that marked the event as an interest: what fills the
     # `interests` tab of GET /users/{user_id}/events.
     favorited_emails: tuple[str, ...] = field(default_factory=tuple)
+    # Taken down by admin@hangy.com EVENT_REMOVED_AGE ago, as
+    # AdminEventModerationService does: moderation_status REMOVED, removed_at
+    # and deleted_at set, and the active participations cancelled.
+    removed_by_moderation: bool = False
 
 
 SEED_EVENTS = (
@@ -321,7 +361,7 @@ SEED_EVENTS = (
     ),
     # Visible, but the feed hides event_date and shows only the neighborhood of
     # PRIVATE events to whoever was not approved.
-    # Maria approved user@hangy.com's request.
+    # Maria approved the requests of user@hangy.com and of João.
     SeedEvent(
         title="Aniversário da Maria",
         location_name="Casa da Maria",
@@ -330,8 +370,7 @@ SEED_EVENTS = (
         creator_email="maria@hangy.com",
         starts_in_days=2,
         privacy=EventPrivacyEnum.PRIVATE,
-        confirmed_emails=("user@hangy.com",),
-        pending_emails=("joao@hangy.com",),
+        confirmed_emails=("user@hangy.com", "joao@hangy.com"),
     ),
     # estabelecimento@hangy.com's own event, PRIVATE and with no participant at
     # all: the empty ManageEvent state. Under "Esportes", so it also shows up
@@ -370,7 +409,9 @@ SEED_EVENTS = (
         confirmed_emails=("maria@hangy.com",),
         pending_emails=("user@hangy.com",),
     ),
-    # Visible, under "Vida Social". The business turned down user@hangy.com's request.
+    # Visible (masked, as any PRIVATE event), under "Vida Social". PRIVATE
+    # because only then a request can be turned down: a PUBLIC event confirms
+    # on join. The business turned down user@hangy.com's request.
     SeedEvent(
         title="Show de rock no Opinião",
         location_name="Bar Opinião",
@@ -378,6 +419,7 @@ SEED_EVENTS = (
         tag=("Vida Social", "Rock"),
         creator_email=BUSINESS_EMAIL,
         starts_in_days=5,
+        privacy=EventPrivacyEnum.PRIVATE,
         cover_photo_url="https://picsum.photos/seed/rock/800/450",
         pending_emails=("maria@hangy.com",),
         rejected_emails=("user@hangy.com",),
@@ -456,6 +498,20 @@ SEED_EVENTS = (
         cover_photo_url="https://picsum.photos/seed/sarau/800/450",
         confirmed_emails=("maria@hangy.com", "user@hangy.com"),
     ),
+    # Taken down by moderation after João's report: hidden everywhere, and
+    # user@hangy.com's confirmed participation was cancelled by the removal.
+    # What the EVENT_REMOVED notifications of user@hangy.com and of the
+    # business (the organizer) are about.
+    SeedEvent(
+        title="Festa open bar no Parcão",
+        location_name="Parque Moinhos de Vento (Parcão)",
+        location_neighborhood="Moinhos de Vento",
+        tag=("Vida Social", "Rock"),
+        creator_email=BUSINESS_EMAIL,
+        starts_in_days=3,
+        cancelled_emails=("user@hangy.com",),
+        removed_by_moderation=True,
+    ),
 )
 
 
@@ -501,10 +557,12 @@ def seed_connection_id(requester_email: str, receiver_email: str) -> UUID:
     )
 
 
-# user@hangy.com has every one of the 11 types, with five connection requests
+# user@hangy.com has every type the app sends, with five connection requests
 # and two acceptances: 10 unread and 6 read, so the bell badge shows 10. Each
 # one matches what the database says: a pending request has a PENDING
 # participant, a removed one a REMOVED participant, and so on.
+# EVENT_PARTICIPANT_CANCELLED is left out: cancelling a participation sends no
+# notification (see SqlAlchemyCancelParticipationRepository.cancel).
 # maria@hangy.com's unread one must never leak
 # into that count, and is the one to try PATCH /notifications/{id}/read with as
 # another user (403). joao@hangy.com's single notification is the one to mark as
@@ -612,15 +670,6 @@ SEED_NOTIFICATIONS = (
     ),
     SeedNotification(
         "user@hangy.com",
-        "participant-cancelled",
-        NotificationTypeEnum.EVENT_PARTICIPANT_CANCELLED,
-        age=timedelta(days=2),
-        read=True,
-        event=("user@hangy.com", "Corrida da Redenção"),
-        participant_email="ana@hangy.com",
-    ),
-    SeedNotification(
-        "user@hangy.com",
         "participant-removed",
         NotificationTypeEnum.EVENT_PARTICIPANT_REMOVED,
         age=timedelta(days=3),
@@ -639,10 +688,17 @@ SEED_NOTIFICATIONS = (
         "user@hangy.com",
         "event-removed",
         NotificationTypeEnum.EVENT_REMOVED,
-        age=timedelta(days=5),
+        age=EVENT_REMOVED_AGE,
         read=True,
-        # Demo payload only: the seeded event itself stays live.
-        event=(BUSINESS_EMAIL, "Fut society no fim de tarde"),
+        event=(BUSINESS_EMAIL, "Festa open bar no Parcão"),
+    ),
+    # The organizer is told about a takedown too.
+    SeedNotification(
+        BUSINESS_EMAIL,
+        "event-removed",
+        NotificationTypeEnum.EVENT_REMOVED,
+        age=EVENT_REMOVED_AGE,
+        event=(BUSINESS_EMAIL, "Festa open bar no Parcão"),
     ),
     SeedNotification(
         "maria@hangy.com",
@@ -657,9 +713,17 @@ SEED_NOTIFICATIONS = (
         NotificationTypeEnum.EVENT_REQUEST_APPROVED,
         age=timedelta(minutes=30),
         reset_on_seed=True,
-        event=(BUSINESS_EMAIL, "Pelada no Parcão"),
+        # PRIVATE: only a request to a PRIVATE event is ever approved.
+        event=("maria@hangy.com", "Aniversário da Maria"),
         participant_email="joao@hangy.com",
     ),
+)
+
+# Seeded by older versions and deleted on the next run: they described
+# something the app never does.
+RETIRED_SEED_NOTIFICATIONS = (
+    # Cancelling a participation sends no notification.
+    ("user@hangy.com", "participant-cancelled"),
 )
 
 
@@ -836,6 +900,7 @@ def seed_events(db: Session) -> None:
                 event_status=seed.event_status,
                 event_privacy=seed.privacy,
                 cover_photo_url=seed.cover_photo_url,
+                created_at=now - SEED_HISTORY,
             )
             db.add(event)
             db.flush()
@@ -854,6 +919,14 @@ def seed_events(db: Session) -> None:
                 event.location_neighborhood = seed.location_neighborhood
             if event.location_city is None:
                 event.location_city = seed.location_city
+            # Put back on every run, like the participants: the notifications
+            # describe this state, so cancelling, editing the privacy of or
+            # taking down an event while testing must not contradict them.
+            event.event_status = seed.event_status
+            event.event_privacy = seed.privacy
+            if _as_utc(event.created_at) > now - SEED_HISTORY:
+                event.created_at = now - SEED_HISTORY
+        _apply_event_moderation(event, seed, now)
 
         _seed_participants(db, event, seed, users)
         _seed_favorites(db, event, seed, users)
@@ -861,9 +934,37 @@ def seed_events(db: Session) -> None:
     db.commit()
 
 
+def _apply_event_moderation(event: EventModel, seed: SeedEvent, now: datetime) -> None:
+    if seed.removed_by_moderation:
+        removed_at = now - EVENT_REMOVED_AGE
+        event.moderation_status = EventModerationStatusEnum.REMOVED
+        event.removed_at = removed_at
+        event.deleted_at = removed_at
+    else:
+        event.moderation_status = EventModerationStatusEnum.ACTIVE
+        event.removed_at = None
+        event.deleted_at = None
+
+
 def seed_notifications(db: Session) -> None:
     users = _users_by_email(db)
     now = datetime.now(UTC)
+
+    for user_email, key in RETIRED_SEED_NOTIFICATIONS:
+        retired_id = seed_notification_id(user_email, key)
+        for detail_model in (
+            ConnectionNotificationModel,
+            EventParticipantNotificationModel,
+            EventCancelledNotificationModel,
+        ):
+            db.execute(
+                delete(detail_model).where(detail_model.notification_id == retired_id)
+            )
+        db.execute(
+            delete(NotificationModel).where(
+                NotificationModel.notification_id == retired_id
+            )
+        )
 
     for seed in SEED_NOTIFICATIONS:
         user = users.get(seed.user_email)
@@ -871,7 +972,7 @@ def seed_notifications(db: Session) -> None:
             continue
 
         notification_id = seed_notification_id(seed.user_email, seed.key)
-        created_at = now - seed.age
+        created_at = _removal_time(db, seed) or now - seed.age
         notification = db.get(NotificationModel, notification_id)
         if notification is None:
             notification = NotificationModel(
@@ -892,6 +993,14 @@ def seed_notifications(db: Session) -> None:
         # Also runs for existing rows, which older seeds created without them.
         _seed_notification_detail(db, seed, notification_id, users)
     db.commit()
+
+
+def _removal_time(db: Session, seed: SeedNotification) -> datetime | None:
+    # A takedown notifies at the very moment the event was removed.
+    if seed.type is not NotificationTypeEnum.EVENT_REMOVED or seed.event is None:
+        return None
+    event = db.get(EventModel, seed_event_id(*seed.event))
+    return _as_utc(event.removed_at) if event and event.removed_at else None
 
 
 def _seed_notification_detail(
@@ -1075,6 +1184,195 @@ def seed_experiences(db: Session) -> None:
     db.commit()
 
 
+@dataclass(frozen=True, slots=True)
+class SeedReport:
+    # Only tells the reports apart, so each one keeps a stable id.
+    key: str
+    creator_email: str
+    report_type: ReportTypeEnum
+    description: str
+    # How long before "now" it was opened; recomputed on every run.
+    age: timedelta
+    # Exactly one target: a user's email or a seeded event (creator, title).
+    target_email: str | None = None
+    target_event: tuple[str, str] | None = None
+    # Set when admin@hangy.com already acted on it; the report is then
+    # RESOLVED, and the action is applied to the target and audited.
+    resolution: ReportResolutionActionEnum | None = None
+    resolved_age: timedelta | None = None
+    suspension_days: int | None = None
+
+
+# What GET /admin/reports, /admin/users and /admin/audit-logs show. The ban and
+# the suspension are derived from the reports that caused them, as
+# AdminUserModerationService applies them, so no account is moderated without
+# a report and an audit row behind it.
+SEED_REPORTS = (
+    SeedReport(
+        key="ban-bruno",
+        creator_email="user@hangy.com",
+        report_type=ReportTypeEnum.HARASSMENT,
+        description="Mandou mensagens ofensivas depois de um evento.",
+        age=timedelta(days=4),
+        target_email="bruno@hangy.com",
+        resolution=ReportResolutionActionEnum.BANNED,
+        resolved_age=timedelta(days=3),
+    ),
+    # Suspended for 7 days two days ago: still SUSPENDED for 5 more days.
+    SeedReport(
+        key="suspend-camila",
+        creator_email="maria@hangy.com",
+        report_type=ReportTypeEnum.SPAM,
+        description="Divulga o mesmo link de vendas em todos os perfis.",
+        age=timedelta(days=3),
+        target_email="camila@hangy.com",
+        resolution=ReportResolutionActionEnum.SUSPENDED,
+        resolved_age=timedelta(days=2),
+        suspension_days=7,
+    ),
+    SeedReport(
+        key="remove-open-bar",
+        creator_email="joao@hangy.com",
+        report_type=ReportTypeEnum.INAPPROPRIATE_CONTENT,
+        description="Divulga venda de bebida alcoólica sem restrição de idade.",
+        age=timedelta(days=6),
+        target_event=(BUSINESS_EMAIL, "Festa open bar no Parcão"),
+        resolution=ReportResolutionActionEnum.EVENT_REMOVED,
+        resolved_age=EVENT_REMOVED_AGE,
+    ),
+    # Still waiting for the admin: the open item of the moderation queue.
+    SeedReport(
+        key="pending-pedro",
+        creator_email="ana@hangy.com",
+        report_type=ReportTypeEnum.FAKE_PROFILE,
+        description="As fotos do perfil são de outra pessoa.",
+        age=timedelta(hours=20),
+        target_email="pedro@hangy.com",
+    ),
+)
+
+_AUDIT_ACTION_BY_RESOLUTION = {
+    ReportResolutionActionEnum.BANNED: AuditActionEnum.USER_BANNED,
+    ReportResolutionActionEnum.SUSPENDED: AuditActionEnum.USER_SUSPENDED,
+    ReportResolutionActionEnum.EVENT_REMOVED: AuditActionEnum.EVENT_REMOVED,
+}
+
+
+def seed_report_id(key: str) -> UUID:
+    return uuid5(NAMESPACE_URL, f"hangy:seed:report:{key}")
+
+
+def seed_audit_log_id(key: str) -> UUID:
+    return uuid5(NAMESPACE_URL, f"hangy:seed:audit-log:{key}")
+
+
+def seed_moderation(db: Session) -> None:
+    """Reports, the moderation they caused and its audit trail.
+
+    Put back on every run, like the participants: a revert or a new ban made
+    while testing on these accounts is undone by a restart. Accounts outside
+    SEED_REPORTS keep whatever moderation was applied to them.
+    """
+    users = _users_by_email(db)
+    admin = users.get(ADMIN_EMAIL)
+    now = datetime.now(UTC)
+    if admin is None:
+        return
+
+    for seed in SEED_REPORTS:
+        creator = users.get(seed.creator_email)
+        target_user = users.get(seed.target_email) if seed.target_email else None
+        target_event = (
+            db.get(EventModel, seed_event_id(*seed.target_event))
+            if seed.target_event
+            else None
+        )
+        if creator is None or (target_user is None and target_event is None):
+            continue
+
+        created_at = now - seed.age
+        resolved_at = now - seed.resolved_age if seed.resolved_age is not None else None
+        if target_event is not None and target_event.removed_at is not None:
+            # The takedown and the resolution it caused are one moment.
+            resolved_at = _as_utc(target_event.removed_at)
+        report_id = seed_report_id(seed.key)
+        report = db.get(ReportModel, report_id)
+        if report is None:
+            report = ReportModel(report_id=report_id)
+            db.add(report)
+        report.report_creator_id = creator.user_id
+        report.reported_user_id = target_user.user_id if target_user else None
+        report.reported_event_id = target_event.event_id if target_event else None
+        report.report_type = seed.report_type
+        report.description = seed.description
+        report.deleted_at = None
+        report.created_at = created_at
+        report.updated_at = resolved_at or created_at
+        if seed.resolution is None:
+            report.status = ReportStatusEnum.PENDING
+            report.resolved_by_id = None
+            report.resolved_at = None
+            report.resolution_action = None
+        else:
+            report.status = ReportStatusEnum.RESOLVED
+            report.resolved_by_id = admin.user_id
+            report.resolved_at = resolved_at
+            report.resolution_action = seed.resolution
+        db.flush()
+
+        if seed.resolution is None:
+            continue
+        assert resolved_at is not None
+        if target_user is not None:
+            if seed.resolution is ReportResolutionActionEnum.BANNED:
+                target_user.banned_at = resolved_at
+                target_user.suspended_until = None
+            else:
+                assert seed.suspension_days is not None
+                target_user.banned_at = None
+                target_user.suspended_until = resolved_at + timedelta(
+                    days=seed.suspension_days
+                )
+        _seed_audit_log(db, seed, admin, target_user, target_event, resolved_at)
+    db.commit()
+
+
+def _seed_audit_log(
+    db: Session,
+    seed: SeedReport,
+    admin: UserModel,
+    target_user: UserModel | None,
+    target_event: EventModel | None,
+    created_at: datetime,
+) -> None:
+    assert seed.resolution is not None
+    audit_id = seed_audit_log_id(seed.key)
+    entry = db.get(AuditLogModel, audit_id)
+    if entry is None:
+        entry = AuditLogModel(audit_log_id=audit_id)
+        db.add(entry)
+    entry.actor_id = admin.user_id
+    entry.action = _AUDIT_ACTION_BY_RESOLUTION[seed.resolution]
+    entry.created_at = created_at
+    if target_user is not None:
+        # The same shape AdminUserModerationService records.
+        entry.target_type = AuditTargetTypeEnum.USER
+        entry.target_id = target_user.user_id
+        entry.target_label = target_user.name
+        entry.extra_metadata = {"report_id": str(seed_report_id(seed.key))}
+    else:
+        assert target_event is not None
+        entry.target_type = AuditTargetTypeEnum.EVENT
+        entry.target_id = target_event.event_id
+        entry.target_label = target_event.event_title
+        entry.extra_metadata = None
+
+
+def _as_utc(value: datetime) -> datetime:
+    """SQLite drops tzinfo on read; treat naive datetimes as UTC."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
 def _seed_connection(
     db: Session, seed: SeedNotification, users: dict[str, UserModel]
 ) -> UserConnectionModel | None:
@@ -1091,16 +1389,20 @@ def _seed_connection(
     )
     connection_id = seed_connection_id(*seed.connection)
     connection = db.get(UserConnectionModel, connection_id)
+    created_at = datetime.now(UTC) - SEED_HISTORY
     if connection is None:
         connection = UserConnectionModel(
             connection_id=connection_id,
             requester_id=requester.user_id,
             receiver_id=receiver.user_id,
             status=status,
+            created_at=created_at,
         )
         db.add(connection)
         db.flush()
     else:
+        if _as_utc(connection.created_at) > created_at:
+            connection.created_at = created_at
         # Put back on every run, like the participants: accepting a request
         # while testing must not leave a request notification with no pending
         # request behind it.
@@ -1231,6 +1533,7 @@ def main() -> None:
         seed_notifications(db)
         seed_social(db)
         seed_experiences(db)
+        seed_moderation(db)
 
 
 if __name__ == "__main__":

@@ -121,6 +121,20 @@ class SqlAlchemyEventRepository:
         self.db.refresh(model)
         return self.to_entity(model)
 
+    def finish(self, event_id: UUID, ends_at: datetime) -> Event:
+        model = self.db.scalar(
+            select(EventModel).where(EventModel.event_id == event_id)
+        )
+        if model is None:
+            raise ValueError("An event validated by the service must exist")
+
+        model.event_status = EventStatusEnum.FINISHED
+        model.ends_at = ends_at
+        model.updated_at = datetime.now(UTC)
+        self.db.commit()
+        self.db.refresh(model)
+        return self.to_entity(model)
+
     def find_existing_tag_ids(self, tag_ids: Collection[UUID]) -> set[UUID]:
         if not tag_ids:
             return set()

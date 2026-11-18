@@ -26,6 +26,7 @@ from app.domain.services import (
     EventIsFullError,
     EventNotFoundError,
     EventNotInviteOnlyError,
+    EventNotStartedError,
     EventParticipantNotFoundError,
     EventPrivacyService,
     EventsService,
@@ -121,6 +122,7 @@ from app.presentation.dtos import (
     EventParticipantsOutput,
     EventParticipationOutput,
     EventShareOutput,
+    FinishEventOutput,
     NearbyEventsOutput,
     UpdateEventInput,
     UpdateEventOutput,
@@ -992,6 +994,73 @@ def cancel_event(
             detail="Event already finished",
         ) from error
     return EventAssembler.to_cancel_dto(event)
+
+
+@router.patch(
+    "/{event_id}/finish",
+    response_model=FinishEventOutput,
+    description=(
+        "Encerra o evento que esta acontecendo: o status passa a FINISHED e o "
+        "`end_date` e antecipado para agora. So o organizador pode encerrar, e "
+        "so depois do inicio. Sem esta chamada o evento encerra sozinho ao "
+        "chegar o `end_date`. Encerrar um evento ja encerrado devolve o mesmo "
+        "resultado."
+    ),
+    responses={
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Quem pede nao e o organizador.",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Only the organizer can edit this event"}
+                }
+            },
+        },
+        status.HTTP_404_NOT_FOUND: {
+            "description": "O evento nao existe ou foi excluido.",
+            "content": {"application/json": {"example": {"detail": "Event not found"}}},
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "O evento foi cancelado ou ainda nao comecou.",
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "cancelled": {"value": {"detail": "Event is cancelled"}},
+                        "not_started": {
+                            "value": {"detail": "Event has not started yet"}
+                        },
+                    }
+                }
+            },
+        },
+    },
+)
+def finish_event(
+    event_id: UUID,
+    requester: Annotated[User, Depends(get_current_user)],
+    events_service: Annotated[EventsService, Depends(get_events_service)],
+) -> FinishEventOutput:
+    try:
+        event = events_service.finish(event_id, requester.user_id)
+    except EventNotFoundError as error:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Event not found"
+        ) from error
+    except NotEventOrganizerError as error:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the organizer can edit this event",
+        ) from error
+    except EventAlreadyCancelledError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Event is cancelled",
+        ) from error
+    except EventNotStartedError as error:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Event has not started yet",
+        ) from error
+    return EventAssembler.to_finish_dto(event)
 
 
 def get_event_favorite_service(
