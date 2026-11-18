@@ -27,6 +27,10 @@ def _summary(entry: AuditLogEntry, actor_name: str) -> str:
         return f"{actor_name} reverteu a ação sobre {label or 'um usuário'}"
     if entry.action is AuditActionEnum.REPORT_ARCHIVED:
         return f"{actor_name} arquivou a denúncia {label}".rstrip()
+    if entry.action is AuditActionEnum.REPORT_REVIEWED:
+        return f"{actor_name} colocou em análise a denúncia {label}".rstrip()
+    if entry.action is AuditActionEnum.REPORT_RESOLVED:
+        return f"{actor_name} resolveu sem ação a denúncia {label}".rstrip()
     if entry.action is AuditActionEnum.EVENT_REMOVED:
         return f"{actor_name} removeu o evento {label}".rstrip()
     if entry.action is AuditActionEnum.TAG_CREATED:

@@ -214,13 +214,17 @@ class SqlAlchemyAdminUsersRepository:
         # Only reports against the profile itself (personal or business) count:
         # reports against an event the user created belong to the event file,
         # which is also how `GET /admin/reports?target_user_id=` filters.
-        # Archived reports (task 246: status REJECTED) do not count.
+        # Reports closed without action do not count: archived (task 246:
+        # status REJECTED) or resolved with resolution_action NO_ACTION.
         return (
             select(*columns)
             .select_from(ReportModel)
             .where(
                 ReportModel.deleted_at.is_(None),
                 ReportModel.status != ReportStatusEnum.REJECTED,
+                ReportModel.resolution_action.is_distinct_from(
+                    ReportResolutionActionEnum.NO_ACTION
+                ),
                 ReportModel.reported_user_id == user_id,
             )
         )

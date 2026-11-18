@@ -6,7 +6,7 @@ from sqlalchemy.engine import Row
 from sqlalchemy.orm import Session, aliased
 
 from app.domain.entities import AdminReportDetailRecord, AdminReportQueueItem
-from app.domain.enums import ReportStatusEnum
+from app.domain.enums import ReportResolutionActionEnum, ReportStatusEnum
 from app.infrastructure.repository.models import UserModel
 from app.infrastructure.repository.models.event_model import EventModel
 from app.infrastructure.repository.models.report_model import ReportModel
@@ -230,7 +230,8 @@ class SqlAlchemyAdminReportsRepository:
         )
 
     def _count_target_reports(self, target_user_id: UUID) -> int:
-        """Reports against the user's own profile, archived ones excluded.
+        """Reports against the user's own profile, the ones closed without
+        action (archived or resolved with NO_ACTION) excluded.
 
         Same rule as the `report_count` of the admin user file: reports against
         the user's events belong to the event file.
@@ -242,6 +243,9 @@ class SqlAlchemyAdminReportsRepository:
                 .where(
                     ReportModel.deleted_at.is_(None),
                     ReportModel.status != ReportStatusEnum.REJECTED,
+                    ReportModel.resolution_action.is_distinct_from(
+                        ReportResolutionActionEnum.NO_ACTION
+                    ),
                     ReportModel.reported_user_id == target_user_id,
                 )
             ).scalar_one()
@@ -256,8 +260,14 @@ class SqlAlchemyAdminReportsRepository:
         return ReportModel.reported_user_id == model.reported_user_id
 
     def _count_previous_reports(self, model: ReportModel) -> tuple[int, int]:
-        is_archived = ReportModel.status == ReportStatusEnum.REJECTED
-        is_resolved = ReportModel.status == ReportStatusEnum.RESOLVED
+        # "Sem ação": archived, or resolved with nothing applied to the target.
+        action = ReportModel.resolution_action
+        no_action = action == ReportResolutionActionEnum.NO_ACTION
+        is_archived = or_(ReportModel.status == ReportStatusEnum.REJECTED, no_action)
+        is_resolved = and_(
+            ReportModel.status == ReportStatusEnum.RESOLVED,
+            action.is_distinct_from(ReportResolutionActionEnum.NO_ACTION),
+        )
 
         archived_count, resolved_count = self.db.execute(
             select(
