@@ -34,6 +34,28 @@ case "$1 ${2:-}" in
     fi
     ;;
   'buildx build') [[ "$MOCK_CASE" != build_failure ]] ;;
+  'create aquasec/trivy:'*) echo trivy-container ;;
+  'cp trivy-container:/usr/local/bin/trivy')
+    # Stand-in scanner: records its arguments and writes a JSON report, with an
+    # unfixed HIGH vulnerability for scan_failure.
+    cat > "$3" <<'TRIVY'
+#!/usr/bin/env bash
+echo "trivy $*" >> "$MOCK_LOG"
+# The real Trivy parses every TRIVY_* variable as a flag; only the cache dir is valid here.
+if env | grep '^TRIVY_' | grep -qv '^TRIVY_CACHE_DIR='; then echo 'unexpected TRIVY_* variable' >&2; exit 2; fi
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == --output ]]; then
+    if [[ "$MOCK_CASE" == scan_failure ]]; then
+      echo '{"Results":[{"Target":"debian","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-0001","PkgName":"libtest","InstalledVersion":"1.0","Severity":"HIGH","Status":"affected"},{"VulnerabilityID":"CVE-2026-0002","PkgName":"libtest","InstalledVersion":"1.0","Severity":"MEDIUM"}]}]}' > "$2"
+    else
+      echo '{"Results":[{"Target":"debian","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-0002","PkgName":"libtest","InstalledVersion":"1.0","Severity":"MEDIUM"}]}]}' > "$2"
+    fi
+  fi
+  shift
+done
+TRIVY
+    chmod +x "$3"
+    ;;
   'login --username') cat >/dev/null ;;
 esac
 MOCK
@@ -178,6 +200,7 @@ run_case() {
       export SES_REQUEST_PRODUCTION_ACCESS=true SES_USE_CASE_DESCRIPTION='Test SES use case.'
     fi
     if [[ "$scenario" == missing_sender ]]; then unset EMAIL_FROM; fi
+    export SCAN_REPORT="$work_dir/trivy-report.json"
     unset CORS_ORIGINS API_ALLOWED_CIDRS TF_STATE_KEY
     bash scripts/deploy-gitlab.sh
   ) > "$work_dir/output" 2>&1 || result=$?
@@ -185,6 +208,19 @@ run_case() {
     if [[ "$result" -ne 0 ]]; then cat "$work_dir/output" >&2; return 1; fi
     grep -q 'docker buildx build --platform linux/arm64 --load' "$work_dir/operations"
     grep -q 'Deployed .*@sha256:testdigest to i-test' "$work_dir/output"
+    # The pushed image is the one scanned, and the scan precedes any AWS change.
+    local_image='hangy-backend:test-commit-1-2'
+    image='123456789012.dkr.ecr.us-east-2.amazonaws.com/hangy:test-commit-1-2'
+    grep -q 'docker create aquasec/trivy:0.76.1@sha256:' "$work_dir/operations"
+    grep -Fq -- "--format json --output $work_dir/trivy-report.json $local_image" "$work_dir/operations"
+    [[ "$(grep -c -- '^trivy image .*--format json' "$work_dir/operations")" -eq 1 ]]
+    ! grep -q -- '--ignore-unfixed' "$work_dir/operations"
+    grep -Fxq "docker tag $local_image $image" "$work_dir/operations"
+    ! grep -q '^docker buildx build .*hangy:' "$work_dir/operations"
+    grep -q 'No HIGH/CRITICAL vulnerabilities.' "$work_dir/output"
+    scan_line=$(grep -n -- '^trivy convert' "$work_dir/operations" | cut -d: -f1)
+    [[ "$scan_line" -lt "$(grep -n '^aws ' "$work_dir/operations" | head -1 | cut -d: -f1)" ]]
+    [[ "$scan_line" -lt "$(grep -n '^terraform ' "$work_dir/operations" | head -1 | cut -d: -f1)" ]]
     if [[ "$architecture" == x86_64 ]]; then
       grep -q 'docker run --privileged --rm tonistiigi/binfmt --install arm64' "$work_dir/operations"
     else
@@ -223,6 +259,14 @@ run_case() {
         fi
         ;;
       build_failure|oidc_failure) ! grep -q 'aws ssm send-command' "$work_dir/operations" ;;
+      scan_failure)
+        grep -q 'Blocked: 1 HIGH/CRITICAL vulnerabilities' "$work_dir/output"
+        grep -q 'HIGH CVE-2026-0001 libtest 1.0 fixed=none status=affected' "$work_dir/output"
+        # Nothing reached AWS or Terraform: no state bucket, apply, credentials or push.
+        ! grep -q '^aws ' "$work_dir/operations"
+        ! grep -q '^terraform ' "$work_dir/operations"
+        ! grep -q 'docker push' "$work_dir/operations"
+        ;;
       smoke_timeout)
         grep -q 'Smoke test did not become healthy within 300 seconds.' "$work_dir/output"
         grep -q 'docker inspect --format {{json .State.Health}} hangy-smoke' "$work_dir/operations"
@@ -245,6 +289,7 @@ run_case missing_token failure
 run_case missing_sender failure
 run_case stale failure
 run_case build_failure failure
+run_case scan_failure failure
 run_case slow_start success
 run_case smoke_timeout failure
 run_case oidc_failure failure

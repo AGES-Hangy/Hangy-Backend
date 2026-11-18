@@ -1,0 +1,45 @@
+name: Container Scan
+
+# PR gate for the production image: builds linux/arm64 (what deploy-gitlab.sh
+# publishes) and fails on any HIGH/CRITICAL CVE, using the same script as the
+# GitLab deploy. The GitLab mirror only receives main, develop and tags, so this
+# is the check that runs before merge.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  trivy:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    env:
+      TRIVY_CACHE_DIR: ${{ github.workspace }}/.trivycache
+    steps:
+      # Actions pinned by commit SHA; bump the SHA and the comment together.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Restore Trivy database
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .trivycache
+          key: trivy-db-${{ github.run_id }}
+          restore-keys: trivy-db-
+
+      - name: Build production image (linux/arm64)
+        run: docker build --pull --platform linux/arm64 --tag hangy-backend:scan .
+
+      - name: Scan with Trivy
+        run: bash scripts/scan-image.sh hangy-backend:scan
+
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: trivy-report
+          path: trivy-report.json
+          retention-days: 30
+          if-no-files-found: ignore
