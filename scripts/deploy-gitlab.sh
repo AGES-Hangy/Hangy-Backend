@@ -94,6 +94,36 @@ if ! grep -Fxq 'aws_iam_openid_connect_provider.gitlab[0]' <<< "$state"; then
     fi
   fi
 fi
+
+# An identity verified in the console may already exist outside this state.
+import_ses_identity() {
+  local address=$1 email=$2 existing_address
+  if grep -Fxq -- "$address" <<< "$state"; then
+    return 0
+  fi
+  if ! aws sesv2 get-email-identity --region "$AWS_REGION" --email-identity "$email" \
+    > /dev/null 2> "$work_dir/ses-identity-error"; then
+    if grep -Fq '(NotFoundException)' "$work_dir/ses-identity-error"; then
+      return 0
+    fi
+    cat "$work_dir/ses-identity-error" >&2
+    return 1
+  fi
+  if [[ -n "$state" ]]; then
+    existing_address=$(terraform -chdir=infra/terraform state list -id="$email")
+    if [[ -n "$existing_address" ]]; then
+      echo "SES identity for $address is already managed at $existing_address. Reconcile the state before deploying." >&2
+      return 1
+    fi
+  fi
+  echo "Importing existing SES identity at $address."
+  terraform -chdir=infra/terraform import -input=false -lock-timeout=5m "$address" "$email"
+}
+
+import_ses_identity aws_sesv2_email_identity.password_reset "$EMAIL_FROM"
+if [[ -n "${SES_TEST_RECIPIENT:-}" && "$SES_TEST_RECIPIENT" != "$EMAIL_FROM" ]]; then
+  import_ses_identity 'aws_sesv2_email_identity.test_recipient[0]' "$SES_TEST_RECIPIENT"
+fi
 terraform -chdir=infra/terraform plan -input=false -lock-timeout=5m -out="$work_dir/hangy.tfplan"
 terraform -chdir=infra/terraform apply -input=false -lock-timeout=5m "$work_dir/hangy.tfplan"
 rm -f -- "$work_dir/hangy.tfplan"

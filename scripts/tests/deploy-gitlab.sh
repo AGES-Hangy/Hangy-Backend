@@ -67,19 +67,36 @@ shift # -chdir=infra/terraform
 echo "terraform $*" >> "$MOCK_LOG"
 case "$1" in
   state)
-    if [[ "$MOCK_CASE" == managed ]]; then
-      echo 'aws_iam_openid_connect_provider.gitlab[0]'
+    if [[ "${3:-}" == -id=* ]]; then
+      [[ "$3" == '-id=reset@hangy.example' ]]
+      if [[ "$MOCK_CASE" == ses_state_conflict ]]; then
+        echo 'aws_sesv2_email_identity.test_recipient[0]'
+      fi
+    else
+      case "$MOCK_CASE" in
+        managed) echo 'aws_iam_openid_connect_provider.gitlab[0]' ;;
+        ses_managed)
+          echo 'aws_sesv2_email_identity.password_reset'
+          echo 'aws_sesv2_email_identity.test_recipient[0]'
+          ;;
+        ses_state_conflict) echo 'aws_sesv2_email_identity.test_recipient[0]' ;;
+      esac
     fi
+    ;;
+  import)
+    [[ "$MOCK_CASE" == ses_existing || "$MOCK_CASE" == ses_same_address ]]
+    [[ "$2 $3" == '-input=false -lock-timeout=5m' ]]
+    case "$4 $5" in
+      'aws_sesv2_email_identity.password_reset reset@hangy.example'|\
+      'aws_sesv2_email_identity.test_recipient[0] tester@hangy.example') ;;
+      *) exit 1 ;;
+    esac
     ;;
   plan)
     [[ "$TF_VAR_gitlab_project_path" == '2026-2/2jk-4jk/hangy/hangy-backend' ]]
     [[ "$TF_VAR_gitlab_url" == 'https://tools.ages.pucrs.br' ]]
     [[ "$TF_VAR_email_from" == 'reset@hangy.example' ]]
-    if [[ "$MOCK_CASE" == ses_sandbox ]]; then
-      [[ "$TF_VAR_ses_test_recipient" == tester@hangy.example ]]
-    else
-      [[ -z "${TF_VAR_ses_test_recipient:-}" ]]
-    fi
+    [[ "${TF_VAR_ses_test_recipient:-}" == "${SES_TEST_RECIPIENT:-}" ]]
     [[ "$TF_VAR_api_allowed_cidrs" == '["0.0.0.0/0"]' ]]
     if [[ "$MOCK_CASE" == shared* ]]; then
       [[ "$TF_VAR_gitlab_oidc_provider_arn" == 'arn:aws:iam::123456789012:oidc-provider/tools.ages.pucrs.br' ]]
@@ -133,6 +150,21 @@ case "$1 $2" in
     ;;
   'sesv2 get-email-identity')
     [[ "$AWS_ACCESS_KEY_ID" == provisioning-key && "$3 $4" == '--region us-east-2' ]]
+    if ! grep -q '^terraform apply ' "$MOCK_LOG"; then
+      case "$MOCK_CASE" in
+        ses_existing|ses_same_address|ses_state_conflict)
+          [[ "$6" == reset@hangy.example || "$6" == tester@hangy.example ]]
+          ;;
+        ses_lookup_failure)
+          echo 'An error occurred (AccessDeniedException) when calling the GetEmailIdentity operation' >&2
+          exit 254
+          ;;
+        *)
+          echo 'An error occurred (NotFoundException) when calling the GetEmailIdentity operation' >&2
+          exit 254
+          ;;
+      esac
+    fi
     if [[ "$MOCK_CASE" == ses_unverified ]]; then
       echo '{"VerifiedForSendingStatus":false}'
     else
@@ -195,6 +227,10 @@ run_case() {
     if [[ "$scenario" == ses_sandbox ]]; then
       export SES_REQUIRE_PRODUCTION_ACCESS=false SES_TEST_RECIPIENT=tester@hangy.example
     fi
+    case "$scenario" in
+      ses_existing|ses_managed) export SES_TEST_RECIPIENT=tester@hangy.example ;;
+      ses_same_address) export SES_TEST_RECIPIENT="$EMAIL_FROM" ;;
+    esac
     if [[ "$scenario" == ses_sandbox_default ]]; then unset SES_REQUIRE_PRODUCTION_ACCESS; fi
     if [[ "$scenario" == ses_request_pending ]]; then
       export SES_REQUEST_PRODUCTION_ACCESS=true SES_USE_CASE_DESCRIPTION='Test SES use case.'
@@ -232,6 +268,24 @@ run_case() {
     if [[ "$scenario" == ses_sandbox* ]]; then
       grep -q 'WARNING: SES is still in the sandbox' "$work_dir/output"
     fi
+    case "$scenario" in
+      ses_existing|ses_same_address)
+        local plan_line import_line
+        plan_line=$(grep -n '^terraform plan ' "$work_dir/operations" | cut -d: -f1)
+        import_line=$(grep -n 'terraform import .*password_reset reset@hangy.example$' "$work_dir/operations" | cut -d: -f1)
+        [[ -n "$import_line" && "$import_line" -lt "$plan_line" ]]
+        if [[ "$scenario" == ses_existing ]]; then
+          import_line=$(grep -n 'terraform import .*test_recipient\[0\] tester@hangy.example$' "$work_dir/operations" | cut -d: -f1)
+          [[ -n "$import_line" && "$import_line" -lt "$plan_line" ]]
+        else
+          [[ "$(grep -c '^terraform import ' "$work_dir/operations")" == 1 ]]
+        fi
+        ;;
+      *) [[ "$(grep -c '^terraform import ' "$work_dir/operations")" == 0 ]] ;;
+    esac
+    if [[ "$scenario" == ses_managed ]]; then
+      [[ "$(grep -c '^aws sesv2 get-email-identity$' "$work_dir/operations")" == 1 ]]
+    fi
     if [[ "$scenario" == shared ]]; then
       grep -q 'aws iam add-client-id-to-open-id-connect-provider' "$work_dir/operations"
     else
@@ -248,6 +302,16 @@ run_case() {
       missing_sender)
         [[ ! -s "$work_dir/operations" ]]
         grep -q 'Missing CI/CD variable: EMAIL_FROM' "$work_dir/output"
+        ;;
+      ses_lookup_failure|ses_state_conflict)
+        if [[ "$scenario" == ses_lookup_failure ]]; then
+          grep -Fq '(AccessDeniedException)' "$work_dir/output"
+        else
+          grep -Fq 'already managed at aws_sesv2_email_identity.test_recipient[0]' "$work_dir/output"
+        fi
+        if grep -Eq '^terraform (import|plan|apply) ' "$work_dir/operations"; then
+          return 1
+        fi
         ;;
       ses_unverified|ses_request_pending)
         grep -q 'terraform apply' "$work_dir/operations"
@@ -298,3 +362,8 @@ run_case ses_sandbox success
 run_case ses_sandbox_default success
 run_case ses_unverified failure
 run_case ses_request_pending failure
+run_case ses_existing success
+run_case ses_same_address success
+run_case ses_managed success
+run_case ses_lookup_failure failure
+run_case ses_state_conflict failure
