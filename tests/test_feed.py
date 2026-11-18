@@ -1,3 +1,4 @@
+import math
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -127,16 +128,25 @@ def create_event(
     location_name: str | None = None,
     neighborhood: str | None = None,
     city: str | None = None,
+    latitude: float = -30.0,
+    longitude: float = -51.0,
+    approx_point: tuple[float, float] | None = None,
 ) -> uuid.UUID:
     starts_at = starts_at if starts_at is not None else NOW + timedelta(days=1)
+    approx = (
+        {}
+        if approx_point is None
+        else {"approx_latitude": approx_point[0], "approx_longitude": approx_point[1]}
+    )
     event = EventModel(
         event_creator_id=creator_id,
         event_title=title,
         location_name=location_name,
         location_neighborhood=neighborhood,
         location_city=city,
-        event_latitude=-30.0,
-        event_longitude=-51.0,
+        event_latitude=latitude,
+        event_longitude=longitude,
+        **approx,
         starts_at=starts_at,
         ends_at=starts_at + timedelta(hours=2),
         event_status=event_status,
@@ -160,7 +170,7 @@ def add_participant(
     db.commit()
 
 
-def get_feed(context: FeedContext, **params: int) -> dict:
+def get_feed(context: FeedContext, **params: float) -> dict:
     response = context.client.get("/feed", params=params, headers=context.auth_headers)
     assert response.status_code == 200, response.text
     return response.json()
@@ -650,3 +660,238 @@ def test_feed_keeps_events_when_the_block_involves_other_users(
     context.db.commit()
 
     assert titles_by_tag(get_feed(context)) == {"Esportes": ["Pelada liberada"]}
+
+
+# Porto Alegre, where the viewer is; the other points are real cities around it.
+PORTO_ALEGRE = (-30.0346, -51.2177)
+CANOAS = (-29.9178, -51.1839)  # ~13 km
+GRAVATAI = (-29.9440, -50.9919)  # ~24 km
+SAO_PAULO = (-23.5505, -46.6333)  # ~850 km
+
+
+def feed_near(context: FeedContext, point: tuple[float, float], **params: float):
+    return get_feed(context, latitude=point[0], longitude=point[1], **params)
+
+
+def sports_interest(context: FeedContext) -> tuple[uuid.UUID, uuid.UUID]:
+    creator_id = create_user(context.db, "creator@hangy.com")
+    sports = create_tag(context.db, "Esportes")
+    add_interest(context.db, context.user_id, sports)
+    return creator_id, sports
+
+
+def create_event_at(
+    context: FeedContext,
+    creator_id: uuid.UUID,
+    tag_id: uuid.UUID,
+    title: str,
+    point: tuple[float, float],
+    **kwargs,
+) -> uuid.UUID:
+    return create_event(
+        context.db,
+        creator_id,
+        title,
+        (tag_id,),
+        latitude=point[0],
+        longitude=point[1],
+        # The real point: these tests are about distance, not the offset.
+        approx_point=kwargs.pop("approx_point", point),
+        **kwargs,
+    )
+
+
+def test_feed_near_the_viewer_keeps_nearby_cities_and_drops_far_ones(
+    context: FeedContext,
+) -> None:
+    creator_id, sports = sports_interest(context)
+    create_event_at(context, creator_id, sports, "Pelada no Parcão", PORTO_ALEGRE)
+    create_event_at(context, creator_id, sports, "Corrida em Canoas", CANOAS)
+    create_event_at(context, creator_id, sports, "Vôlei em Gravataí", GRAVATAI)
+    create_event_at(context, creator_id, sports, "Futebol na Paulista", SAO_PAULO)
+
+    assert set(titles_by_tag(feed_near(context, PORTO_ALEGRE))["Esportes"]) == {
+        "Pelada no Parcão",
+        "Corrida em Canoas",
+        "Vôlei em Gravataí",
+    }
+
+
+def test_feed_without_coordinates_is_not_bounded_by_distance(
+    context: FeedContext,
+) -> None:
+    creator_id, sports = sports_interest(context)
+    create_event_at(context, creator_id, sports, "Pelada no Parcão", PORTO_ALEGRE)
+    create_event_at(context, creator_id, sports, "Futebol na Paulista", SAO_PAULO)
+
+    # Older app versions send no position and keep getting the whole feed.
+    assert set(titles_by_tag(get_feed(context))["Esportes"]) == {
+        "Pelada no Parcão",
+        "Futebol na Paulista",
+    }
+
+
+def test_feed_radius_is_a_circle_with_a_configurable_size(
+    context: FeedContext,
+) -> None:
+    creator_id, sports = sports_interest(context)
+    origin_latitude, origin_longitude = PORTO_ALEGRE
+    # Due north: 0.85° ≈ 94.6 km and 0.95° ≈ 105.8 km of latitude.
+    create_event_at(
+        context,
+        creator_id,
+        sports,
+        "A 95 km",
+        (origin_latitude + 0.85, origin_longitude),
+        starts_at=NOW + timedelta(days=1),
+    )
+    create_event_at(
+        context,
+        creator_id,
+        sports,
+        "A 106 km",
+        (origin_latitude + 0.95, origin_longitude),
+        starts_at=NOW + timedelta(days=2),
+    )
+    # Inside the 100 km bounding square but ~126 km away, past its circle.
+    create_event_at(
+        context,
+        creator_id,
+        sports,
+        "No canto do quadrado",
+        (
+            origin_latitude + 0.8,
+            origin_longitude + 0.8 / math.cos(math.radians(origin_latitude)),
+        ),
+        starts_at=NOW + timedelta(days=3),
+    )
+
+    assert titles_by_tag(feed_near(context, PORTO_ALEGRE)) == {"Esportes": ["A 95 km"]}
+    assert titles_by_tag(feed_near(context, PORTO_ALEGRE, radius_km=110)) == {
+        "Esportes": ["A 95 km", "A 106 km"]
+    }
+    assert titles_by_tag(feed_near(context, PORTO_ALEGRE, radius_km=130)) == {
+        "Esportes": ["A 95 km", "A 106 km", "No canto do quadrado"]
+    }
+
+
+def test_feed_radius_crosses_the_antimeridian(context: FeedContext) -> None:
+    creator_id, sports = sports_interest(context)
+    # ~22 km apart across longitude ±180.
+    create_event_at(context, creator_id, sports, "Do outro lado", (0.0, -179.9))
+    create_event_at(context, creator_id, sports, "Longe", (0.0, -170.0))
+
+    assert titles_by_tag(feed_near(context, (0.0, 179.9))) == {
+        "Esportes": ["Do outro lado"]
+    }
+
+
+def test_feed_measures_the_distance_from_the_event_approximate_point(
+    context: FeedContext,
+) -> None:
+    creator_id, sports = sports_interest(context)
+    # The real address is next to the viewer, the approximate point is not:
+    # the radius must not reveal more than the approximate point already does.
+    create_event_at(
+        context,
+        creator_id,
+        sports,
+        "Endereço perto, ponto longe",
+        PORTO_ALEGRE,
+        approx_point=SAO_PAULO,
+    )
+    create_event_at(
+        context,
+        creator_id,
+        sports,
+        "Endereço longe, ponto perto",
+        SAO_PAULO,
+        approx_point=CANOAS,
+    )
+
+    assert titles_by_tag(feed_near(context, PORTO_ALEGRE)) == {
+        "Esportes": ["Endereço longe, ponto perto"]
+    }
+
+
+def test_feed_paginates_only_among_the_events_within_the_radius(
+    context: FeedContext,
+) -> None:
+    creator_id, sports = sports_interest(context)
+    # The far events come first by date, so a filter applied after the page
+    # was cut would leave the section empty or flag a next page wrongly.
+    create_event_at(
+        context,
+        creator_id,
+        sports,
+        "Longe 1",
+        SAO_PAULO,
+        starts_at=NOW + timedelta(days=1),
+    )
+    create_event_at(
+        context,
+        creator_id,
+        sports,
+        "Longe 2",
+        SAO_PAULO,
+        starts_at=NOW + timedelta(days=2),
+    )
+    create_event_at(
+        context,
+        creator_id,
+        sports,
+        "Perto",
+        CANOAS,
+        starts_at=NOW + timedelta(days=3),
+    )
+
+    payload = feed_near(context, PORTO_ALEGRE, limit=1)
+
+    assert titles_by_tag(payload) == {"Esportes": ["Perto"]}
+    assert payload["sections"][0]["has_more"] is False
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"latitude": -30.0},
+        {"longitude": -51.0},
+        {"latitude": -90.1, "longitude": -51.0},
+        {"latitude": 90.1, "longitude": -51.0},
+        {"latitude": -30.0, "longitude": -180.1},
+        {"latitude": -30.0, "longitude": 180.1},
+    ],
+)
+def test_feed_rejects_incomplete_or_out_of_range_coordinates(
+    context: FeedContext, params: dict[str, float]
+) -> None:
+    response = context.client.get("/feed", params=params, headers=context.auth_headers)
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid coordinates"}
+
+
+@pytest.mark.parametrize("radius_km", [0, 501])
+def test_feed_rejects_a_radius_outside_the_accepted_range(
+    context: FeedContext, radius_km: int
+) -> None:
+    response = context.client.get(
+        "/feed",
+        params={"latitude": -30.0, "longitude": -51.0, "radius_km": radius_km},
+        headers=context.auth_headers,
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid radius"}
+
+
+@pytest.mark.parametrize("radius_km", [1, 500])
+def test_feed_accepts_the_radius_boundaries(
+    context: FeedContext, radius_km: int
+) -> None:
+    creator_id, sports = sports_interest(context)
+    create_event_at(context, creator_id, sports, "Pelada no Parcão", PORTO_ALEGRE)
+
+    assert titles_by_tag(feed_near(context, PORTO_ALEGRE, radius_km=radius_km)) == {
+        "Esportes": ["Pelada no Parcão"]
+    }
