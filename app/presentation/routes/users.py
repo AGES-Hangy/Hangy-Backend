@@ -12,6 +12,7 @@ from app.domain.assemblers import (
 )
 from app.domain.assemblers.users import UsersAssembler
 from app.domain.entities import User
+from app.domain.enums import UserRoleEnum
 from app.domain.services import (
     DEFAULT_BLOCKED_USERS_LIMIT,
     DEFAULT_USER_EVENTS_LIMIT,
@@ -396,7 +397,9 @@ def get_users_service(
         status.HTTP_404_NOT_FOUND: {
             "description": (
                 "Usuário não encontrado, ou existe bloqueio entre ele e o "
-                "visitante, em qualquer sentido (mesmo erro nos dois casos)."
+                "visitante, em qualquer sentido (mesmo erro nos dois casos), ou "
+                "a conta está banida ou suspensa e o visitante não é ela nem "
+                "tem `role = ADMIN`."
             ),
             "content": {"application/json": {"example": {"detail": "User not found"}}},
         },
@@ -409,7 +412,9 @@ def get_user_profile(
 ) -> UserProfileDTO:
     try:
         profile = users_service.get_profile(
-            user_id=user_id, viewer_id=current_user.user_id
+            user_id=user_id,
+            viewer_id=current_user.user_id,
+            viewer_is_admin=current_user.role is UserRoleEnum.ADMIN,
         )
     except UserNotFoundError as error:
         raise HTTPException(

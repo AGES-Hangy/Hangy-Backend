@@ -14,6 +14,7 @@ from app.domain.assemblers import (
     NearbyEventAssembler,
 )
 from app.domain.entities import User
+from app.domain.enums import UserRoleEnum
 from app.domain.services import (
     DEFAULT_NEARBY_LIMIT,
     EventAlreadyCancelledError,
@@ -438,7 +439,11 @@ def get_event_details(
 ) -> EventDetailsOutput:
 
     try:
-        details = details_service.get_details(event_id, viewer.user_id)
+        details = details_service.get_details(
+            event_id,
+            viewer.user_id,
+            viewer_is_admin=viewer.role is UserRoleEnum.ADMIN,
+        )
     except EventDetailsNotFoundError as error:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

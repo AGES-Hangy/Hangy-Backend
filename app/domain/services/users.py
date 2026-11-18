@@ -10,7 +10,9 @@ class UserNotFoundError(Exception):
 
 
 class UserProfileRepository(Protocol):
-    def get_profile(self, user_id: UUID, viewer_id: UUID) -> UserProfileData | None:
+    def get_profile(
+        self, user_id: UUID, viewer_id: UUID, viewer_is_admin: bool = False
+    ) -> UserProfileData | None:
         pass
 
 
@@ -21,13 +23,17 @@ class UsersService:
         self.repository = repository
         self.block_checker = block_checker
 
-    def get_profile(self, user_id: UUID, viewer_id: UUID) -> UserProfileData:
+    def get_profile(
+        self, user_id: UUID, viewer_id: UUID, viewer_is_admin: bool = False
+    ) -> UserProfileData:
         # A block hides the profile from both sides, with the same error as a
         # missing user so neither can tell the two cases apart.
         if self.block_checker.is_blocked_between(user_id, viewer_id):
             raise UserNotFoundError()
 
-        profile = self.repository.get_profile(user_id=user_id, viewer_id=viewer_id)
+        profile = self.repository.get_profile(
+            user_id=user_id, viewer_id=viewer_id, viewer_is_admin=viewer_is_admin
+        )
 
         if profile is None:
             raise UserNotFoundError()
