@@ -40,6 +40,11 @@ NOTIFICATION_TYPE_BY_STATUS: dict[EventParticipantStatusEnum, NotificationTypeEn
 }
 
 
+def _as_utc(value: datetime) -> datetime:
+    """SQLite drops tzinfo on read; treat naive datetimes as UTC."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
 class EventRepository(Protocol):
     def add(self, event: NewEvent) -> Event: ...
 
@@ -60,6 +65,8 @@ class EventRepository(Protocol):
     ) -> EventParticipant: ...
 
     def cancel(self, event_id: UUID) -> Event: ...
+
+    def finish(self, event_id: UUID, ends_at: datetime) -> Event: ...
 
     def get(self, event_id: UUID) -> Event | None: ...
 
@@ -128,6 +135,10 @@ class EventIsFullError(Exception):
 
 class EventAlreadyFinishedError(Exception):
     """Raised when an event that has already finished is changed."""
+
+
+class EventNotStartedError(Exception):
+    """Raised when an event is finished before its start time."""
 
 
 class EventAlreadyCancelledError(Exception):
@@ -233,6 +244,27 @@ class EventsService:
         if has_event_ended(event):
             raise EventAlreadyFinishedError
         return self.repository.cancel(event_id)
+
+    def finish(self, event_id: UUID, requester_id: UUID) -> Event:
+        """Close an event that is happening; its end moves up to now.
+
+        Finishing twice, or one whose end time already passed, only records
+        FINISHED: the original end is kept, nothing moves it forward.
+        """
+        # Locked so a concurrent cancel and finish cannot both go through.
+        event = self.repository.get_by_id_for_update(event_id)
+        if event is None:
+            raise EventNotFoundError
+        if event.event_creator_id != requester_id:
+            raise NotEventOrganizerError
+        if event.event_status is EventStatusEnum.CANCELLED:
+            raise EventAlreadyCancelledError
+        if event.event_status is EventStatusEnum.FINISHED:
+            return event
+        now = datetime.now(UTC)
+        if _as_utc(event.starts_at) > now:
+            raise EventNotStartedError
+        return self.repository.finish(event_id, min(_as_utc(event.ends_at), now))
 
     def update(self, event_id: UUID, organizer_id: UUID, changes: EventUpdate) -> Event:
         """Apply a partial update after enforcing the event editing rules."""

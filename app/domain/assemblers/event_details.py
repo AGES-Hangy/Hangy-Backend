@@ -1,4 +1,5 @@
 from app.domain.entities import EventDetails
+from app.domain.services.event_timing import effective_event_status
 from app.presentation.dtos import (
     EventDetailsLocationOutput,
     EventDetailsOrganizerOutput,
@@ -49,7 +50,7 @@ class EventDetailsAssembler:
             location_precision=details.location.precision,
             location_radius_m=details.location.radius_m,
             privacy=event.event_privacy,
-            status=event.event_status,
+            status=effective_event_status(event.event_status, event.ends_at),
             cover_photo_url=event.cover_photo_url,
             tags=[
                 EventDetailsTagOutput(id=tag.tag_id, name=tag.tag_name)

@@ -1,4 +1,5 @@
 from app.domain.entities import AdminEventDetail
+from app.domain.services.event_timing import effective_event_status
 from app.presentation.dtos.admin_events import (
     AdminEventDetailOutput,
     AdminEventMetricsOutput,
@@ -25,7 +26,7 @@ class AdminEventsAssembler:
             latitude=detail.latitude,
             longitude=detail.longitude,
             privacy=detail.privacy,
-            status=detail.status,
+            status=effective_event_status(detail.status, detail.ends_at),
             moderation_status=detail.moderation_status,
             removed_at=detail.removed_at,
             cover_photo_url=detail.cover_photo_url,
