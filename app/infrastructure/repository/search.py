@@ -26,6 +26,7 @@ from app.domain.enums import (
     EventPrivacyEnum,
     EventStatusEnum,
     UserConnectionStatusEnum,
+    UserRoleEnum,
     UserTypeEnum,
 )
 from app.infrastructure.repository.block import block_exists_between
@@ -362,6 +363,8 @@ class SqlAlchemySearchRepository:
         conditions = [
             UserModel.deleted_at.is_(None),
             UserModel.user_type == UserTypeEnum.BUSINESS,
+            # Admin accounts are staff, not profiles to discover.
+            UserModel.role != UserRoleEnum.ADMIN,
             ~block_exists_between(UserModel.user_id, viewer_id),
             user_is_active_account(UserModel.user_id),
             self._text_match_condition(UserModel, UserModel.name, query),
@@ -428,6 +431,8 @@ class SqlAlchemySearchRepository:
         conditions: list[ColumnElement[bool]] = [
             UserModel.deleted_at.is_(None),
             UserModel.user_type == UserTypeEnum.PERSONAL,
+            # Admin accounts are staff, not profiles to discover.
+            UserModel.role != UserRoleEnum.ADMIN,
             ~block_exists_between(UserModel.user_id, viewer_id),
             user_is_active_account(UserModel.user_id),
             self._text_match_condition(UserModel, UserModel.name, query),

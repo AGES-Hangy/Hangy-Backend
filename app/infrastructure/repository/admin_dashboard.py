@@ -10,7 +10,7 @@ from app.domain.entities import (
     DashboardReportCounts,
     DashboardUserCounts,
 )
-from app.domain.enums import ReportStatusEnum, UserTypeEnum
+from app.domain.enums import ReportStatusEnum, UserRoleEnum, UserTypeEnum
 from app.infrastructure.repository.models import UserModel
 from app.infrastructure.repository.models.event_model import EventModel
 from app.infrastructure.repository.models.report_model import ReportModel
@@ -67,7 +67,10 @@ class SqlAlchemyAdminDashboardRepository:
                 ),
                 func.count().filter(suspended),
                 func.count().filter(expiring_today),
-            ).where(UserModel.deleted_at.is_(None))
+                # Admin accounts are staff: they do not count as users.
+            ).where(
+                UserModel.deleted_at.is_(None), UserModel.role != UserRoleEnum.ADMIN
+            )
         ).one()
         return DashboardUserCounts(
             active=row[0],
