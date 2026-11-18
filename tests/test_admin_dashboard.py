@@ -211,10 +211,11 @@ def test_admin_receives_the_dashboard_metrics(
     assert body["reports_open_last_24h"] == 2
     assert body["reports_in_review"] == 1
     assert body["reports_in_review_moderators"] == 0
-    # admin + reporter + the 30-day-old account + target (deleted one excluded)
-    assert body["active_users"] == 4
-    # admin + reporter + target joined in the last 7 days
-    assert body["active_users_new_this_week"] == 3
+    # reporter + the 30-day-old account + target (the deleted one and the
+    # admin account are excluded)
+    assert body["active_users"] == 3
+    # reporter + target joined in the last 7 days
+    assert body["active_users_new_this_week"] == 2
     assert body["suspended_accounts"] == 0
     assert body["suspended_accounts_expiring_today"] == 0
     assert len(body["recent_reports"]) == 4  # 3 pending + 1 reviewed
@@ -240,7 +241,7 @@ def test_suspended_accounts_are_counted_and_leave_active_users(
     body = response.json()
     assert body["suspended_accounts"] == 2
     assert body["suspended_accounts_expiring_today"] <= 2
-    assert body["active_users"] == 2  # admin + the expired suspension
+    assert body["active_users"] == 1  # the expired suspension (admin excluded)
 
 
 def test_regular_user_gets_403(dashboard_client: DashboardClient) -> None:

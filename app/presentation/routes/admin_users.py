@@ -46,7 +46,8 @@ def get_admin_users_service(
     summary="Listar usuários para a gestão de moderação",
     description=(
         "Lista, do cadastro mais recente para o mais antigo, as contas pessoais "
-        "e de estabelecimento não excluídas, com o status de moderação derivado "
+        "e de estabelecimento não excluídas (contas com `role = ADMIN` ficam "
+        "de fora), com o tipo (`user_type`), o status de moderação derivado "
         "(`BANNED` se banida; `SUSPENDED` se a suspensão ainda não terminou; "
         "senão `ACTIVE`), o número de eventos criados e o de denúncias não "
         "arquivadas contra o perfil (as contra eventos dele ficam na ficha do "

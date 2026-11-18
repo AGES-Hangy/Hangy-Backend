@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from uuid import UUID
 
-from app.domain.enums import AuditActionEnum, ModerationStatusEnum
+from app.domain.enums import AuditActionEnum, ModerationStatusEnum, UserTypeEnum
 
 __all__ = [
     "AdminModerationActor",
@@ -22,6 +22,7 @@ class AdminUserRecord:
 
     user_id: UUID
     name: str | None
+    user_type: UserTypeEnum
     created_at: datetime
     banned_at: datetime | None
     suspended_until: datetime | None
@@ -33,6 +34,7 @@ class AdminUserRecord:
 class AdminUserItem:
     user_id: UUID
     name: str | None
+    user_type: UserTypeEnum
     moderation_status: ModerationStatusEnum
     suspended_until: datetime | None
     event_count: int
