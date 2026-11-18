@@ -1249,6 +1249,34 @@ SEED_REPORTS = (
         age=timedelta(hours=20),
         target_email="pedro@hangy.com",
     ),
+    # Also pending, one per kind of target the queue tells apart: a person's
+    # profile, a business profile and an event. Each follows the rules of
+    # POST /reports: nobody reports themselves, and the EXPERIENCE reason on
+    # the event comes from a confirmed participant of an event already over.
+    SeedReport(
+        key="pending-rafael",
+        creator_email="carla@hangy.com",
+        report_type=ReportTypeEnum.HARASSMENT,
+        description="Insiste em mandar mensagens mesmo depois de eu pedir para parar.",
+        age=timedelta(days=1, hours=6),
+        target_email="rafael@hangy.com",
+    ),
+    SeedReport(
+        key="pending-business",
+        creator_email="lucas@hangy.com",
+        report_type=ReportTypeEnum.SPAM,
+        description="Manda a mesma promoção várias vezes por dia para os seguidores.",
+        age=timedelta(hours=9),
+        target_email=BUSINESS_EMAIL,
+    ),
+    SeedReport(
+        key="pending-sarau",
+        creator_email="maria@hangy.com",
+        report_type=ReportTypeEnum.MISLEADING_EVENT,
+        description="Anunciaram quatro apresentações e só teve uma.",
+        age=timedelta(days=2),
+        target_event=("joao@hangy.com", "Sarau de teatro"),
+    ),
 )
 
 _AUDIT_ACTION_BY_RESOLUTION = {
