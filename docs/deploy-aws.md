@@ -266,11 +266,16 @@ use **Retry** no job `deploy` do pipeline da `main`. O pipeline executa:
 
 1. Lint, formatação, testes da API e migrações em um PostgreSQL de teste.
 2. Validação e testes do Terraform e do bootstrap, sem acesso à AWS.
-3. Criação ou reutilização do bucket S3 dedicado ao estado do Terraform.
-4. `terraform plan` e `terraform apply` para criar ou atualizar a infraestrutura.
-5. Leitura dos IDs dos recursos criados e autenticação OIDC com a role de deploy.
-6. Build e smoke test da imagem `linux/arm64`, publicação no ECR e deploy na EC2.
-7. Migrações no RDS, seed de produção e health check da aplicação.
+3. Build da imagem `linux/arm64` e scan com o Trivy (`scripts/scan-image.sh`).
+   Qualquer CVE HIGH/CRITICAL, com ou sem correção, para o deploy aqui, antes de
+   qualquer mudança na AWS. Para aceitar um risco, registre a CVE no
+   `.trivyignore.yaml` com `statement` e `expired_at`. O relatório completo fica
+   no artifact `trivy-report.json` do job.
+4. Criação ou reutilização do bucket S3 dedicado ao estado do Terraform.
+5. `terraform plan` e `terraform apply` para criar ou atualizar a infraestrutura.
+6. Leitura dos IDs dos recursos criados e autenticação OIDC com a role de deploy.
+7. Smoke test da imagem escaneada, publicação no ECR e deploy na EC2.
+8. Migrações no RDS, seed de produção e health check da aplicação.
 
 **O apply é automático nos pushes da `main`**, sem etapa manual de aprovação.
 Isso inclui mudanças feitas nos arquivos Terraform. O primeiro deploy leva mais
@@ -282,7 +287,9 @@ A URL da API aparece no log do job `deploy`. O endpoint inicial
 é HTTP na porta 8000; domínio e HTTPS não são configurados neste módulo.
 
 Os jobs `test` e `validate-infra` verificam merge requests sem provisionar recursos
-e precisam passar antes do deploy. No GitHub, as verificações de PR continuam.
+e precisam passar antes do deploy. No GitHub, as verificações de PR continuam;
+entre elas, o workflow `Container Scan` faz o mesmo build `linux/arm64` e o mesmo
+scan do deploy, para que um PR que traga CVE HIGH/CRITICAL falhe antes do merge.
 O job de deploy usa `resource_group: aws-production` para serializar todo o fluxo
 e rejeita um commit que já não seja o mais recente da `main` ao iniciar.
 

@@ -1,4 +1,4 @@
-# Vulnerabilities accepted by the container-scan job (.gitlab-ci.yml).
+# Vulnerabilities accepted by scripts/scan-image.sh (PR check and GitLab deploy).
 # Prefer upgrading the dependency or base image. Add an entry only when no fix
 # is usable yet, always with a reason and an expiry so it gets re-reviewed:
 #

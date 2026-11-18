@@ -60,47 +60,6 @@ validate-infra:
     - bash scripts/tests/deploy-ec2.sh
     - bash scripts/tests/setup-ses.sh
 
-# Merge request gate: builds the production ARM64 image and fails on any
-# HIGH/CRITICAL CVE, fixed upstream or not. On main, deploy-gitlab.sh runs the
-# same scan on the exact image it pushes. Accepted risks go in .trivyignore.yaml
-# with a statement and expired_at.
-container-scan:
-  stage: validate
-  image: docker:29-cli
-  services:
-    - name: docker:29-dind
-      alias: docker
-      command: ["--tls=false"]
-  variables:
-    DOCKER_HOST: tcp://docker:2375
-    DOCKER_TLS_CERTDIR: ""
-    HEALTHCHECK_TCP_PORT: "2375"
-    SCAN_IMAGE: hangy-backend:scan-$CI_COMMIT_SHORT_SHA
-    TRIVY_CACHE_DIR: $CI_PROJECT_DIR/.trivycache
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-  cache:
-    key: trivy-db
-    paths:
-      - .trivycache/
-  timeout: 60m
-  before_script:
-    - apk add --no-cache bash
-  script:
-    - |
-      case "$(docker info --format '{{.Architecture}}')" in
-        aarch64|arm64) ;;
-        *) docker run --privileged --rm tonistiigi/binfmt --install arm64 ;;
-      esac
-    - docker buildx create --use --name hangy-scan --driver docker-container
-    - docker buildx build --platform linux/arm64 --pull --load --tag "$SCAN_IMAGE" .
-    - bash scripts/scan-image.sh "$SCAN_IMAGE"
-  artifacts:
-    when: always
-    expire_in: 30 days
-    paths:
-      - trivy-report.json
-
 deploy:
   stage: deploy
   image: docker:29-cli
@@ -112,6 +71,13 @@ deploy:
     DOCKER_HOST: tcp://docker:2375
     DOCKER_TLS_CERTDIR: ""
     HEALTHCHECK_TCP_PORT: "2375"
+    # deploy-gitlab.sh scans the image before any AWS change (scripts/scan-image.sh);
+    # the cached Trivy database avoids a full download on every deploy.
+    TRIVY_CACHE_DIR: $CI_PROJECT_DIR/.trivycache
+  cache:
+    key: trivy-db
+    paths:
+      - .trivycache/
   timeout: 90m
   interruptible: false
   resource_group: aws-production

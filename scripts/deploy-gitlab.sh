@@ -43,6 +43,13 @@ case "$(docker info --format '{{.Architecture}}')" in
   *) echo 'The Docker runner must be Linux AMD64 or ARM64.' >&2; exit 1 ;;
 esac
 
+# Build and scan the production ARM64 image before touching AWS: a HIGH/CRITICAL
+# CVE stops the deploy with the infrastructure unchanged and no credentials issued.
+local_image="hangy-backend:${CI_COMMIT_SHA}-${CI_PIPELINE_ID}-${CI_JOB_ID}"
+docker buildx create --use --name hangy-builder --driver docker-container
+docker buildx build --platform linux/arm64 --load --tag "$local_image" .
+TRIVY_REPORT="${TRIVY_REPORT:-trivy-report.json}" bash scripts/scan-image.sh "$local_image"
+
 export CI_ENV_FILE="$work_dir/state.env"
 bash scripts/bootstrap-terraform-state.sh
 while IFS='=' read -r name value; do
@@ -137,11 +144,8 @@ registry="${repository_uri%%/*}"
 tag="${CI_COMMIT_SHA}-${CI_PIPELINE_ID}-${CI_JOB_ID}"
 image="$repository_uri:$tag"
 aws ecr get-login-password | docker login --username AWS --password-stdin "$registry"
-docker buildx create --use --name hangy-builder --driver docker-container
-docker buildx build --platform linux/arm64 --load --tag "$image" .
-
-# Gate the exact ARM64 image that will be pushed: any HIGH/CRITICAL CVE stops here.
-TRIVY_REPORT="${TRIVY_REPORT:-trivy-report.json}" bash scripts/scan-image.sh "$image"
+# Publish the image that was scanned above, without rebuilding it.
+docker tag "$local_image" "$image"
 
 # Exercise the production entrypoint before publishing the image.
 # Allow slower ARM64 emulation on local runners without changing production checks.

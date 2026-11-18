@@ -36,11 +36,21 @@ case "$1 ${2:-}" in
   'buildx build') [[ "$MOCK_CASE" != build_failure ]] ;;
   'create aquasec/trivy:'*) echo trivy-container ;;
   'cp trivy-container:/usr/local/bin/trivy')
-    # Stand-in scanner: records its arguments and fails the HIGH/CRITICAL gate on demand.
+    # Stand-in scanner: records its arguments and writes a JSON report, with an
+    # unfixed HIGH vulnerability for scan_failure.
     cat > "$3" <<'TRIVY'
 #!/usr/bin/env bash
 echo "trivy $*" >> "$MOCK_LOG"
-if [[ "$MOCK_CASE" == scan_failure && " $* " == *' --exit-code 1 '* ]]; then exit 1; fi
+while [[ $# -gt 0 ]]; do
+  if [[ "$1" == --output ]]; then
+    if [[ "$MOCK_CASE" == scan_failure ]]; then
+      echo '{"Results":[{"Target":"debian","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-0001","PkgName":"libtest","InstalledVersion":"1.0","Severity":"HIGH","Status":"affected"},{"VulnerabilityID":"CVE-2026-0002","PkgName":"libtest","InstalledVersion":"1.0","Severity":"MEDIUM"}]}]}' > "$2"
+    else
+      echo '{"Results":[{"Target":"debian","Vulnerabilities":[{"VulnerabilityID":"CVE-2026-0002","PkgName":"libtest","InstalledVersion":"1.0","Severity":"MEDIUM"}]}]}' > "$2"
+    fi
+  fi
+  shift
+done
 TRIVY
     chmod +x "$3"
     ;;
@@ -196,13 +206,19 @@ run_case() {
     if [[ "$result" -ne 0 ]]; then cat "$work_dir/output" >&2; return 1; fi
     grep -q 'docker buildx build --platform linux/arm64 --load' "$work_dir/operations"
     grep -q 'Deployed .*@sha256:testdigest to i-test' "$work_dir/output"
-    # The pushed image is the one scanned, and unfixed HIGH/CRITICAL CVEs also block.
+    # The pushed image is the one scanned, and the scan precedes any AWS change.
+    local_image='hangy-backend:test-commit-1-2'
     image='123456789012.dkr.ecr.us-east-2.amazonaws.com/hangy:test-commit-1-2'
     grep -q 'docker create aquasec/trivy:0.76.1@sha256:' "$work_dir/operations"
-    grep -Fq -- "--severity HIGH,CRITICAL --exit-code 1 $image" "$work_dir/operations"
+    grep -Fq -- "--format json --output $work_dir/trivy-report.json $local_image" "$work_dir/operations"
+    [[ "$(grep -c -- '^trivy image .*--format json' "$work_dir/operations")" -eq 1 ]]
     ! grep -q -- '--ignore-unfixed' "$work_dir/operations"
-    [[ "$(grep -n -- '--exit-code 1' "$work_dir/operations" | cut -d: -f1)" -lt \
-      "$(grep -n '^docker push' "$work_dir/operations" | cut -d: -f1)" ]]
+    grep -Fxq "docker tag $local_image $image" "$work_dir/operations"
+    ! grep -q '^docker buildx build .*hangy:' "$work_dir/operations"
+    grep -q 'No HIGH/CRITICAL vulnerabilities.' "$work_dir/output"
+    scan_line=$(grep -n -- '^trivy convert' "$work_dir/operations" | cut -d: -f1)
+    [[ "$scan_line" -lt "$(grep -n '^aws ' "$work_dir/operations" | head -1 | cut -d: -f1)" ]]
+    [[ "$scan_line" -lt "$(grep -n '^terraform ' "$work_dir/operations" | head -1 | cut -d: -f1)" ]]
     if [[ "$architecture" == x86_64 ]]; then
       grep -q 'docker run --privileged --rm tonistiigi/binfmt --install arm64' "$work_dir/operations"
     else
@@ -242,9 +258,12 @@ run_case() {
         ;;
       build_failure|oidc_failure) ! grep -q 'aws ssm send-command' "$work_dir/operations" ;;
       scan_failure)
-        grep -q -- '--exit-code 1' "$work_dir/operations"
+        grep -q 'Blocked: 1 HIGH/CRITICAL vulnerabilities' "$work_dir/output"
+        grep -q 'HIGH CVE-2026-0001 libtest 1.0 fixed=none status=affected' "$work_dir/output"
+        # Nothing reached AWS or Terraform: no state bucket, apply, credentials or push.
+        ! grep -q '^aws ' "$work_dir/operations"
+        ! grep -q '^terraform ' "$work_dir/operations"
         ! grep -q 'docker push' "$work_dir/operations"
-        ! grep -q 'aws ssm send-command' "$work_dir/operations"
         ;;
       smoke_timeout)
         grep -q 'Smoke test did not become healthy within 300 seconds.' "$work_dir/output"
