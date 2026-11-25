@@ -160,12 +160,16 @@ def get_detail(client: TestClient, viewer_id: UUID, event_id: UUID | str):
 
 def test_admin_reads_the_full_event_file(event_client: EventClient) -> None:
     client, session_factory = event_client
+    starts_at = datetime.now(UTC).replace(microsecond=0) + timedelta(days=1)
+    ends_at = starts_at + timedelta(hours=3)
     with session_factory() as db:
         admin_id = add_user(db, name="Admin", role=UserRoleEnum.ADMIN)
         organizer_id = add_user(db, name="João Souza")
         event_id = add_event(
             db,
             organizer_id,
+            starts_at=starts_at,
+            ends_at=ends_at,
             event_description="Som ao vivo no apê.",
             location_name="Apê do João",
             location_neighborhood="Santana",
@@ -187,8 +191,8 @@ def test_admin_reads_the_full_event_file(event_client: EventClient) -> None:
         "event_id": str(event_id),
         "title": "Jam de rock",
         "description": "Som ao vivo no apê.",
-        "event_date": "2026-11-20T19:00:00Z",
-        "end_date": "2026-11-20T22:00:00Z",
+        "event_date": starts_at.isoformat().replace("+00:00", "Z"),
+        "end_date": ends_at.isoformat().replace("+00:00", "Z"),
         "location_name": "Apê do João",
         "location_neighborhood": "Santana",
         "location_city": "Porto Alegre",
